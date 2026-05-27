@@ -1,10 +1,13 @@
-import { Hash, Pin, Plus, Smile, Paperclip, Send, Bell, Users, Search, AtSign, Inbox, HelpCircle, Bookmark, Loader2, MoreVertical } from "lucide-react";
+import { Hash, Pin, Plus, Smile, Paperclip, Send, Bell, Users, Search, Inbox, HelpCircle, Loader2, MessageSquare, X, Reply } from "lucide-react";
 import { Avatar } from "./Avatar";
-import { useState, useRef, useEffect, KeyboardEvent } from "react";
+import { useState, useRef, useEffect, KeyboardEvent, useCallback, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import type { ApiChannel, ApiMessage, ApiUser, UserRole } from "@/types/api";
+import type { ApiChannel, ApiMessage, ApiUser, UserRole, ApiAttachment } from "@/types/api";
 import { useMutation } from "@tanstack/react-query";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest, apiUpload, queryClient } from "@/lib/queryClient";
+import { ThreadPanel } from "./ThreadPanel";
+import { SearchModal } from "./SearchModal";
+import { AttachmentList } from "./AttachmentRenderer";
 
 interface Props {
   channel: ApiChannel;
@@ -40,19 +43,44 @@ function fmtTime(iso: string): string {
   return `${d.toLocaleDateString(undefined, { month: "short", day: "numeric" })} at ${time}`;
 }
 
+interface MentionMatch {
+  query: string;
+  startIdx: number;
+}
+
 export function TextChannelView({ channel, messages, loading, me, orgMembers }: Props) {
   const [draft, setDraft] = useState("");
+  const [pendingAtts, setPendingAtts] = useState<ApiAttachment[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const [threadParent, setThreadParent] = useState<ApiMessage | null>(null);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
+  const [mentionMatch, setMentionMatch] = useState<MentionMatch | null>(null);
+  const [mentionSelectedIdx, setMentionSelectedIdx] = useState(0);
+
   const scrollRef = useRef<HTMLDivElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const sendMutation = useMutation({
-    mutationFn: async (content: string) =>
-      apiRequest<ApiMessage>("POST", `/api/channels/${channel.id}/messages`, { content }),
+    mutationFn: async (payload: { content: string; attachmentIds?: string[] }) =>
+      apiRequest<ApiMessage>("POST", `/api/channels/${channel.id}/messages`, payload),
     onSuccess: () => {
-      // SSE will refresh, but if it's not connected we still want immediate UI
       queryClient.invalidateQueries({ queryKey: ["/api/channels", channel.id, "messages"] });
     },
   });
+
+  // Global Cmd+K / Ctrl+K to open search
+  useEffect(() => {
+    const h = (e: globalThis.KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setSearchOpen(true);
+      }
+    };
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+  }, []);
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -62,7 +90,82 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers }: 
 
   useEffect(() => { taRef.current?.focus(); }, [channel.id]);
 
+  // Mention autocomplete: detect @… at cursor
+  const handleDraftChange = (val: string) => {
+    setDraft(val);
+    const ta = taRef.current;
+    if (!ta) return;
+    const cursor = ta.selectionStart ?? val.length;
+    const before = val.slice(0, cursor);
+    const m = before.match(/(?:^|\s)@([a-zA-Z0-9_.-]*)$/);
+    if (m) {
+      setMentionMatch({ query: m[1].toLowerCase(), startIdx: cursor - m[1].length - 1 });
+      setMentionSelectedIdx(0);
+    } else {
+      setMentionMatch(null);
+    }
+  };
+
+  const mentionCandidates = useMemo(() => {
+    if (!mentionMatch) return [];
+    const q = mentionMatch.query;
+    const specials = [
+      { kind: "special" as const, key: "here", label: "@here", desc: "Notify online members" },
+      { kind: "special" as const, key: "everyone", label: "@everyone", desc: "Notify all project members" },
+    ].filter((s) => s.key.startsWith(q));
+    const userMatches = orgMembers
+      .filter((u) => {
+        const first = u.name.split(/\s+/)[0].toLowerCase();
+        const full = u.name.toLowerCase().replace(/\s+/g, "");
+        return first.startsWith(q) || full.startsWith(q) || u.name.toLowerCase().includes(q);
+      })
+      .slice(0, 6)
+      .map((u) => ({ kind: "user" as const, user: u }));
+    return [...specials, ...userMatches];
+  }, [mentionMatch, orgMembers]);
+
+  const insertMention = (text: string) => {
+    if (!mentionMatch) return;
+    const ta = taRef.current;
+    if (!ta) return;
+    const before = draft.slice(0, mentionMatch.startIdx);
+    const cursor = ta.selectionStart ?? draft.length;
+    const after = draft.slice(cursor);
+    const next = `${before}@${text} ${after}`;
+    setDraft(next);
+    setMentionMatch(null);
+    setTimeout(() => {
+      ta.focus();
+      const newPos = before.length + text.length + 2;
+      ta.setSelectionRange(newPos, newPos);
+    }, 0);
+  };
+
   const handleKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (mentionMatch && mentionCandidates.length > 0) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setMentionSelectedIdx((i) => (i + 1) % mentionCandidates.length);
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setMentionSelectedIdx((i) => (i - 1 + mentionCandidates.length) % mentionCandidates.length);
+        return;
+      }
+      if (e.key === "Enter" || e.key === "Tab") {
+        e.preventDefault();
+        const c = mentionCandidates[mentionSelectedIdx];
+        if (c.kind === "special") insertMention(c.key);
+        else insertMention(c.user.name.split(/\s+/)[0].toLowerCase());
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setMentionMatch(null);
+        return;
+      }
+    }
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       submit();
@@ -71,15 +174,47 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers }: 
 
   const submit = () => {
     const body = draft.trim();
-    if (!body || sendMutation.isPending) return;
-    sendMutation.mutate(body);
+    if ((!body && pendingAtts.length === 0) || sendMutation.isPending) return;
+    sendMutation.mutate({
+      content: body || " ",
+      attachmentIds: pendingAtts.length > 0 ? pendingAtts.map((a) => a.id) : undefined,
+    });
     setDraft("");
+    setPendingAtts([]);
+    setMentionMatch(null);
+  };
+
+  const uploadFiles = useCallback(async (files: FileList | File[]) => {
+    const list = Array.from(files);
+    if (list.length === 0) return;
+    setUploading(true);
+    try {
+      const fd = new FormData();
+      list.slice(0, 4).forEach((f) => fd.append("files", f));
+      const res = await apiUpload<ApiAttachment[]>(`/api/uploads`, fd);
+      setPendingAtts((p) => [...p, ...res].slice(0, 4));
+    } catch (e: any) {
+      alert(`Upload failed: ${e?.message ?? "Unknown"}`);
+    } finally {
+      setUploading(false);
+    }
+  }, []);
+
+  const onDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(false);
+    if (e.dataTransfer.files.length > 0) uploadFiles(e.dataTransfer.files);
   };
 
   const pinned = messages.find((m) => m.isPinned);
 
   return (
-    <section className="flex-1 flex flex-col min-w-0 bg-background relative">
+    <section
+      className="flex-1 flex flex-col min-w-0 bg-background relative"
+      onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+      onDragLeave={() => setDragOver(false)}
+      onDrop={onDrop}
+    >
       <header className="h-14 px-4 max-md:pl-14 flex items-center gap-3 border-b border-[hsl(232_40%_22%)] shadow-sm shrink-0 bg-[hsl(232_60%_12%)]/60 backdrop-blur-sm">
         <Hash className="w-5 h-5 text-[hsl(0_0%_55%)]" />
         <div className="font-display text-white text-base" data-testid="text-channel-name">{channel.name}</div>
@@ -95,15 +230,17 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers }: 
           <HeaderIcon title="Members"><Users className="w-4 h-4" /></HeaderIcon>
           <HeaderIcon title="Inbox"><Inbox className="w-4 h-4" /></HeaderIcon>
           <HeaderIcon title="Help"><HelpCircle className="w-4 h-4" /></HeaderIcon>
-          <div className="ml-1 relative">
-            <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[hsl(0_0%_55%)]" />
-            <input
-              type="search"
-              placeholder="Search"
-              className="bg-[hsl(232_60%_9%)] border border-[hsl(232_40%_22%)] text-xs text-white placeholder:text-[hsl(0_0%_50%)] rounded-md pl-7 pr-2 py-1 w-32 focus:outline-none focus:ring-1 focus:ring-vs-red focus:w-48 transition-all"
-              data-testid="input-search-messages"
-            />
-          </div>
+          <button
+            type="button"
+            onClick={() => setSearchOpen(true)}
+            className="ml-1 flex items-center gap-2 bg-[hsl(232_60%_9%)] border border-[hsl(232_40%_22%)] text-xs text-[hsl(0_0%_65%)] hover:text-white hover:border-vs-red transition-colors rounded-md px-2 py-1"
+            title="Search (⌘K)"
+            data-testid="button-open-search"
+          >
+            <Search className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Search</span>
+            <kbd className="hidden sm:inline font-mono text-[10px] text-[hsl(0_0%_55%)] border border-[hsl(232_40%_22%)] rounded px-1">⌘K</kbd>
+          </button>
         </div>
       </header>
 
@@ -119,9 +256,16 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers }: 
 
       <div
         ref={scrollRef}
-        className="flex-1 overflow-y-auto px-4 py-4 space-y-0.5 vs-grain"
+        className="flex-1 overflow-y-auto px-4 py-4 space-y-0.5 vs-grain relative"
         data-testid="list-messages"
       >
+        {dragOver && (
+          <div className="absolute inset-0 z-10 bg-vs-red/10 border-2 border-dashed border-vs-red m-2 rounded-xl flex items-center justify-center pointer-events-none">
+            <div className="text-vs-red font-display text-lg flex items-center gap-2">
+              <Paperclip className="w-5 h-5" /> Drop files to attach
+            </div>
+          </div>
+        )}
         <ChannelIntro channel={channel} />
         {loading && messages.length === 0 && (
           <div className="py-10 flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-vs-blue" /></div>
@@ -138,54 +282,164 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers }: 
               !msg.isPinned &&
               new Date(msg.createdAt).getTime() - new Date(prev.createdAt).getTime() < 5 * 60 * 1000;
             return (
-              <MessageRow key={msg.id} msg={msg} grouped={!!grouped} isMe={msg.userId === me.id} />
+              <MessageRow
+                key={msg.id}
+                msg={msg}
+                grouped={!!grouped}
+                isMe={msg.userId === me.id}
+                meId={me.id}
+                onOpenThread={() => setThreadParent(msg)}
+              />
             );
           })}
         </AnimatePresence>
       </div>
 
       <div className="px-4 pb-4 pt-2 shrink-0">
-        <div className="flex items-end gap-2 bg-[hsl(232_50%_16%)] border border-[hsl(232_40%_25%)] rounded-xl px-3 py-2 focus-within:border-vs-red transition-colors">
-          <button
-            type="button"
-            className="text-[hsl(0_0%_65%)] hover:text-vs-red transition-colors p-1"
-            title="Attach (coming soon)"
-            data-testid="button-attach"
-          >
-            <Plus className="w-5 h-5" />
-          </button>
-          <textarea
-            ref={taRef}
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={handleKey}
-            placeholder={`Message #${channel.name}`}
-            rows={1}
-            className="flex-1 bg-transparent text-sm text-white placeholder:text-[hsl(0_0%_50%)] resize-none outline-none max-h-32 py-1"
-            data-testid="textarea-composer"
-          />
-          <div className="flex items-center gap-0.5 text-[hsl(0_0%_65%)]">
-            <button type="button" className="hover:text-vs-red transition-colors p-1" title="Mention"><AtSign className="w-4 h-4" /></button>
-            <button type="button" className="hover:text-vs-red transition-colors p-1" title="Bookmark"><Bookmark className="w-4 h-4" /></button>
-            <button type="button" className="hover:text-vs-red transition-colors p-1" title="Files"><Paperclip className="w-4 h-4" /></button>
-            <button type="button" className="hover:text-vs-red transition-colors p-1" title="Emoji"><Smile className="w-4 h-4" /></button>
+        {pendingAtts.length > 0 && (
+          <div className="mb-2 flex flex-wrap gap-2" data-testid="row-pending-attachments">
+            {pendingAtts.map((a) => (
+              <div key={a.id} className="relative group bg-[hsl(232_50%_16%)] border border-[hsl(232_40%_25%)] rounded-lg px-2 py-1.5 flex items-center gap-2 max-w-[200px]">
+                {a.thumbnailUrl ? (
+                  <img src={a.thumbnailUrl} alt="" className="w-9 h-9 rounded object-cover" />
+                ) : (
+                  <div className="w-9 h-9 rounded bg-[hsl(2_70%_55%/0.2)] flex items-center justify-center text-vs-red text-[10px] font-mono">FILE</div>
+                )}
+                <div className="min-w-0">
+                  <div className="text-xs text-white truncate max-w-[120px]">{a.filename}</div>
+                  <div className="text-[10px] text-[hsl(0_0%_60%)] font-mono">{(a.sizeBytes / 1024).toFixed(0)} KB</div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setPendingAtts((p) => p.filter((x) => x.id !== a.id))}
+                  className="opacity-0 group-hover:opacity-100 absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-vs-red text-white flex items-center justify-center transition-opacity"
+                  title="Remove"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </div>
+            ))}
+            {uploading && (
+              <div className="flex items-center gap-2 px-2 py-1.5 text-xs text-vs-blue">
+                <Loader2 className="w-3.5 h-3.5 animate-spin" /> Uploading…
+              </div>
+            )}
+          </div>
+        )}
+        <div className="relative">
+          {/* Mention popover */}
+          {mentionMatch && mentionCandidates.length > 0 && (
+            <div className="absolute bottom-full left-0 mb-2 w-72 max-h-64 overflow-y-auto bg-[hsl(232_55%_14%)] border border-[hsl(232_40%_25%)] rounded-lg shadow-xl z-20" data-testid="popover-mention">
+              <div className="px-3 py-2 border-b border-[hsl(232_40%_22%)] text-[10px] uppercase tracking-wider font-mono text-[hsl(0_0%_55%)]">
+                Mention {mentionMatch.query && `· "${mentionMatch.query}"`}
+              </div>
+              {mentionCandidates.map((c, i) => {
+                const active = i === mentionSelectedIdx;
+                return (
+                  <button
+                    key={c.kind === "user" ? `u${c.user.id}` : `s${c.key}`}
+                    type="button"
+                    className={`w-full text-left px-3 py-2 flex items-center gap-2 ${active ? "bg-[hsl(232_45%_22%)]" : "hover:bg-[hsl(232_45%_18%)]"}`}
+                    onMouseEnter={() => setMentionSelectedIdx(i)}
+                    onClick={() => c.kind === "special" ? insertMention(c.key) : insertMention(c.user.name.split(/\s+/)[0].toLowerCase())}
+                  >
+                    {c.kind === "user" ? (
+                      <>
+                        <Avatar member={{ name: c.user.name, hue: c.user.hue }} size={24} />
+                        <div className="min-w-0">
+                          <div className="text-sm text-white truncate">{c.user.name}</div>
+                          <div className="text-[10px] text-[hsl(0_0%_60%)] font-mono">{ROLE_LABEL[c.user.role]}</div>
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <div className="w-6 h-6 rounded-full bg-[hsl(35_100%_60%/0.2)] border border-[hsl(35_100%_60%/0.4)] flex items-center justify-center text-[10px] font-mono text-[hsl(35_100%_70%)] font-bold">@</div>
+                        <div className="min-w-0">
+                          <div className="text-sm text-white font-mono">{c.label}</div>
+                          <div className="text-[10px] text-[hsl(0_0%_60%)]">{c.desc}</div>
+                        </div>
+                      </>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          <div className="flex items-end gap-2 bg-[hsl(232_50%_16%)] border border-[hsl(232_40%_25%)] rounded-xl px-3 py-2 focus-within:border-vs-red transition-colors">
             <button
               type="button"
-              onClick={submit}
-              disabled={!draft.trim() || sendMutation.isPending}
-              className="ml-1 w-8 h-8 rounded-md bg-vs-red text-white flex items-center justify-center hover:bg-[hsl(2_75%_60%)] transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-              title="Send (Enter)"
-              data-testid="button-send"
+              onClick={() => fileInputRef.current?.click()}
+              className="text-[hsl(0_0%_65%)] hover:text-vs-red transition-colors p-1"
+              title="Attach file"
+              data-testid="button-attach"
+              disabled={uploading || pendingAtts.length >= 4}
             >
-              {sendMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+              <Plus className="w-5 h-5" />
             </button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              className="hidden"
+              onChange={(e) => {
+                if (e.target.files) uploadFiles(e.target.files);
+                e.target.value = "";
+              }}
+              data-testid="input-file"
+            />
+            <textarea
+              ref={taRef}
+              value={draft}
+              onChange={(e) => handleDraftChange(e.target.value)}
+              onKeyDown={handleKey}
+              placeholder={`Message #${channel.name}`}
+              rows={1}
+              className="flex-1 bg-transparent text-sm text-white placeholder:text-[hsl(0_0%_50%)] resize-none outline-none max-h-32 py-1"
+              data-testid="textarea-composer"
+            />
+            <div className="flex items-center gap-0.5 text-[hsl(0_0%_65%)]">
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="hover:text-vs-red transition-colors p-1"
+                title="Files"
+                data-testid="button-files-icon"
+              >
+                <Paperclip className="w-4 h-4" />
+              </button>
+              <button type="button" className="hover:text-vs-red transition-colors p-1" title="Emoji"><Smile className="w-4 h-4" /></button>
+              <button
+                type="button"
+                onClick={submit}
+                disabled={(!draft.trim() && pendingAtts.length === 0) || sendMutation.isPending}
+                className="ml-1 w-8 h-8 rounded-md bg-vs-red text-white flex items-center justify-center hover:bg-[hsl(2_75%_60%)] transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                title="Send (Enter)"
+                data-testid="button-send"
+              >
+                {sendMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+              </button>
+            </div>
           </div>
         </div>
         <div className="px-2 mt-1.5 text-[10px] text-[hsl(0_0%_50%)] flex items-center justify-between">
-          <span>Press <kbd className="font-mono text-[hsl(0_0%_70%)]">Enter</kbd> to send · <kbd className="font-mono text-[hsl(0_0%_70%)]">Shift+Enter</kbd> for newline</span>
+          <span>Press <kbd className="font-mono text-[hsl(0_0%_70%)]">Enter</kbd> to send · <kbd className="font-mono text-[hsl(0_0%_70%)]">⌘K</kbd> to search</span>
           <span>{channel.topic ? `Topic: ${channel.topic.slice(0, 60)}${channel.topic.length > 60 ? "…" : ""}` : ""}</span>
         </div>
       </div>
+
+      <ThreadPanel
+        parentMessage={threadParent}
+        channelId={channel.id}
+        me={me}
+        onClose={() => setThreadParent(null)}
+      />
+      <SearchModal
+        open={searchOpen}
+        onClose={() => setSearchOpen(false)}
+        onJump={(_chId, _msgId) => { /* TODO scroll to message */ }}
+        channelId={channel.id}
+      />
     </section>
   );
 }
@@ -217,7 +471,7 @@ function ChannelIntro({ channel }: { channel: ApiChannel }) {
   );
 }
 
-function MessageRow({ msg, grouped, isMe }: { msg: ApiMessage; grouped: boolean; isMe: boolean }) {
+function MessageRow({ msg, grouped, isMe, meId, onOpenThread }: { msg: ApiMessage; grouped: boolean; isMe: boolean; meId: number; onOpenThread: () => void }) {
   const roleClass = ROLE_COLOR[msg.authorRole] ?? "text-white";
 
   return (
@@ -251,7 +505,8 @@ function MessageRow({ msg, grouped, isMe }: { msg: ApiMessage; grouped: boolean;
             {msg.editedAt && <span className="text-[10px] text-[hsl(0_0%_45%)] italic">(edited)</span>}
           </div>
         )}
-        <MessageBody body={msg.content} />
+        <MessageBody body={msg.content} mentions={msg.mentions} meId={meId} />
+        {msg.attachmentsList && msg.attachmentsList.length > 0 && <AttachmentList atts={msg.attachmentsList} />}
         {msg.reactions && msg.reactions.length > 0 && (
           <div className="flex flex-wrap gap-1 mt-1.5">
             {msg.reactions.map((r) => (
@@ -265,6 +520,31 @@ function MessageRow({ msg, grouped, isMe }: { msg: ApiMessage; grouped: boolean;
             ))}
           </div>
         )}
+        {(msg.replyCount ?? 0) > 0 && (
+          <button
+            type="button"
+            onClick={onOpenThread}
+            className="mt-1.5 inline-flex items-center gap-1.5 px-2 py-1 rounded-md border border-[hsl(232_40%_25%)] bg-[hsl(232_50%_16%)] hover:bg-[hsl(232_45%_22%)] hover:border-vs-red text-xs text-vs-blue-light font-semibold transition-colors"
+            data-testid={`button-open-thread-${msg.id}`}
+          >
+            <MessageSquare className="w-3 h-3" />
+            {msg.replyCount} {msg.replyCount === 1 ? "reply" : "replies"}
+            {msg.lastReplyAt && <span className="font-normal text-[hsl(0_0%_60%)]">· last {new Date(msg.lastReplyAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>}
+          </button>
+        )}
+      </div>
+
+      {/* Hover action: reply in thread */}
+      <div className="opacity-0 group-hover:opacity-100 transition-opacity absolute top-0 right-2 flex items-center gap-1 -translate-y-2 bg-[hsl(232_55%_14%)] border border-[hsl(232_40%_25%)] rounded-md px-1 py-0.5 shadow-md">
+        <button
+          type="button"
+          onClick={onOpenThread}
+          className="p-1 rounded hover:bg-[hsl(232_45%_22%)] text-[hsl(0_0%_70%)] hover:text-vs-red"
+          title="Reply in thread"
+          data-testid={`button-reply-thread-${msg.id}`}
+        >
+          <Reply className="w-3.5 h-3.5" />
+        </button>
       </div>
     </motion.div>
   );
@@ -286,33 +566,63 @@ function RoleBadge({ role }: { role: UserRole }) {
   );
 }
 
-function MessageBody({ body }: { body: string }) {
+function MessageBody({ body, mentions, meId }: { body: string; mentions?: ApiMessage["mentions"]; meId: number }) {
   const lines = body.split("\n");
+  const myMention = mentions?.some((m) => m.type === "user" && m.mentionedUserId === meId);
+  const hasBroadcast = mentions?.some((m) => m.type === "here" || m.type === "everyone");
+
   return (
     <div className="text-[13.5px] text-[hsl(0_0%_88%)] leading-relaxed mt-0.5 whitespace-pre-wrap break-words">
-      {lines.map((line, i) => {
-        if (line.startsWith("> ")) {
-          return (
-            <div key={i} className="border-l-2 border-vs-red pl-2 my-1 text-[hsl(0_0%_75%)] italic">
-              {renderInline(line.slice(2))}
-            </div>
-          );
-        }
-        return <div key={i}>{renderInline(line)}</div>;
-      })}
+      {(myMention || hasBroadcast) && (
+        <div className={`-ml-2 pl-2 border-l-4 ${myMention ? "border-vs-red bg-[hsl(2_70%_55%/0.06)]" : "border-[hsl(35_100%_60%)] bg-[hsl(35_100%_60%/0.05)]"} -mr-2 pr-2 py-0.5 rounded-r-sm`}>
+          {lines.map((line, i) => (
+            <Line key={i} line={line} mentions={mentions} meId={meId} />
+          ))}
+        </div>
+      )}
+      {!(myMention || hasBroadcast) && lines.map((line, i) => (
+        <Line key={i} line={line} mentions={mentions} meId={meId} />
+      ))}
     </div>
   );
 }
 
-function renderInline(text: string) {
-  const parts = text.split(/(\*\*[^*]+\*\*|@\w+)/g);
+function Line({ line, mentions, meId }: { line: string; mentions?: ApiMessage["mentions"]; meId: number }) {
+  if (line.startsWith("> ")) {
+    return (
+      <div className="border-l-2 border-vs-red pl-2 my-1 text-[hsl(0_0%_75%)] italic">
+        {renderInline(line.slice(2), mentions, meId)}
+      </div>
+    );
+  }
+  return <div>{renderInline(line, mentions, meId)}</div>;
+}
+
+function renderInline(text: string, mentions: ApiMessage["mentions"] | undefined, meId: number) {
+  const parts = text.split(/(\*\*[^*]+\*\*|@[a-zA-Z0-9_.-]+)/g);
   return parts.map((p, i) => {
     if (p.startsWith("**") && p.endsWith("**")) {
       return <strong key={i} className="font-bold text-white">{p.slice(2, -2)}</strong>;
     }
     if (p.startsWith("@")) {
+      const handle = p.slice(1).toLowerCase();
+      const isBroadcast = handle === "here" || handle === "everyone";
+      const isMe = mentions?.some((m) => m.type === "user" && m.mentionedUserId === meId && (handle === "here" ? false : true));
+      // self-mention if any user mention matched my id (simplification: highlight @firstname-of-me red)
+      // We can use the mentions array to be precise:
+      const matchedMention = mentions?.find((m) => {
+        if (m.type === "here" && handle === "here") return true;
+        if (m.type === "everyone" && handle === "everyone") return true;
+        return false;
+      });
+      const selfMention = !isBroadcast && mentions?.some((m) => m.type === "user" && m.mentionedUserId === meId);
+      const className = selfMention
+        ? "bg-[hsl(2_70%_55%/0.25)] text-[hsl(2_85%_72%)] px-1 rounded font-semibold"
+        : isBroadcast
+        ? "bg-[hsl(35_100%_60%/0.22)] text-[hsl(35_100%_72%)] px-1 rounded font-semibold"
+        : "bg-[hsl(218_100%_68%/0.22)] text-vs-blue-light px-1 rounded font-semibold";
       return (
-        <span key={i} className="bg-[hsl(218_100%_68%/0.2)] text-vs-blue-light px-1 rounded">
+        <span key={i} className={className} data-testid={`mention-${handle}`}>
           {p}
         </span>
       );

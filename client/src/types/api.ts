@@ -45,6 +45,22 @@ export interface ApiReaction {
   userIds: number[];
 }
 
+export interface ApiAttachment {
+  id: string;
+  filename: string;
+  contentType: string;
+  sizeBytes: number;
+  url: string;
+  thumbnailUrl: string | null;
+  createdAt: string;
+}
+
+export interface ApiMention {
+  id: number;
+  type: "user" | "here" | "everyone";
+  mentionedUserId: number | null;
+}
+
 export interface ApiMessage {
   id: number;
   channelId: number;
@@ -61,6 +77,23 @@ export interface ApiMessage {
   authorRole: UserRole;
   authorInitials: string;
   reactions?: ApiReaction[];
+  attachmentsList?: ApiAttachment[];
+  mentions?: ApiMention[];
+  replyCount?: number;
+  lastReplyAt?: string | null;
+}
+
+export interface ApiRecording {
+  id: number;
+  channelId: number;
+  startedById: number;
+  startedAt: string;
+  endedAt: string | null;
+  status: "starting" | "recording" | "finalizing" | "completed" | "failed";
+  storageKey: string | null;
+  url?: string | null;
+  durationSeconds: number | null;
+  sizeBytes: number | null;
 }
 
 export interface VoiceTokenResponse {
