@@ -12,6 +12,7 @@ import { generateLivekitToken, livekitConfigured } from "./livekit";
 import { setupWebPush, pushConfigured, getPublicVapidKey, sendNotificationToUsers } from "./push";
 import { runMigrations } from "./migrate";
 import { runSeed } from "./seed";
+import { registerV2Routes, parseMentions } from "./routes-v2";
 
 const APP_VERSION = "1.0.0";
 
@@ -40,7 +41,20 @@ function buildWireMessage(messageId: number): WireMessage | null {
     g.userIds.push(r.userId);
     grouped.set(r.emoji, g);
   }
-  return { ...msg, ...author, reactions: Array.from(grouped.values()) };
+  const atts = storage.listAttachmentsForMessages([messageId]);
+  const attachmentsList = atts.map(a => {
+    const { getStorageBackend } = require("./storage-files");
+    const backend = getStorageBackend();
+    const publicUrl = backend.publicUrl(a.storageKey);
+    const thumbPublic = a.thumbnailKey ? backend.publicUrl(a.thumbnailKey) : null;
+    return {
+      id: a.id, filename: a.filename, contentType: a.contentType, sizeBytes: a.sizeBytes,
+      url: publicUrl ?? `/api/files/${a.id}`,
+      thumbnailUrl: thumbPublic ?? (a.thumbnailKey ? `/api/files/${a.id}?thumb=1` : null),
+      createdAt: a.createdAt,
+    };
+  });
+  return { ...msg, ...author, reactions: Array.from(grouped.values()), attachmentsList } as any;
 }
 
 // Make sure the requesting user belongs to the project (either project member or admin within org)
@@ -63,6 +77,7 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
   runMigrations();
   await runSeed();
   setupWebPush();
+  registerV2Routes(app);
 
   // Health
   app.get("/api/health", (_req, res) => {
@@ -193,14 +208,16 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
   });
 
   // ── MESSAGES ──
-  app.get("/api/channels/:id/messages", requireAuth, (req, res) => {
+  app.get("/api/channels/:id/messages", requireAuth, async (req, res) => {
     const u = (req as AuthedRequest).user;
     const channelId = Number(req.params.id);
     const access = userCanAccessChannel(u.id, u.orgId, channelId);
     if (!access) return res.status(404).json({ message: "Not found" });
     const before = req.query.before ? Number(req.query.before) : undefined;
     const limit = req.query.limit ? Number(req.query.limit) : 50;
-    const msgs = storage.listMessages(channelId, { before, limit });
+    const allMsgs = storage.listMessages(channelId, { before, limit });
+    // Exclude thread replies from main timeline
+    const msgs = allMsgs.filter(m => !m.replyToMessageId);
     const ids = msgs.map(m => m.id);
     const rxns = storage.listReactions(ids);
     const grouped = new Map<number, Map<string, { emoji: string; count: number; userIds: number[] }>>();
@@ -212,10 +229,38 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
       item.userIds.push(r.userId);
       g.set(r.emoji, item);
     }
-    const wire: WireMessage[] = msgs.map(m => ({
+    const atts = storage.listAttachmentsForMessages(ids);
+    const { getStorageBackend } = await import("./storage-files");
+    const backend = getStorageBackend();
+    const attsByMsg = new Map<number, any[]>();
+    for (const a of atts) {
+      const list = attsByMsg.get(a.messageId!) ?? [];
+      const publicUrl = backend.publicUrl(a.storageKey);
+      const thumbPublic = a.thumbnailKey ? backend.publicUrl(a.thumbnailKey) : null;
+      list.push({
+        id: a.id, filename: a.filename, contentType: a.contentType, sizeBytes: a.sizeBytes,
+        url: publicUrl ?? `/api/files/${a.id}`,
+        thumbnailUrl: thumbPublic ?? (a.thumbnailKey ? `/api/files/${a.id}?thumb=1` : null),
+        createdAt: a.createdAt,
+      });
+      attsByMsg.set(a.messageId!, list);
+    }
+    const mentionsRaw = storage.listMentionsForMessages(ids);
+    const mentionsByMsg = new Map<number, Array<{ userId: number | null; type: string }>>();
+    for (const m of mentionsRaw) {
+      const list = mentionsByMsg.get(m.messageId) ?? [];
+      list.push({ userId: m.mentionedUserId, type: m.type });
+      mentionsByMsg.set(m.messageId, list);
+    }
+    const replyCounts = storage.threadReplyCounts(ids);
+    const wire = msgs.map(m => ({
       ...m,
       ...authorFor(m.userId),
       reactions: Array.from(grouped.get(m.id)?.values() ?? []),
+      attachmentsList: attsByMsg.get(m.id) ?? [],
+      mentions: mentionsByMsg.get(m.id) ?? [],
+      replyCount: replyCounts.get(m.id)?.count ?? 0,
+      lastReplyAt: replyCounts.get(m.id)?.lastAt ? new Date((replyCounts.get(m.id)!.lastAt) * 1000).toISOString() : null,
     }));
     res.json(wire);
   });
@@ -236,32 +281,46 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
       attachments: parsed.data.attachments ? JSON.stringify(parsed.data.attachments) : null,
       replyToMessageId: parsed.data.replyToMessageId ?? null,
     });
-    const wire = buildWireMessage(msg.id)!;
-    emitMessageNew(u.orgId, wire);
 
-    // Push notifications — to mentioned users + project members not active in last 60s, excluding sender
+    // Link uploaded attachments (created via /api/uploads) to this message
+    if (parsed.data.attachmentIds && parsed.data.attachmentIds.length > 0) {
+      storage.linkAttachmentsToMessage(parsed.data.attachmentIds, msg.id, u.id);
+    }
+
+    // Parse + persist mentions
     const projectId = access.project!.id;
     const members = storage.listProjectMembers(projectId);
+    const mentions = parseMentions(parsed.data.content, members.map(m => ({ id: m.id, name: m.name })));
+    storage.createMentions(msg.id, mentions);
+
+    const wire = buildWireMessage(msg.id)!;
+    (wire as any).mentions = mentions.map(m => ({ userId: m.userId, type: m.type }));
+    (wire as any).replyCount = 0;
+    emitMessageNew(u.orgId, wire);
+
+    // Push routing
     const now = Date.now();
-    const mentionPattern = /@(\w+)/g;
-    const mentionedNames = new Set<string>();
-    for (const m of parsed.data.content.matchAll(mentionPattern)) mentionedNames.add(m[1].toLowerCase());
+    const userMentions = new Set(mentions.filter(m => m.type === "user" && m.userId != null).map(m => m.userId as number));
+    const hasEveryone = mentions.some(m => m.type === "everyone");
+    const hasHere = mentions.some(m => m.type === "here");
 
-    const recipientIds = members
-      .filter(m => m.id !== u.id)
-      .filter(m => {
-        const nameKey = m.name.toLowerCase().split(/\s+/)[0];
-        if (mentionedNames.has(nameKey)) return true;
-        const lastSeen = m.lastSeenAt ? new Date(m.lastSeenAt).getTime() : 0;
-        return (now - lastSeen) > 60_000;
-      })
-      .map(m => m.id);
+    const recipientIds = new Set<number>();
+    for (const m of members) {
+      if (m.id === u.id) continue;
+      if (userMentions.has(m.id)) { recipientIds.add(m.id); continue; }
+      if (hasEveryone) { recipientIds.add(m.id); continue; }
+      const lastSeen = m.lastSeenAt ? new Date(m.lastSeenAt).getTime() : 0;
+      const isOnline = (now - lastSeen) < 60_000;
+      if (hasHere && isOnline) { recipientIds.add(m.id); continue; }
+      // Default: only push if not active
+      if (!hasHere && !hasEveryone && !isOnline) recipientIds.add(m.id);
+    }
 
-    if (recipientIds.length > 0) {
-      void sendNotificationToUsers(recipientIds, {
+    if (recipientIds.size > 0) {
+      void sendNotificationToUsers(Array.from(recipientIds), {
         title: `#${access.channel!.name} · ${access.project!.name}`,
         body: `${u.name}: ${parsed.data.content.slice(0, 140)}`,
-        url: `/#/channels/${channelId}`,
+        url: `/#/channels/${channelId}/m/${msg.id}`,
         tag: `channel-${channelId}`,
       });
     }

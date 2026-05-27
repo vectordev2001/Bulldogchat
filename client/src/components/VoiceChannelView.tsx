@@ -2,12 +2,13 @@ import { useEffect, useState } from "react";
 import {
   Mic, MicOff, Video, VideoOff, MonitorUp, Hand, Settings, PhoneOff,
   Volume2, MoreHorizontal, ScreenShareOff, Signal, Users, Loader2, AlertTriangle, Sparkles,
+  Circle, Square, Play, Download, History,
 } from "lucide-react";
 import { Avatar } from "./Avatar";
 import { motion } from "framer-motion";
-import type { ApiChannel, ApiUser, VoiceTokenResponse } from "@/types/api";
-import { useMutation } from "@tanstack/react-query";
-import { apiRequest } from "@/lib/queryClient";
+import type { ApiChannel, ApiUser, ApiRecording, VoiceTokenResponse } from "@/types/api";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 
 interface Props {
   channel: ApiChannel;
@@ -54,6 +55,23 @@ export function VoiceChannelView(props: Props) {
 
   const tokenMutation = useMutation({
     mutationFn: async () => apiRequest<VoiceTokenResponse>("POST", `/api/channels/${channel.id}/voice/token`),
+  });
+
+  const canRecord = me.role === "admin" || me.role === "foreman";
+  const [showPast, setShowPast] = useState(false);
+  const recordingsQ = useQuery<ApiRecording[]>({
+    queryKey: ["/api/channels", channel.id, "recordings"],
+    enabled: !!channel.id,
+    refetchInterval: 8000,
+  });
+  const activeRec = (recordingsQ.data ?? []).find((r) => r.status === "recording" || r.status === "starting");
+  const startRec = useMutation({
+    mutationFn: async () => apiRequest<any>("POST", `/api/channels/${channel.id}/recording/start`),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/channels", channel.id, "recordings"] }),
+  });
+  const stopRec = useMutation({
+    mutationFn: async () => apiRequest<any>("POST", `/api/channels/${channel.id}/recording/stop`),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/channels", channel.id, "recordings"] }),
   });
 
   useEffect(() => {
@@ -151,6 +169,26 @@ export function VoiceChannelView(props: Props) {
             <span className="text-[11px] font-mono font-bold text-[hsl(2_85%_72%)] tracking-wider">LIVE</span>
             <span className="text-[11px] font-mono text-white">{formatDuration(elapsed)}</span>
           </div>
+          {activeRec && (
+            <div className="flex items-center gap-2 px-2 py-1 rounded-md bg-vs-red text-white whitespace-nowrap shadow-md" data-testid="indicator-recording">
+              <Circle className="w-2 h-2 fill-white live-blink" />
+              <span className="text-[11px] font-mono font-bold tracking-wider">REC</span>
+            </div>
+          )}
+          {canRecord && (
+            activeRec ? (
+              <button type="button" onClick={() => stopRec.mutate()} disabled={stopRec.isPending} className="px-2 py-1 rounded-md text-xs bg-vs-red/20 border border-vs-red/40 text-[hsl(2_85%_72%)] hover:bg-vs-red/30 flex items-center gap-1.5 whitespace-nowrap" title="Stop recording" data-testid="button-stop-recording">
+                <Square className="w-3 h-3 fill-current" /> Stop
+              </button>
+            ) : (
+              <button type="button" onClick={() => startRec.mutate()} disabled={startRec.isPending} className="px-2 py-1 rounded-md text-xs bg-[hsl(232_50%_18%)] border border-[hsl(232_40%_25%)] hover:border-vs-red hover:text-vs-red text-[hsl(0_0%_80%)] flex items-center gap-1.5 whitespace-nowrap" title="Start recording (admin/foreman)" data-testid="button-start-recording">
+                <Circle className="w-3 h-3" /> Record
+              </button>
+            )
+          )}
+          <button type="button" onClick={() => setShowPast((v) => !v)} className="px-2 py-1 rounded-md text-xs bg-[hsl(232_50%_18%)] border border-[hsl(232_40%_25%)] hover:border-vs-blue hover:text-vs-blue-light text-[hsl(0_0%_80%)] flex items-center gap-1.5 whitespace-nowrap" title="Past recordings" data-testid="button-past-recordings">
+            <History className="w-3 h-3" /> Past
+          </button>
         </div>
       </header>
 
@@ -210,6 +248,14 @@ export function VoiceChannelView(props: Props) {
             </div>
           )}
 
+          {showPast && (
+            <PastRecordingsPanel recordings={recordingsQ.data ?? []} />
+          )}
+          {startRec.isError && (
+            <div className="max-w-5xl mx-auto mt-4 px-4 py-2 rounded-md bg-vs-red/10 border border-vs-red/30 text-xs text-[hsl(2_85%_75%)]" data-testid="banner-recording-error">
+              Recording failed to start. Ensure LiveKit credentials and S3 storage are configured.
+            </div>
+          )}
           {livekitInfo && (
             <div className="max-w-5xl mx-auto mt-4 px-4 py-2 rounded-md bg-[hsl(145_60%_48%/0.1)] border border-[hsl(145_60%_48%/0.3)] text-xs font-mono text-vs-green flex items-center gap-2" data-testid="banner-livekit-connected">
               <Signal className="w-3.5 h-3.5" />
@@ -408,5 +454,69 @@ function CallSidebar({
         <div className="flex justify-between"><span>Encryption</span><span className="text-vs-red">E2EE · DTLS-SRTP</span></div>
       </div>
     </aside>
+  );
+}
+
+function fmtBytes(n: number | null): string {
+  if (!n) return "—";
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
+  return `${(n / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function fmtDur(secs: number | null): string {
+  if (!secs) return "—";
+  const m = Math.floor(secs / 60);
+  const s = secs % 60;
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+function PastRecordingsPanel({ recordings }: { recordings: ApiRecording[] }) {
+  const completed = recordings.filter(r => r.status === "completed" || r.status === "finalizing" || r.status === "failed").sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime());
+  return (
+    <div className="max-w-5xl mx-auto mt-4 rounded-lg bg-[hsl(232_50%_14%)] border border-[hsl(232_40%_22%)] overflow-hidden" data-testid="panel-past-recordings">
+      <div className="px-4 py-2 border-b border-[hsl(232_40%_22%)] bg-[hsl(232_55%_11%)] flex items-center gap-2">
+        <History className="w-4 h-4 text-vs-blue-light" />
+        <div className="text-sm font-display text-white">Past Recordings</div>
+        <span className="text-[11px] text-[hsl(0_0%_55%)] font-mono ml-auto">{completed.length} files</span>
+      </div>
+      {completed.length === 0 ? (
+        <div className="px-4 py-6 text-center text-sm text-[hsl(0_0%_55%)]">No past recordings for this channel yet.</div>
+      ) : (
+        <table className="w-full text-sm">
+          <thead className="text-[10px] uppercase tracking-wider text-[hsl(0_0%_55%)]">
+            <tr>
+              <th className="text-left px-4 py-2">Started</th>
+              <th className="text-left px-4 py-2">Duration</th>
+              <th className="text-left px-4 py-2">Size</th>
+              <th className="text-left px-4 py-2">Status</th>
+              <th className="text-right px-4 py-2">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {completed.map(r => (
+              <tr key={r.id} className="border-t border-[hsl(232_40%_22%)]" data-testid={`recording-row-${r.id}`}>
+                <td className="px-4 py-2 text-white text-xs font-mono">{new Date(r.startedAt).toLocaleString()}</td>
+                <td className="px-4 py-2 text-[hsl(0_0%_75%)] font-mono text-xs">{fmtDur(r.durationSeconds)}</td>
+                <td className="px-4 py-2 text-[hsl(0_0%_75%)] font-mono text-xs">{fmtBytes(r.sizeBytes)}</td>
+                <td className="px-4 py-2">
+                  <span className={`text-[10px] uppercase font-mono px-2 py-0.5 rounded border ${r.status === "completed" ? "bg-vs-green/15 text-vs-green border-vs-green/30" : r.status === "failed" ? "bg-vs-red/15 text-[hsl(2_85%_72%)] border-vs-red/30" : "bg-vs-blue/15 text-vs-blue-light border-vs-blue/30"}`}>
+                    {r.status}
+                  </span>
+                </td>
+                <td className="px-4 py-2 text-right">
+                  {r.url ? (
+                    <a href={r.url} target="_blank" rel="noreferrer noopener" className="inline-flex items-center gap-1 text-xs text-vs-blue-light hover:text-white" data-testid={`btn-play-recording-${r.id}`}>
+                      <Play className="w-3 h-3" /> Play
+                    </a>
+                  ) : (
+                    <span className="text-xs text-[hsl(0_0%_45%)]">—</span>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
   );
 }
