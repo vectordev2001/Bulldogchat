@@ -1,0 +1,64 @@
+{
+  "expo": {
+    "name": "Bulldogchat",
+    "slug": "bulldogchat",
+    "scheme": "bulldogchat",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "cover",
+      "backgroundColor": "#0a1828"
+    },
+    "assetBundlePatterns": ["**/*"],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.bulldogops.bulldogchat",
+      "buildNumber": "1",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Bulldogchat uses the camera so you can take photos and join video calls with your crew.",
+        "NSMicrophoneUsageDescription": "Bulldogchat uses the microphone so you can join voice channels and talk with your crew.",
+        "NSPhotoLibraryUsageDescription": "Bulldogchat needs access to your photo library so you can attach images to messages.",
+        "ITSAppUsesNonExemptEncryption": false
+      }
+    },
+    "android": {
+      "package": "com.bulldogops.bulldogchat",
+      "versionCode": 1,
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/icon.png",
+        "backgroundColor": "#0a1828"
+      },
+      "permissions": [
+        "CAMERA",
+        "RECORD_AUDIO",
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE",
+        "INTERNET",
+        "VIBRATE",
+        "WAKE_LOCK"
+      ]
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/icon.png",
+          "color": "#c53030"
+        }
+      ]
+    ],
+    "extra": {
+      "router": {
+        "origin": false
+      },
+      "eas": {
+        "projectId": "REPLACE_WITH_EAS_PROJECT_ID"
+      }
+    },
+    "owner": "bulldogops"
+  }
+}
