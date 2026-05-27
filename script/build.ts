@@ -8,7 +8,8 @@ const allowlist = [
   "@google/generative-ai",
   "axios",
   "bcryptjs",
-  "better-sqlite3",
+  // NOTE: better-sqlite3 must stay EXTERNAL — it's a native module with a .node binary
+  // that cannot be bundled. Node must resolve it from node_modules at runtime.
   "cors",
   "date-fns",
   "dotenv",
