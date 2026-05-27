@@ -48,6 +48,23 @@ export async function apiRequest<T = unknown>(
   return (await res.text()) as unknown as T;
 }
 
+export async function apiUpload<T = unknown>(
+  url: string,
+  formData: FormData,
+): Promise<T> {
+  const res = await fetch(`${API_BASE}${url}`, {
+    method: "POST",
+    headers: { ...authHeaders() },
+    body: formData,
+    credentials: "include",
+  });
+  await throwIfResNotOk(res);
+  if (res.status === 204) return undefined as T;
+  const ct = res.headers.get("content-type") ?? "";
+  if (ct.includes("application/json")) return (await res.json()) as T;
+  return (await res.text()) as unknown as T;
+}
+
 type UnauthorizedBehavior = "returnNull" | "throw";
 export const getQueryFn: <T>(options: { on401: UnauthorizedBehavior }) => QueryFunction<T> =
   ({ on401 }) =>
