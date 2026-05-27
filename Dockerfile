@@ -19,13 +19,13 @@ FROM node:20-alpine AS runner
 
 WORKDIR /app
 
-# Runtime libs: sqlite for backups/debug, openssl for crypto
-RUN apk add --no-cache sqlite openssl
+# Runtime libs: sqlite + build toolchain (needed to compile better-sqlite3 native module)
+RUN apk add --no-cache sqlite openssl python3 make g++
 
 ENV NODE_ENV=production
 ENV PORT=5000
 
-# Install only production deps
+# Install only production deps — build toolchain above lets better-sqlite3 compile its native binding
 COPY package*.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 
