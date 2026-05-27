@@ -25,6 +25,35 @@ persistent disk.
 - **Vector Services brand** — Navy `#191E4A`, Red `#DD403D`, Blue `#5E97FF`,
   chevron-and-stars logo, Satoshi typeface.
 
+### v2 features
+
+- **File attachments** — drag-and-drop or paperclip upload (up to 4 files,
+  10 MB each). Images render inline with a click-to-zoom lightbox; PDFs and
+  docs render as download cards. Storage is pluggable: `STORAGE_BACKEND=disk`
+  writes to `/app/data/uploads`, `STORAGE_BACKEND=s3` writes to any S3-compatible
+  bucket (AWS, Cloudflare R2, Backblaze B2, MinIO) with presigned reads.
+- **Threaded replies** — every message has a "Reply in thread" hover action
+  and a side panel showing the parent + scoped replies + a dedicated composer.
+  Reply counts and last-reply timestamps surface in the main timeline.
+- **⌘K message search** — SQLite FTS5 full-text search across every message
+  in the org, scoped to a channel or global. Snippet highlighting and one-key
+  jump to the result.
+- **Admin panel** — `/admin` route (admin role only). Manage users
+  (create / role change / reset password / deactivate / hard delete),
+  projects, invites (generate + copy URL), and org settings.
+- **@mentions + push routing** — `@firstname`, `@here`, and `@everyone`
+  autocomplete with arrow-key navigation. Self-mentions get a red border, broadcast
+  mentions get an amber border. Mentions trigger both Web Push (VAPID) and
+  Expo Push (mobile) to all matched users.
+- **LiveKit recording** — admins and foremen can start/stop voice-channel
+  recordings. Recordings are uploaded via LiveKit Egress to the configured S3
+  bucket; finished recordings appear in a "Past Recordings" drawer in the
+  channel with an inline `<video>` player.
+- **Mobile apps** — Expo wrapper in [`mobile/`](./mobile) builds native iOS
+  and Android binaries against the live web deployment. Bundle ID
+  `com.bulldogops.bulldogchat`, URL scheme `bulldogchat://`. Push tokens are
+  POSTed to `/api/push/expo-subscribe` after login.
+
 ## Quickstart (local dev)
 
 ```bash
@@ -43,7 +72,7 @@ First boot seeds the **Vector Services** demo org with:
 
 | Role        | Email                            | Password    |
 | ----------- | -------------------------------- | ----------- |
-| **Admin**   | `admin@vectorservicesus.com`     | `Vector2026!` |
+| **Admin**   | `chat@bulldogops.com`     | `Vector2026!` |
 | Crew (any)  | `<firstname>@vectorservicesus.com` | `Crew2026!` |
 
 The login screen has a **"Use demo credentials"** shortcut.

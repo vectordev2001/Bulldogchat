@@ -29,6 +29,7 @@ export const users = sqliteTable("users", {
   hue: integer("hue").notNull().default(220),
   role: text("role", { enum: userRoles }).notNull().default("field"),
   status: text("status").notNull().default("online"),
+  deactivated: integer("deactivated", { mode: "boolean" }).notNull().default(false),
   createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
   lastSeenAt: integer("last_seen_at", { mode: "timestamp" }),
 });
@@ -158,6 +159,60 @@ export const insertInviteSchema = createInsertSchema(invites).omit({ id: true, t
 export type Invite = typeof invites.$inferSelect;
 export type InsertInvite = z.infer<typeof insertInviteSchema>;
 
+/* ─────────────────── ATTACHMENTS ─────────────────── */
+export const attachments = sqliteTable("attachments", {
+  id: text("id").primaryKey(),
+  messageId: integer("message_id").references(() => messages.id),
+  uploaderUserId: integer("uploader_user_id").notNull().references(() => users.id),
+  filename: text("filename").notNull(),
+  contentType: text("content_type").notNull(),
+  sizeBytes: integer("size_bytes").notNull(),
+  storageKey: text("storage_key").notNull(),
+  thumbnailKey: text("thumbnail_key"),
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+});
+export type Attachment = typeof attachments.$inferSelect;
+
+/* ─────────────────── MENTIONS ─────────────────── */
+export const mentionTypes = ["user", "everyone", "here"] as const;
+export type MentionType = typeof mentionTypes[number];
+
+export const messageMentions = sqliteTable("message_mentions", {
+  messageId: integer("message_id").notNull().references(() => messages.id),
+  mentionedUserId: integer("mentioned_user_id").references(() => users.id),
+  type: text("type", { enum: mentionTypes }).notNull().default("user"),
+}, (t) => ({ pk: primaryKey({ columns: [t.messageId, t.mentionedUserId, t.type] }) }));
+export type MessageMention = typeof messageMentions.$inferSelect;
+
+/* ─────────────────── RECORDINGS ─────────────────── */
+export const recordingStatuses = ["recording", "processing", "ready", "failed"] as const;
+export type RecordingStatus = typeof recordingStatuses[number];
+
+export const recordings = sqliteTable("recordings", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  channelId: integer("channel_id").notNull().references(() => channels.id),
+  startedByUserId: integer("started_by_user_id").notNull().references(() => users.id),
+  egressId: text("egress_id"),
+  startedAt: integer("started_at", { mode: "timestamp" }).notNull(),
+  endedAt: integer("ended_at", { mode: "timestamp" }),
+  durationSeconds: integer("duration_seconds"),
+  storageUrl: text("storage_url"),
+  storageKey: text("storage_key"),
+  fileSizeBytes: integer("file_size_bytes"),
+  status: text("status", { enum: recordingStatuses }).notNull().default("recording"),
+});
+export type Recording = typeof recordings.$inferSelect;
+
+/* ─────────────────── EXPO PUSH TOKENS ─────────────────── */
+export const expoPushTokens = sqliteTable("expo_push_tokens", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  userId: integer("user_id").notNull().references(() => users.id),
+  token: text("token").notNull().unique(),
+  deviceLabel: text("device_label"),
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+});
+export type ExpoPushToken = typeof expoPushTokens.$inferSelect;
+
 /* ─────────────────── LIVEKIT ROOMS ─────────────────── */
 export const livekitRooms = sqliteTable("livekit_rooms", {
   id: integer("id").primaryKey({ autoIncrement: true }),
@@ -187,6 +242,7 @@ export const acceptInviteSchema = z.object({
 export const sendMessageSchema = z.object({
   content: z.string().min(1).max(4000),
   attachments: z.array(z.any()).optional(),
+  attachmentIds: z.array(z.string()).optional(),
   replyToMessageId: z.number().nullable().optional(),
 });
 export const reactionSchema = z.object({

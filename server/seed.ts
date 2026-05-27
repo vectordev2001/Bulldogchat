@@ -15,7 +15,7 @@ interface SeedMember {
 }
 
 const SEED_USERS: SeedMember[] = [
-  { email: "admin@vectorservicesus.com",   name: "Jordan Bieler",   initials: "JB", role: "admin",   title: "Operations Lead",     hue: 2   },
+  { email: "chat@bulldogops.com",          name: "Jordan Bieler",   initials: "JB", role: "admin",   title: "Operations Lead",     hue: 2   },
   { email: "marcus@vectorservicesus.com",  name: "Marcus Caldera",  initials: "MC", role: "foreman", title: "Day Foreman A",       hue: 232 },
   { email: "reina@vectorservicesus.com",   name: "Reina Tanaka",    initials: "RT", role: "office",  title: "Estimator",           hue: 218 },
   { email: "devon@vectorservicesus.com",   name: "Devon Hollis",    initials: "DH", role: "foreman", title: "Day Foreman B",       hue: 207 },
@@ -56,7 +56,7 @@ const VOICE_CHANNELS = ["Daily Standup", "Foreman Huddle", "Office", "War Room"]
 // Generic seed messages for non-Lakewood projects (~10 per text channel)
 function generic(channelName: string) {
   return [
-    { e: "admin@vectorservicesus.com",   c: `Spinning up #${channelName} for this project. Drop questions, photos, and updates here.`, pin: true },
+    { e: "chat@bulldogops.com",   c: `Spinning up #${channelName} for this project. Drop questions, photos, and updates here.`, pin: true },
     { e: "reina@vectorservicesus.com",   c: `Office sweeps this channel daily — tag @reina for billing or scope questions.` },
     { e: "lena@vectorservicesus.com",    c: `Safety check-ins go here too. Photos welcome — bonus points if you're in PPE.` },
     { e: "marcus@vectorservicesus.com",  c: `Foremen — tomorrow's plan goes in #crew-schedule, not here.` },
@@ -73,8 +73,8 @@ interface SeedMessage { e: string; c: string; pin?: boolean; reactions?: { emoji
 
 // Lakewood — #general (rich, 22 messages)
 const lakewoodGeneral: SeedMessage[] = [
-  { e: "admin@vectorservicesus.com",   c: "Morning team. Lakewood substation rebuild kickoff is officially live. Foundation pour goes Thursday if weather holds.", pin: true, reactions: [{ emoji: "✅", userEmails: ["marcus@vectorservicesus.com","devon@vectorservicesus.com","reina@vectorservicesus.com","lena@vectorservicesus.com","kai@vectorservicesus.com"] }] },
-  { e: "reina@vectorservicesus.com",   c: "Estimate is locked. Final number came in at $1.47M, 4% under the engineer's. Sending the GMP packet to PSE this morning.", reactions: [{ emoji: "🔥", userEmails: ["admin@vectorservicesus.com","marcus@vectorservicesus.com"] }] },
+  { e: "chat@bulldogops.com",   c: "Morning team. Lakewood substation rebuild kickoff is officially live. Foundation pour goes Thursday if weather holds.", pin: true, reactions: [{ emoji: "✅", userEmails: ["marcus@vectorservicesus.com","devon@vectorservicesus.com","reina@vectorservicesus.com","lena@vectorservicesus.com","kai@vectorservicesus.com"] }] },
+  { e: "reina@vectorservicesus.com",   c: "Estimate is locked. Final number came in at $1.47M, 4% under the engineer's. Sending the GMP packet to PSE this morning.", reactions: [{ emoji: "🔥", userEmails: ["chat@bulldogops.com","marcus@vectorservicesus.com"] }] },
   { e: "marcus@vectorservicesus.com",  c: "Crew A rolling out of the yard at 06:30. Three bucket trucks, the digger derrick, and the 40-ton crane on the lowboy. Locates are clear through Friday." },
   { e: "lena@vectorservicesus.com",    c: "Reminder: arc-flash cat 2 minimum once we're inside the fence. Hot stick checks before you touch anything energized. Logged 3 near-misses on the I-405 job last week — don't make me write a fourth.", reactions: [{ emoji: "✅", userEmails: ["marcus@vectorservicesus.com","devon@vectorservicesus.com","kai@vectorservicesus.com","sasha@vectorservicesus.com","eli@vectorservicesus.com","riley@vectorservicesus.com"] }] },
   { e: "devon@vectorservicesus.com",   c: "Transformer delivery from ABB pushed to Wednesday. Their flatbed lost a tire outside Spokane. New ETA 14:00." },
@@ -83,7 +83,7 @@ const lakewoodGeneral: SeedMessage[] = [
   { e: "aubrey@vectorservicesus.com",  c: "On it Kai. WESCO has stock in Kent. Will-call by 11:00 if Devon can swing the F-450 by.", reactions: [{ emoji: "🙏", userEmails: ["kai@vectorservicesus.com"] }] },
   { e: "devon@vectorservicesus.com",   c: "Copy. Sending Riley." },
   { e: "marcus@vectorservicesus.com",  c: "Heads up — KING5 just rolled a news van past the fence. Probably nothing but PR wanted me to flag it." },
-  { e: "admin@vectorservicesus.com",   c: "I'll call their assignment desk. Nobody talks on camera without me. Reina, can you draft a one-paragraph statement just in case?" },
+  { e: "chat@bulldogops.com",   c: "I'll call their assignment desk. Nobody talks on camera without me. Reina, can you draft a one-paragraph statement just in case?" },
   { e: "reina@vectorservicesus.com",   c: "Drafting now. Will drop in #announcements." },
   { e: "sasha@vectorservicesus.com",   c: "Photo from inside the fence — the old switchgear is uglier than the survey showed. Lot of corrosion on the B-phase bushings." },
   { e: "eli@vectorservicesus.com",     c: "I can torch them off but we'll need replacement bushings on the BOM. Adding to the change-order list." },
@@ -94,11 +94,11 @@ const lakewoodGeneral: SeedMessage[] = [
   { e: "kai@vectorservicesus.com",     c: "Lunch run — anyone want from Taqueria El Asadero? Cash app only, no cards.", reactions: [{ emoji: "🌮", userEmails: ["riley@vectorservicesus.com","sasha@vectorservicesus.com","eli@vectorservicesus.com"] }] },
   { e: "riley@vectorservicesus.com",   c: "Two carne asada burritos and a Jarritos lime" },
   { e: "sasha@vectorservicesus.com",   c: "Same but al pastor 🌮" },
-  { e: "admin@vectorservicesus.com",   c: "Field-ops sync at 14:00 in War Room voice. Foremen + Reina + Lena. Will be quick.", reactions: [{ emoji: "✅", userEmails: ["marcus@vectorservicesus.com","devon@vectorservicesus.com","reina@vectorservicesus.com","lena@vectorservicesus.com"] }] },
+  { e: "chat@bulldogops.com",   c: "Field-ops sync at 14:00 in War Room voice. Foremen + Reina + Lena. Will be quick.", reactions: [{ emoji: "✅", userEmails: ["marcus@vectorservicesus.com","devon@vectorservicesus.com","reina@vectorservicesus.com","lena@vectorservicesus.com"] }] },
 ];
 
 const lakewoodAnnouncements: SeedMessage[] = [
-  { e: "admin@vectorservicesus.com", c: "**Project kickoff — Lakewood Substation Rebuild**\n\nScope: full rebuild of the 115/12.5kV substation including replacement of two 30 MVA transformers, switchgear, breakers, and protective relaying. Owner: PSE. Duration: 14 weeks.\n\nForemen: Marcus (day), Tomás (night). Estimator of record: Reina.\n\nPlease keep #general for chatter. This channel is for ops-level announcements only.", pin: true },
+  { e: "chat@bulldogops.com", c: "**Project kickoff — Lakewood Substation Rebuild**\n\nScope: full rebuild of the 115/12.5kV substation including replacement of two 30 MVA transformers, switchgear, breakers, and protective relaying. Owner: PSE. Duration: 14 weeks.\n\nForemen: Marcus (day), Tomás (night). Estimator of record: Reina.\n\nPlease keep #general for chatter. This channel is for ops-level announcements only.", pin: true },
   { e: "lena@vectorservicesus.com",  c: "**Safety stand-down completed.** All 18 crew members signed the Lakewood-specific JHA. Forms filed at HQ. Next refresher 14 days from today." },
   { e: "reina@vectorservicesus.com", c: "Press response (draft) for media inquiries:\n\n> Vector Services is partnering with Puget Sound Energy to modernize the Lakewood substation, improving grid resilience for over 14,000 residential and commercial customers." },
 ];
@@ -122,7 +122,7 @@ const lakewoodSafety: SeedMessage[] = [
   { e: "marcus@vectorservicesus.com", c: "Crew A briefed and signed in. Pre-job huddle on video, posted to compliance folder." },
   { e: "lena@vectorservicesus.com",   c: "Near-miss logged from Bothell yesterday — apprentice climbed without secondary tie-off. Coaching delivered, no write-up. Don't repeat." },
   { e: "riley@vectorservicesus.com",  c: "That was me. Won't happen again. Apologies." },
-  { e: "admin@vectorservicesus.com",  c: "Appreciate you owning it Riley. Lena, schedule him for the fall protection refresher this week." },
+  { e: "chat@bulldogops.com",  c: "Appreciate you owning it Riley. Lena, schedule him for the fall protection refresher this week." },
   { e: "lena@vectorservicesus.com",   c: "Done — Thursday 16:00, training trailer." },
   { e: "tomas@vectorservicesus.com",  c: "Night crew safety brief at 19:30 sharp. PPE check, radio check, lock-out review." },
   { e: "eli@vectorservicesus.com",    c: "Confirming the crane's annual inspection sticker is current — expires 9/2026. We're good." },
@@ -161,7 +161,7 @@ export async function runSeed() {
     const created = storage.createUser({
       orgId: org.id,
       email: u.email,
-      passwordHash: u.email === "admin@vectorservicesus.com" ? passwordHashAdmin : passwordHashCrew,
+      passwordHash: u.email === "chat@bulldogops.com" ? passwordHashAdmin : passwordHashCrew,
       name: u.name,
       title: u.title,
       avatarUrl: null,
@@ -233,5 +233,5 @@ export async function runSeed() {
     }
   }
 
-  console.log(`[seed] Done. Admin login: admin@vectorservicesus.com / Vector2026!`);
+  console.log(`[seed] Done. Admin login: chat@bulldogops.com / Vector2026!`);
 }
