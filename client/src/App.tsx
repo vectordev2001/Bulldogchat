@@ -9,6 +9,7 @@ import Home from "@/pages/Home";
 import Login from "@/pages/Login";
 import Signup from "@/pages/Signup";
 import AcceptInvite from "@/pages/AcceptInvite";
+import AdminPanel from "@/pages/AdminPanel";
 import { AuthProvider, useAuth } from "@/lib/auth";
 import { useEffect } from "react";
 import { Loader2 } from "lucide-react";
@@ -40,6 +41,7 @@ function AppRouter() {
       <Route path="/login" component={Login} />
       <Route path="/signup" component={Signup} />
       <Route path="/accept-invite/:token" component={AcceptInvite} />
+      <Route path="/admin">{() => <ProtectedRoute><AdminPanel /></ProtectedRoute>}</Route>
       <Route path="/">{() => <ProtectedRoute><Home /></ProtectedRoute>}</Route>
       <Route component={NotFound} />
     </Switch>

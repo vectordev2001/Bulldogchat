@@ -1,4 +1,5 @@
-import { Hash, Volume2, ChevronDown, Plus, Mic, MicOff, Headphones, Settings, Search, Shield } from "lucide-react";
+import { Hash, Volume2, ChevronDown, Plus, Mic, MicOff, Headphones, Settings, Search, Shield, ShieldCheck } from "lucide-react";
+import { useLocation } from "wouter";
 import { useState, useMemo } from "react";
 import { Avatar } from "./Avatar";
 import type { ApiChannel, ApiProject, ApiUser } from "@/types/api";
@@ -112,6 +113,9 @@ export function ChannelSidebar({
           <IconBtn title={myDeafened ? "Undeafen" : "Deafen"} onClick={onToggleDeafen} danger={myDeafened} testid="button-user-headphones">
             <Headphones className="w-4 h-4" />
           </IconBtn>
+          {me.role === "admin" && (
+            <AdminBtn />
+          )}
           <IconBtn title="User Settings" testid="button-user-settings">
             <Settings className="w-4 h-4" />
           </IconBtn>
@@ -178,6 +182,21 @@ function IconBtn({
       ].join(" ")}
     >
       {children}
+    </button>
+  );
+}
+
+function AdminBtn() {
+  const [, setLocation] = useLocation();
+  return (
+    <button
+      type="button"
+      onClick={() => setLocation("/admin")}
+      title="Admin Panel"
+      data-testid="button-admin-panel"
+      className="w-8 h-8 flex items-center justify-center rounded-md transition-colors text-vs-red hover:bg-[hsl(2_70%_55%/0.15)]"
+    >
+      <ShieldCheck className="w-4 h-4" />
     </button>
   );
 }

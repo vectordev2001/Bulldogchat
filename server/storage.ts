@@ -1,7 +1,8 @@
-import { db } from "./db";
+import { db, rawDb } from "./db";
 import {
   organizations, users, projects, projectMembers, channels, messages,
   reactions, readReceipts, pushSubscriptions, sessions, invites, livekitRooms,
+  attachments, messageMentions, recordings, expoPushTokens,
 } from "@shared/schema";
 import type {
   Organization, InsertOrganization,
@@ -13,8 +14,11 @@ import type {
   PushSubscription as PushSub,
   Session, Invite, InsertInvite,
   UserRole,
+  Attachment, MessageMention, MentionType,
+  Recording, RecordingStatus,
+  ExpoPushToken,
 } from "@shared/schema";
-import { and, eq, desc, lt, asc, sql, inArray } from "drizzle-orm";
+import { and, eq, desc, lt, asc, sql, inArray, isNull } from "drizzle-orm";
 
 export function sanitize(u: User): PublicUser {
   const { passwordHash: _ph, ...rest } = u;
@@ -81,6 +85,50 @@ export interface IStorage {
   createInvite(input: { orgId: number; projectId?: number | null; email?: string | null; role: UserRole; token: string; invitedByUserId: number; expiresAt: Date }): Invite;
   getInviteByToken(token: string): Invite | undefined;
   markInviteAccepted(id: number): void;
+  listInvitesByOrg(orgId: number): Invite[];
+  deleteInvite(id: number): void;
+
+  /* Attachments */
+  createAttachment(input: { id: string; uploaderUserId: number; filename: string; contentType: string; sizeBytes: number; storageKey: string; thumbnailKey?: string | null }): Attachment;
+  getAttachment(id: string): Attachment | undefined;
+  listAttachmentsForMessages(messageIds: number[]): Attachment[];
+  linkAttachmentsToMessage(ids: string[], messageId: number, uploaderUserId: number): void;
+  deleteAttachment(id: string): void;
+
+  /* Mentions */
+  createMentions(messageId: number, mentions: Array<{ userId: number | null; type: MentionType }>): void;
+  listMentionsForMessages(messageIds: number[]): MessageMention[];
+
+  /* Threads */
+  listReplies(messageId: number): Message[];
+  threadReplyCounts(messageIds: number[]): Map<number, { count: number; lastAt: number }>;
+
+  /* Search */
+  searchMessages(opts: { q: string; channelIds: number[]; userId?: number; fromDate?: Date; toDate?: Date; limit?: number }): Message[];
+
+  /* Recordings */
+  createRecording(input: { channelId: number; startedByUserId: number; egressId?: string | null }): Recording;
+  updateRecording(id: number, patch: Partial<Pick<Recording, "egressId" | "endedAt" | "durationSeconds" | "storageUrl" | "storageKey" | "fileSizeBytes" | "status">>): Recording | undefined;
+  getRecording(id: number): Recording | undefined;
+  listRecordingsForChannel(channelId: number): Recording[];
+  getActiveRecordingForChannel(channelId: number): Recording | undefined;
+  findRecordingByEgressId(egressId: string): Recording | undefined;
+
+  /* Expo push */
+  upsertExpoPushToken(input: { userId: number; token: string; deviceLabel?: string | null }): ExpoPushToken;
+  listExpoTokensForUsers(userIds: number[]): ExpoPushToken[];
+  deleteExpoTokenByToken(token: string): void;
+
+  /* Admin */
+  resetUserPassword(userId: number, newHash: string): void;
+  setUserDeactivated(userId: number, deactivated: boolean): User | undefined;
+  deleteUserCascade(userId: number): void;
+  deleteAllSessionsForUser(userId: number): void;
+  updateOrg(id: number, patch: Partial<Pick<Organization, "name" | "plan">>): Organization | undefined;
+  updateProject(id: number, patch: Partial<Pick<Project, "name" | "description" | "short" | "hue">>): Project | undefined;
+  deleteProjectCascade(projectId: number): void;
+  countChannelsForProject(projectId: number): number;
+  countMembersForProject(projectId: number): number;
 }
 
 class DatabaseStorage implements IStorage {
@@ -269,6 +317,220 @@ class DatabaseStorage implements IStorage {
   }
   markInviteAccepted(id: number) {
     db.update(invites).set({ acceptedAt: new Date() }).where(eq(invites.id, id)).run();
+  }
+  listInvitesByOrg(orgId: number) {
+    return db.select().from(invites).where(eq(invites.orgId, orgId)).orderBy(desc(invites.id)).all();
+  }
+  deleteInvite(id: number) {
+    db.delete(invites).where(eq(invites.id, id)).run();
+  }
+
+  /* Attachments */
+  createAttachment(input) {
+    return db.insert(attachments).values({
+      id: input.id,
+      uploaderUserId: input.uploaderUserId,
+      filename: input.filename,
+      contentType: input.contentType,
+      sizeBytes: input.sizeBytes,
+      storageKey: input.storageKey,
+      thumbnailKey: input.thumbnailKey ?? null,
+      messageId: null,
+      createdAt: new Date(),
+    }).returning().get();
+  }
+  getAttachment(id: string) { return db.select().from(attachments).where(eq(attachments.id, id)).get(); }
+  listAttachmentsForMessages(messageIds: number[]) {
+    if (messageIds.length === 0) return [];
+    return db.select().from(attachments).where(inArray(attachments.messageId, messageIds)).all();
+  }
+  linkAttachmentsToMessage(ids: string[], messageId: number, uploaderUserId: number) {
+    if (ids.length === 0) return;
+    // Only link attachments owned by this uploader and not yet linked
+    for (const id of ids) {
+      db.update(attachments)
+        .set({ messageId })
+        .where(and(eq(attachments.id, id), eq(attachments.uploaderUserId, uploaderUserId), isNull(attachments.messageId)))
+        .run();
+    }
+  }
+  deleteAttachment(id: string) {
+    db.delete(attachments).where(eq(attachments.id, id)).run();
+  }
+
+  /* Mentions */
+  createMentions(messageId: number, mentions: Array<{ userId: number | null; type: MentionType }>) {
+    if (mentions.length === 0) return;
+    for (const m of mentions) {
+      try {
+        db.insert(messageMentions).values({
+          messageId,
+          mentionedUserId: m.userId,
+          type: m.type,
+        }).run();
+      } catch { /* dup */ }
+    }
+  }
+  listMentionsForMessages(messageIds: number[]) {
+    if (messageIds.length === 0) return [];
+    return db.select().from(messageMentions).where(inArray(messageMentions.messageId, messageIds)).all();
+  }
+
+  /* Threads */
+  listReplies(messageId: number) {
+    return db.select().from(messages).where(eq(messages.replyToMessageId, messageId)).orderBy(asc(messages.id)).all();
+  }
+  threadReplyCounts(messageIds: number[]) {
+    const map = new Map<number, { count: number; lastAt: number }>();
+    if (messageIds.length === 0) return map;
+    const rows = db.select({
+      parentId: messages.replyToMessageId,
+      count: sql<number>`count(*)`,
+      lastAt: sql<number>`max(created_at)`,
+    }).from(messages)
+      .where(inArray(messages.replyToMessageId, messageIds))
+      .groupBy(messages.replyToMessageId)
+      .all();
+    for (const r of rows) {
+      if (r.parentId != null) map.set(r.parentId, { count: Number(r.count) || 0, lastAt: Number(r.lastAt) || 0 });
+    }
+    return map;
+  }
+
+  /* Search */
+  searchMessages(opts) {
+    const { q, channelIds, userId, fromDate, toDate, limit = 50 } = opts;
+    if (channelIds.length === 0) return [];
+    // Use FTS5 directly via rawDb. Escape double-quotes; wrap each token in quotes for prefix search.
+    const cleaned = q.trim().replace(/["]/g, " ").slice(0, 200);
+    if (!cleaned) return [];
+    const ftsQuery = cleaned.split(/\s+/).filter(Boolean).map(t => `"${t}"*`).join(" ");
+    const placeholders = channelIds.map(() => "?").join(",");
+    const params: any[] = [ftsQuery, ...channelIds];
+    let sqlStr = `
+      SELECT m.* FROM messages_fts
+      JOIN messages m ON m.id = messages_fts.rowid
+      WHERE messages_fts MATCH ? AND m.channel_id IN (${placeholders})
+    `;
+    if (userId) { sqlStr += " AND m.user_id = ?"; params.push(userId); }
+    if (fromDate) { sqlStr += " AND m.created_at >= ?"; params.push(Math.floor(fromDate.getTime() / 1000)); }
+    if (toDate) { sqlStr += " AND m.created_at <= ?"; params.push(Math.floor(toDate.getTime() / 1000)); }
+    sqlStr += " ORDER BY m.id DESC LIMIT ?";
+    params.push(Math.min(limit, 200));
+    const rows = rawDb.prepare(sqlStr).all(...params) as any[];
+    // Re-map snake_case to drizzle camelCase
+    return rows.map(r => ({
+      id: r.id,
+      channelId: r.channel_id,
+      userId: r.user_id,
+      content: r.content,
+      attachments: r.attachments,
+      replyToMessageId: r.reply_to_message_id,
+      isPinned: !!r.is_pinned,
+      createdAt: new Date(r.created_at * 1000),
+      editedAt: r.edited_at ? new Date(r.edited_at * 1000) : null,
+    })) as Message[];
+  }
+
+  /* Recordings */
+  createRecording(input) {
+    return db.insert(recordings).values({
+      channelId: input.channelId,
+      startedByUserId: input.startedByUserId,
+      egressId: input.egressId ?? null,
+      startedAt: new Date(),
+      status: "recording",
+    }).returning().get();
+  }
+  updateRecording(id: number, patch) {
+    return db.update(recordings).set(patch).where(eq(recordings.id, id)).returning().get();
+  }
+  getRecording(id: number) { return db.select().from(recordings).where(eq(recordings.id, id)).get(); }
+  listRecordingsForChannel(channelId: number) {
+    return db.select().from(recordings).where(eq(recordings.channelId, channelId)).orderBy(desc(recordings.id)).all();
+  }
+  getActiveRecordingForChannel(channelId: number) {
+    return db.select().from(recordings)
+      .where(and(eq(recordings.channelId, channelId), eq(recordings.status, "recording")))
+      .orderBy(desc(recordings.id)).get();
+  }
+  findRecordingByEgressId(egressId: string) {
+    return db.select().from(recordings).where(eq(recordings.egressId, egressId)).get();
+  }
+
+  /* Expo push */
+  upsertExpoPushToken(input) {
+    const existing = db.select().from(expoPushTokens).where(eq(expoPushTokens.token, input.token)).get();
+    if (existing) {
+      db.update(expoPushTokens).set({ userId: input.userId, deviceLabel: input.deviceLabel ?? null }).where(eq(expoPushTokens.id, existing.id)).run();
+      return { ...existing, userId: input.userId, deviceLabel: input.deviceLabel ?? null } as ExpoPushToken;
+    }
+    return db.insert(expoPushTokens).values({
+      userId: input.userId,
+      token: input.token,
+      deviceLabel: input.deviceLabel ?? null,
+      createdAt: new Date(),
+    }).returning().get();
+  }
+  listExpoTokensForUsers(userIds: number[]) {
+    if (userIds.length === 0) return [];
+    return db.select().from(expoPushTokens).where(inArray(expoPushTokens.userId, userIds)).all();
+  }
+  deleteExpoTokenByToken(token: string) {
+    db.delete(expoPushTokens).where(eq(expoPushTokens.token, token)).run();
+  }
+
+  /* Admin */
+  resetUserPassword(userId: number, newHash: string) {
+    db.update(users).set({ passwordHash: newHash }).where(eq(users.id, userId)).run();
+  }
+  setUserDeactivated(userId: number, deactivated: boolean) {
+    return db.update(users).set({ deactivated }).where(eq(users.id, userId)).returning().get();
+  }
+  deleteUserCascade(userId: number) {
+    // Best-effort: delete sessions, push subs, reactions; reassign messages? Keep messages, set null author? Easier: anonymize.
+    db.delete(sessions).where(eq(sessions.userId, userId)).run();
+    db.delete(pushSubscriptions).where(eq(pushSubscriptions.userId, userId)).run();
+    db.delete(expoPushTokens).where(eq(expoPushTokens.userId, userId)).run();
+    db.delete(reactions).where(eq(reactions.userId, userId)).run();
+    db.delete(projectMembers).where(eq(projectMembers.userId, userId)).run();
+    // Soft-delete: mark deactivated, change email to disable login. Don't delete the row because FKs reference it.
+    rawDb.prepare(`UPDATE users SET deactivated = 1, email = ? WHERE id = ?`).run(`deleted-${userId}@deleted.local`, userId);
+  }
+  deleteAllSessionsForUser(userId: number) {
+    db.delete(sessions).where(eq(sessions.userId, userId)).run();
+  }
+  updateOrg(id: number, patch) {
+    return db.update(organizations).set(patch).where(eq(organizations.id, id)).returning().get();
+  }
+  updateProject(id: number, patch) {
+    return db.update(projects).set(patch).where(eq(projects.id, id)).returning().get();
+  }
+  deleteProjectCascade(projectId: number) {
+    // Cascade delete: messages, channels, members, project
+    const chs = db.select().from(channels).where(eq(channels.projectId, projectId)).all();
+    for (const c of chs) {
+      const msgs = db.select({ id: messages.id }).from(messages).where(eq(messages.channelId, c.id)).all();
+      for (const m of msgs) {
+        db.delete(reactions).where(eq(reactions.messageId, m.id)).run();
+        db.delete(messageMentions).where(eq(messageMentions.messageId, m.id)).run();
+      }
+      db.delete(messages).where(eq(messages.channelId, c.id)).run();
+      db.delete(readReceipts).where(eq(readReceipts.channelId, c.id)).run();
+      db.delete(recordings).where(eq(recordings.channelId, c.id)).run();
+    }
+    db.delete(channels).where(eq(channels.projectId, projectId)).run();
+    db.delete(projectMembers).where(eq(projectMembers.projectId, projectId)).run();
+    db.delete(invites).where(eq(invites.projectId, projectId)).run();
+    db.delete(projects).where(eq(projects.id, projectId)).run();
+  }
+  countChannelsForProject(projectId: number) {
+    const r = db.select({ c: sql<number>`count(*)` }).from(channels).where(eq(channels.projectId, projectId)).get();
+    return r?.c ?? 0;
+  }
+  countMembersForProject(projectId: number) {
+    const r = db.select({ c: sql<number>`count(*)` }).from(projectMembers).where(eq(projectMembers.projectId, projectId)).get();
+    return r?.c ?? 0;
   }
 }
 
