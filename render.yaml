@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: vector-chat
+    runtime: docker
+    plan: starter
+    region: oregon
+    healthCheckPath: /api/health
+    disk:
+      name: vector-chat-data
+      mountPath: /app/data
+      sizeGB: 1
+    envVars:
+      - { key: NODE_ENV, value: production }
+      - { key: DATABASE_URL, value: file:/app/data/vector.db }
+      - { key: JWT_SECRET, generateValue: true }
+      - { key: VITE_AUTH_MODE, value: cookie }
+      - { key: LIVEKIT_API_KEY, sync: false }
+      - { key: LIVEKIT_API_SECRET, sync: false }
+      - { key: LIVEKIT_WS_URL, sync: false }
+      - { key: VAPID_PUBLIC_KEY, sync: false }
+      - { key: VAPID_PRIVATE_KEY, sync: false }
+      - { key: VAPID_SUBJECT, value: mailto:admin@vectorservicesus.com }
+      - { key: VITE_VAPID_PUBLIC_KEY, sync: false }

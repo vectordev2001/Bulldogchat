@@ -1,0 +1,72 @@
+// Frontend type shapes mirroring the backend wire format from server/routes.ts
+
+export type UserRole = "admin" | "foreman" | "office" | "field" | "safety";
+
+export interface ApiUser {
+  id: number;
+  orgId: number;
+  email: string;
+  name: string;
+  title: string | null;
+  avatarUrl: string | null;
+  hue: number;
+  role: UserRole;
+  status: string;
+  createdAt: string;
+  lastSeenAt: string | null;
+}
+
+export interface ApiProject {
+  id: number;
+  orgId: number;
+  name: string;
+  slug: string;
+  short: string;
+  hue: number;
+  description: string | null;
+  createdAt: string;
+}
+
+export type ChannelType = "text" | "voice";
+
+export interface ApiChannel {
+  id: number;
+  projectId: number;
+  name: string;
+  type: ChannelType;
+  topic: string | null;
+  position: number;
+  createdAt: string;
+}
+
+export interface ApiReaction {
+  emoji: string;
+  count: number;
+  userIds: number[];
+}
+
+export interface ApiMessage {
+  id: number;
+  channelId: number;
+  userId: number;
+  content: string;
+  attachments: string | null;
+  replyToMessageId: number | null;
+  isPinned: boolean;
+  createdAt: string;
+  editedAt: string | null;
+  // Wire enrichment from backend:
+  authorName: string;
+  authorHue: number;
+  authorRole: UserRole;
+  authorInitials: string;
+  reactions?: ApiReaction[];
+}
+
+export interface VoiceTokenResponse {
+  token?: string;
+  ws_url?: string;
+  room_name?: string;
+  preview_mode?: boolean;
+  message?: string;
+}

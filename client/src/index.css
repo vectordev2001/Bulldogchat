@@ -1,0 +1,260 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* VECTOR CHAT — Vector Services palette
+   Navy + Red + Blue + Tan
+   Dark mode is default and primary.
+   Source: vectorservicesus.com brand colors. */
+
+:root {
+  /* Light variant — fallback only */
+  --button-outline: rgba(0, 0, 0, 0.1);
+  --badge-outline: rgba(0, 0, 0, 0.05);
+  --opaque-button-border-intensity: -8;
+  --elevate-1: rgba(0, 0, 0, 0.04);
+  --elevate-2: rgba(0, 0, 0, 0.08);
+  --background: 232 30% 96%;
+  --foreground: 232 50% 14%;
+  --border: 232 20% 86%;
+  --card: 0 0% 100%;
+  --card-foreground: 232 50% 14%;
+  --card-border: 232 20% 88%;
+  --sidebar: 232 50% 20%;
+  --sidebar-foreground: 0 0% 92%;
+  --sidebar-border: 232 60% 12%;
+  --sidebar-primary: 2 70% 55%;
+  --sidebar-primary-foreground: 0 0% 100%;
+  --sidebar-accent: 232 45% 28%;
+  --sidebar-accent-foreground: 0 0% 96%;
+  --sidebar-ring: 2 70% 55%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 232 50% 14%;
+  --popover-border: 232 20% 88%;
+  --primary: 2 70% 55%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 232 20% 90%;
+  --secondary-foreground: 232 50% 14%;
+  --muted: 232 15% 92%;
+  --muted-foreground: 232 15% 40%;
+  --accent: 218 100% 68%;
+  --accent-foreground: 232 50% 14%;
+  --destructive: 2 70% 55%;
+  --destructive-foreground: 0 0% 98%;
+  --input: 232 15% 80%;
+  --ring: 2 70% 55%;
+  --chart-1: 2 70% 55%;
+  --chart-2: 218 100% 68%;
+  --chart-3: 207 63% 36%;
+  --chart-4: 204 70% 70%;
+  --chart-5: 28 35% 58%;
+  --font-sans: "Satoshi", "Inter", -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-serif: Georgia, serif;
+  --font-mono: "JetBrains Mono", "Menlo", monospace;
+  --radius: 0.5rem;
+  --shadow-sm: 0 1px 2px hsl(232 50% 8% / 0.2);
+  --shadow: 0 2px 4px hsl(232 50% 8% / 0.25);
+  --shadow-md: 0 4px 8px hsl(232 50% 8% / 0.3);
+  --shadow-lg: 0 10px 24px hsl(232 50% 8% / 0.35);
+  --shadow-xl: 0 20px 40px hsl(232 50% 8% / 0.4);
+  --shadow-2xl: 0 30px 60px hsl(232 50% 8% / 0.5);
+  --tracking-normal: 0em;
+  --spacing: 0.25rem;
+
+  /* Vector signature colors — pulled from vectorservicesus.com */
+  --vs-navy: 232 50% 20%;          /* #191E4A */
+  --vs-navy-deep: 232 60% 12%;     /* #0F1230 darker */
+  --vs-navy-panel: 232 45% 27%;    /* #252A5C lighter panel */
+  --vs-navy-soft: 232 40% 22%;
+  --vs-red: 2 70% 55%;             /* #DD403D */
+  --vs-red-bright: 2 80% 62%;
+  --vs-blue: 218 100% 68%;         /* #5E97FF */
+  --vs-blue-deep: 207 63% 36%;     /* #226294 */
+  --vs-blue-light: 204 70% 70%;    /* #7FBDE8 */
+  --vs-tan: 28 35% 58%;            /* #BB936C */
+  --vs-text: 0 0% 100%;
+  --vs-text-muted: 0 0% 89%;
+  --vs-text-dim: 0 0% 56%;
+  --vs-green: 145 60% 48%;         /* status only */
+  --vs-amber: 35 100% 60%;         /* status idle */
+
+  --sidebar-primary-border: hsl(var(--sidebar-primary));
+  --sidebar-accent-border: hsl(var(--sidebar-accent));
+  --primary-border: hsl(var(--primary));
+  --secondary-border: hsl(var(--secondary));
+  --muted-border: hsl(var(--muted));
+  --accent-border: hsl(var(--accent));
+  --destructive-border: hsl(var(--destructive));
+}
+
+.dark {
+  --button-outline: rgba(255, 255, 255, 0.08);
+  --badge-outline: rgba(255, 255, 255, 0.06);
+  --opaque-button-border-intensity: 9;
+  --elevate-1: rgba(255, 255, 255, 0.04);
+  --elevate-2: rgba(255, 255, 255, 0.08);
+
+  /* Surfaces — layered navy */
+  --background: 232 60% 9%;          /* deep navy app background */
+  --foreground: 0 0% 96%;
+  --border: 232 40% 25%;
+  --card: 232 50% 16%;
+  --card-foreground: 0 0% 96%;
+  --card-border: 232 40% 25%;
+
+  /* Sidebar = primary navy */
+  --sidebar: 232 50% 20%;            /* #191E4A */
+  --sidebar-foreground: 0 0% 92%;
+  --sidebar-border: 232 65% 10%;
+  --sidebar-primary: 2 70% 55%;      /* red CTA on sidebar */
+  --sidebar-primary-foreground: 0 0% 100%;
+  --sidebar-accent: 232 45% 30%;
+  --sidebar-accent-foreground: 0 0% 96%;
+  --sidebar-ring: 2 70% 55%;
+
+  --popover: 232 55% 14%;
+  --popover-foreground: 0 0% 96%;
+  --popover-border: 232 40% 25%;
+
+  --primary: 2 70% 55%;              /* red */
+  --primary-foreground: 0 0% 100%;
+  --secondary: 232 45% 20%;
+  --secondary-foreground: 0 0% 96%;
+  --muted: 232 45% 18%;
+  --muted-foreground: 0 0% 70%;
+  --accent: 218 100% 68%;            /* secondary blue */
+  --accent-foreground: 232 60% 9%;
+  --destructive: 2 70% 55%;
+  --destructive-foreground: 0 0% 100%;
+  --input: 232 40% 26%;
+  --ring: 2 70% 55%;
+
+  --chart-1: 2 70% 55%;
+  --chart-2: 218 100% 68%;
+  --chart-3: 207 63% 36%;
+  --chart-4: 204 70% 70%;
+  --chart-5: 28 35% 58%;
+
+  --shadow-sm: 0 1px 2px hsl(0 0% 0% / 0.3);
+  --shadow: 0 2px 6px hsl(0 0% 0% / 0.4);
+  --shadow-md: 0 4px 12px hsl(0 0% 0% / 0.5);
+  --shadow-lg: 0 10px 24px hsl(0 0% 0% / 0.6);
+  --shadow-xl: 0 20px 40px hsl(0 0% 0% / 0.7);
+  --shadow-2xl: 0 30px 60px hsl(0 0% 0% / 0.8);
+
+  --sidebar-primary-border: hsl(var(--sidebar-primary));
+  --sidebar-accent-border: hsl(var(--sidebar-accent));
+  --primary-border: hsl(var(--primary));
+  --secondary-border: hsl(var(--secondary));
+  --muted-border: hsl(var(--muted));
+  --accent-border: hsl(var(--accent));
+  --destructive-border: hsl(var(--destructive));
+}
+
+@layer base {
+  * { @apply border-border; }
+  html, body, #root { height: 100%; }
+  body {
+    @apply font-sans antialiased bg-background text-foreground;
+    font-feature-settings: "ss01", "ss02", "cv11";
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: hsl(232 40% 25%); border-radius: 4px; }
+  ::-webkit-scrollbar-thumb:hover { background: hsl(232 40% 32%); }
+}
+
+@layer utilities {
+  .font-display {
+    font-family: var(--font-sans);
+    font-weight: 700;
+    letter-spacing: -0.01em;
+  }
+  .font-mono { font-family: var(--font-mono); }
+
+  .vs-navy { background-color: hsl(var(--vs-navy)); }
+  .vs-navy-deep { background-color: hsl(var(--vs-navy-deep)); }
+  .vs-navy-panel { background-color: hsl(var(--vs-navy-panel)); }
+  .vs-navy-soft { background-color: hsl(var(--vs-navy-soft)); }
+  .text-vs-red { color: hsl(var(--vs-red)); }
+  .text-vs-red-bright { color: hsl(var(--vs-red-bright)); }
+  .text-vs-blue { color: hsl(var(--vs-blue)); }
+  .text-vs-blue-deep { color: hsl(var(--vs-blue-deep)); }
+  .text-vs-blue-light { color: hsl(var(--vs-blue-light)); }
+  .text-vs-tan { color: hsl(var(--vs-tan)); }
+  .text-vs-green { color: hsl(var(--vs-green)); }
+  .text-vs-amber { color: hsl(var(--vs-amber)); }
+  .bg-vs-red { background-color: hsl(var(--vs-red)); }
+  .bg-vs-blue { background-color: hsl(var(--vs-blue)); }
+  .bg-vs-blue-deep { background-color: hsl(var(--vs-blue-deep)); }
+  .bg-vs-tan { background-color: hsl(var(--vs-tan)); }
+  .bg-vs-green { background-color: hsl(var(--vs-green)); }
+  .ring-vs-red { --tw-ring-color: hsl(var(--vs-red)); }
+  .ring-vs-blue { --tw-ring-color: hsl(var(--vs-blue)); }
+  .border-vs-red { border-color: hsl(var(--vs-red)); }
+  .border-vs-blue { border-color: hsl(var(--vs-blue)); }
+
+  input[type='search']::-webkit-search-cancel-button { @apply hidden; }
+
+  [contenteditable][data-placeholder]:empty::before {
+    content: attr(data-placeholder);
+    color: hsl(var(--muted-foreground));
+    pointer-events: none;
+  }
+
+  .no-default-hover-elevate {}
+  .no-default-active-elevate {}
+
+  .toggle-elevate::before,
+  .toggle-elevate-2::before {
+    content: ''; pointer-events: none; position: absolute; inset: 0; border-radius: inherit; z-index: -1;
+  }
+  .toggle-elevate.toggle-elevated::before { background-color: var(--elevate-2); }
+  .border.toggle-elevate::before { inset: -1px; }
+
+  .hover-elevate:not(.no-default-hover-elevate),
+  .active-elevate:not(.no-default-active-elevate),
+  .hover-elevate-2:not(.no-default-hover-elevate),
+  .active-elevate-2:not(.no-default-active-elevate) { position: relative; z-index: 0; }
+  .hover-elevate:not(.no-default-hover-elevate)::after,
+  .active-elevate:not(.no-default-active-elevate)::after,
+  .hover-elevate-2:not(.no-default-hover-elevate)::after,
+  .active-elevate-2:not(.no-default-active-elevate)::after {
+    content: ''; pointer-events: none; position: absolute; inset: 0; border-radius: inherit; z-index: 999;
+  }
+  .hover-elevate:hover:not(.no-default-hover-elevate)::after,
+  .active-elevate:active:not(.no-default-active-elevate)::after { background-color: var(--elevate-1); }
+  .hover-elevate-2:hover:not(.no-default-hover-elevate)::after,
+  .active-elevate-2:active:not(.no-default-active-elevate)::after { background-color: var(--elevate-2); }
+  .border.hover-elevate:not(.no-hover-interaction-elevate)::after,
+  .border.active-elevate:not(.no-active-interaction-elevate)::after,
+  .border.hover-elevate-2:not(.no-hover-interaction-elevate)::after,
+  .border.active-elevate-2:not(.no-active-interaction-elevate)::after { inset: -1px; }
+
+  @keyframes vs-speaking {
+    0%, 100% { box-shadow: 0 0 0 0 hsl(var(--vs-blue) / 0.7); }
+    50% { box-shadow: 0 0 0 8px hsl(var(--vs-blue) / 0); }
+  }
+  .speaking-ring { animation: vs-speaking 1.4s ease-out infinite; }
+
+  @keyframes vs-pulse-dot {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.6; transform: scale(0.85); }
+  }
+  .pulse-dot { animation: vs-pulse-dot 1.6s ease-in-out infinite; }
+
+  @keyframes vs-live-blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+  .live-blink { animation: vs-live-blink 1.4s ease-in-out infinite; }
+
+  /* Atmospheric grain on chat surface */
+  .vs-grain {
+    background-image:
+      radial-gradient(circle at 1px 1px, hsl(232 30% 25% / 0.4) 1px, transparent 0);
+    background-size: 24px 24px;
+  }
+}
