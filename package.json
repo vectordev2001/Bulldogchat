@@ -13,6 +13,7 @@
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1054.0",
     "@aws-sdk/s3-request-presigner": "^3.1054.0",
+    "@bulldog/auth-client": "github:vectordev2001/bulldog-auth-client",
     "@hookform/resolvers": "^3.10.0",
     "@jridgewell/trace-mapping": "^0.3.25",
     "@livekit/components-react": "^2.6.5",
@@ -60,6 +61,7 @@
     "express": "^5.0.1",
     "framer-motion": "^11.18.2",
     "input-otp": "^1.4.2",
+    "jose": "^6.2.3",
     "jsonwebtoken": "^9.0.2",
     "livekit-client": "^2.7.5",
     "livekit-server-sdk": "^2.9.0",

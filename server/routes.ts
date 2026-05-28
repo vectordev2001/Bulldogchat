@@ -13,6 +13,7 @@ import { setupWebPush, pushConfigured, getPublicVapidKey, sendNotificationToUser
 import { runMigrations } from "./migrate";
 import { runSeed } from "./seed";
 import { registerV2Routes, parseMentions } from "./routes-v2";
+import { bulldogSsoBridge } from "./bulldog-sso";
 
 const APP_VERSION = "1.0.0";
 
@@ -77,6 +78,11 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
   runMigrations();
   await runSeed();
   setupWebPush();
+
+  // Bulldog SSO bridge — if request has bulldog_access JWT cookie but no
+  // vc_token, mint a vc_token for the matching local user.
+  app.use(bulldogSsoBridge());
+
   registerV2Routes(app);
 
   // Health

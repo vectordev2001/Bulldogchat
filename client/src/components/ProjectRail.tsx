@@ -9,6 +9,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { InviteDialog } from "./InviteDialog";
 import { NotificationsButton } from "./NotificationsButton";
+import { AppSwitcher } from "@bulldog/auth-client/react";
 
 interface Props {
   projects: ApiProject[];
@@ -69,6 +70,10 @@ export function ProjectRail({ projects, activeId, onSelect, unreadByProjectId, s
       )}
 
       <NotificationsButton />
+
+      <div className="w-12 h-12 flex items-center justify-center hover:bg-[hsl(232_45%_27%)] rounded-2xl transition-all">
+        <AppSwitcher currentApp="chat" dark />
+      </div>
 
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
