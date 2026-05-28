@@ -65,17 +65,25 @@ class S3Backend implements StorageBackend {
   private s3: any;
   private bucket: string;
   private publicBase: string | null;
+  private prefix: string; // e.g. "chat/" — namespaces this app in a shared bucket
 
-  constructor(s3: any, bucket: string, publicBase: string | null) {
+  constructor(s3: any, bucket: string, publicBase: string | null, prefix = "") {
     this.s3 = s3;
     this.bucket = bucket;
     this.publicBase = publicBase;
+    // Normalize: ensure trailing slash, never leading slash
+    this.prefix = prefix ? prefix.replace(/^\/+/, "").replace(/\/?$/, "/") : "";
+  }
+
+  private fullKey(key: string) {
+    return this.prefix + key.replace(/^\/+/, "");
   }
 
   async upload(buffer: Buffer, key: string, contentType: string) {
     const { PutObjectCommand } = await import("@aws-sdk/client-s3");
+    const fullKey = this.fullKey(key);
     await this.s3.send(new PutObjectCommand({
-      Bucket: this.bucket, Key: key, Body: buffer, ContentType: contentType,
+      Bucket: this.bucket, Key: fullKey, Body: buffer, ContentType: contentType,
     }));
     return { key, url: this.publicUrl(key) ?? undefined };
   }
@@ -83,7 +91,7 @@ class S3Backend implements StorageBackend {
   async signedUrl(key: string, expiresIn = 3600) {
     const { GetObjectCommand } = await import("@aws-sdk/client-s3");
     const { getSignedUrl } = await import("@aws-sdk/s3-request-presigner");
-    return getSignedUrl(this.s3, new GetObjectCommand({ Bucket: this.bucket, Key: key }), { expiresIn });
+    return getSignedUrl(this.s3, new GetObjectCommand({ Bucket: this.bucket, Key: this.fullKey(key) }), { expiresIn });
   }
 
   async streamTo(key: string, res: Response) {
@@ -96,12 +104,12 @@ class S3Backend implements StorageBackend {
 
   async delete(key: string) {
     const { DeleteObjectCommand } = await import("@aws-sdk/client-s3");
-    await this.s3.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: key }));
+    await this.s3.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: this.fullKey(key) }));
   }
 
   publicUrl(key: string) {
     if (!this.publicBase) return null;
-    return `${this.publicBase.replace(/\/$/, "")}/${key}`;
+    return `${this.publicBase.replace(/\/$/, "")}/${this.fullKey(key)}`;
   }
 }
 
@@ -123,8 +131,9 @@ export function getStorageBackend(): StorageBackend {
           secretAccessKey: process.env.S3_SECRET_KEY!,
         },
       });
-      _backend = new S3Backend(s3, process.env.S3_BUCKET!, process.env.S3_PUBLIC_URL_BASE || null);
-      console.log(`[storage] Using S3 backend bucket=${process.env.S3_BUCKET} endpoint=${process.env.S3_ENDPOINT || "(aws)"}`);
+      const prefix = process.env.S3_KEY_PREFIX || "chat/";
+      _backend = new S3Backend(s3, process.env.S3_BUCKET!, process.env.S3_PUBLIC_URL_BASE || null, prefix);
+      console.log(`[storage] Using S3 backend bucket=${process.env.S3_BUCKET} prefix=${prefix} endpoint=${process.env.S3_ENDPOINT || "(aws)"}`);
       return _backend;
     } catch (err) {
       console.warn("[storage] Falling back to disk; S3 init failed:", err);
