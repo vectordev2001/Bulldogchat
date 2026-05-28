@@ -12,7 +12,7 @@
  * vc_token cookie is already set.
  */
 import type { Request, Response, NextFunction, RequestHandler } from "express";
-import { bulldogAuth } from "@bulldog/auth-client";
+import { bulldogAuth } from "./bulldog-sdk";
 import { storage } from "./storage";
 import { AUTH_COOKIE, signJwt, setAuthCookie } from "./auth";
 

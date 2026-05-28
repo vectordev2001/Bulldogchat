@@ -9,7 +9,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { InviteDialog } from "./InviteDialog";
 import { NotificationsButton } from "./NotificationsButton";
-import { AppSwitcher } from "@bulldog/auth-client/react";
+import { AppSwitcher } from "@/lib/AppSwitcher";
 
 interface Props {
   projects: ApiProject[];
