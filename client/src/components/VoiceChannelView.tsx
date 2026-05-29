@@ -1,14 +1,20 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Mic, MicOff, Video, VideoOff, MonitorUp, Hand, Settings, PhoneOff,
   Volume2, MoreHorizontal, ScreenShareOff, Signal, Users, Loader2, AlertTriangle, Sparkles,
-  Circle, Square, Play, Download, History,
+  Circle, Square, Play, History,
 } from "lucide-react";
 import { Avatar } from "./Avatar";
 import { motion } from "framer-motion";
 import type { ApiChannel, ApiUser, ApiRecording, VoiceTokenResponse } from "@/types/api";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import {
+  useLiveKitRoom,
+  attachTrack,
+  type RoomParticipantState,
+} from "@/lib/useLiveKitRoom";
+import type { Track } from "livekit-client";
 
 interface Props {
   channel: ApiChannel;
@@ -25,12 +31,20 @@ interface Props {
   onLeave: () => void;
 }
 
+/**
+ * Display-friendly participant the tile component needs. We blend the
+ * live LiveKit participant (which only knows user id + tracks) with the
+ * cached org-member directory (name, hue, role, title) so the tiles
+ * keep their custom Vector look even with real WebRTC tracks attached.
+ */
 interface CallParticipant {
   id: number;
   name: string;
   hue: number;
   role: ApiUser["role"];
   title: string | null;
+  // Real LiveKit state (null when in demo/preview mode):
+  live: RoomParticipantState | null;
 }
 
 function formatDuration(secs: number): string {
@@ -53,10 +67,6 @@ export function VoiceChannelView(props: Props) {
   const [livekitInfo, setLivekitInfo] = useState<{ token: string; wsUrl: string; roomName: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const tokenMutation = useMutation({
-    mutationFn: async () => apiRequest<VoiceTokenResponse>("POST", `/api/channels/${channel.id}/voice/token`),
-  });
-
   const canRecord = me.role === "admin" || me.role === "foreman";
   const [showPast, setShowPast] = useState(false);
   const recordingsQ = useQuery<ApiRecording[]>({
@@ -74,6 +84,9 @@ export function VoiceChannelView(props: Props) {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/channels", channel.id, "recordings"] }),
   });
 
+  // Fetch a LiveKit token for this channel. If the server returns 503
+  // with preview_mode (no LK creds) or omits token, we render the
+  // demo stage instead of a real call.
   useEffect(() => {
     let cancelled = false;
     setPreviewMode(null);
@@ -104,24 +117,60 @@ export function VoiceChannelView(props: Props) {
     return () => { cancelled = true; };
   }, [channel.id]);
 
-  // Demo participants: pick a deterministic subset of org members for the stage
+  // --- Live LiveKit session ----------------------------------------------
+  // The hook stays "idle" when token/wsUrl are null (preview mode).
+  const lk = useLiveKitRoom({
+    token: livekitInfo?.token ?? null,
+    wsUrl: livekitInfo?.wsUrl ?? null,
+    roomKey: livekitInfo ? String(channel.id) : null,
+    micMuted: myMicMuted,
+    videoOn: myVideoOn,
+    screenSharing: myScreenSharing,
+    onTrackError: (kind, err) => {
+      // Surface device errors in the existing error banner so the user
+      // knows why their mic/camera/screen toggle didn't take effect.
+      const msg = err instanceof Error ? err.message : String(err);
+      setError(`${kind === "mic" ? "Microphone" : kind === "camera" ? "Camera" : "Screen share"} error: ${msg}`);
+    },
+  });
+
+  // Build the display participant list. Real mode = derive from LiveKit
+  // participants and enrich with org-member metadata. Demo mode = a
+  // deterministic subset of org members for the stage so users still
+  // see a populated UI when LK isn't configured.
   const callParticipants: CallParticipant[] = (() => {
+    if (livekitInfo && lk.participants.length > 0) {
+      // Real mode: LiveKit is the source of truth for who's in the call.
+      return lk.participants.map((p): CallParticipant => {
+        const member = orgMembers.find(u => u.id === p.userId);
+        return {
+          id: p.userId || (p.isLocal ? me.id : 0),
+          name: member?.name ?? p.name,
+          hue: member?.hue ?? 210,
+          role: member?.role ?? "field",
+          title: member?.title ?? null,
+          live: p,
+        };
+      });
+    }
+    // Demo mode: pick a deterministic subset of org members for the stage.
     const others = orgMembers.filter(u => u.id !== me.id).slice(0, 4);
-    const list: CallParticipant[] = [
-      { id: me.id, name: me.name, hue: me.hue, role: me.role, title: me.title },
-      ...others.map(u => ({ id: u.id, name: u.name, hue: u.hue, role: u.role, title: u.title })),
+    return [
+      { id: me.id, name: me.name, hue: me.hue, role: me.role, title: me.title, live: null },
+      ...others.map(u => ({ id: u.id, name: u.name, hue: u.hue, role: u.role, title: u.title, live: null })),
     ];
-    return list;
   })();
 
   // Live timer
   const [elapsed, setElapsed] = useState(0);
   useEffect(() => {
+    setElapsed(0);
     const id = setInterval(() => setElapsed((e) => e + 1), 1000);
     return () => clearInterval(id);
   }, [channel.id]);
 
-  // Mock speaking simulation — only in preview mode (LiveKit would drive this for real)
+  // Mock speaking simulation — only in preview/demo mode. In real mode
+  // LiveKit drives `isSpeaking` directly through ActiveSpeakersChanged.
   const [speakingId, setSpeakingId] = useState<number | null>(null);
   useEffect(() => {
     if (previewMode === false) return; // real LiveKit handles it
@@ -136,8 +185,17 @@ export function VoiceChannelView(props: Props) {
     return () => clearInterval(id);
   }, [previewMode, callParticipants.length, me.id, myMicMuted]);
 
-  const videoMemberIds = callParticipants.filter(m => m.id !== me.id).slice(0, 2).map((m) => m.id);
-  const screenSharerId = callParticipants.find(m => m.id !== me.id)?.id;
+  // Pick a screen sharer to feature: any participant who has an active
+  // screen-share track wins; fall back to demo behaviour when offline.
+  const realScreenSharer = callParticipants.find(p => p.live?.screenTrack);
+  const screenSharerId = realScreenSharer
+    ? realScreenSharer.id
+    : (previewMode ? callParticipants.find(m => m.id !== me.id)?.id : undefined);
+
+  // While preview mode, deterministically pretend the first 2 non-me
+  // tiles have video on. In real mode this is driven by the participant's
+  // videoTrack presence.
+  const previewVideoIds = callParticipants.filter(m => m.id !== me.id).slice(0, 2).map(m => m.id);
 
   if (previewMode === null) {
     return (
@@ -150,6 +208,10 @@ export function VoiceChannelView(props: Props) {
     );
   }
 
+  // Connection status from LiveKit hook (only meaningful in real mode).
+  const lkConnecting = livekitInfo && (lk.status === "connecting" || lk.status === "reconnecting");
+  const lkFailed = livekitInfo && lk.status === "failed";
+
   return (
     <section className="flex-1 flex flex-col min-w-0 bg-[hsl(232_65%_8%)] relative">
       {/* Header */}
@@ -160,8 +222,10 @@ export function VoiceChannelView(props: Props) {
 
         <div className="ml-auto flex items-center gap-3 shrink-0">
           <div className="hidden md:flex items-center gap-1.5 text-xs">
-            <Signal className="w-3.5 h-3.5 text-vs-green" />
-            <span className="text-vs-green font-mono whitespace-nowrap">Stable · 42ms</span>
+            <Signal className={`w-3.5 h-3.5 ${lk.status === "connected" ? "text-vs-green" : lkConnecting ? "text-vs-amber" : "text-vs-green"}`} />
+            <span className={`font-mono whitespace-nowrap ${lk.status === "connected" ? "text-vs-green" : lkConnecting ? "text-vs-amber" : "text-vs-green"}`}>
+              {lkConnecting ? "Connecting…" : lkFailed ? "Failed" : "Stable · 42ms"}
+            </span>
           </div>
           <span className="w-px h-5 bg-[hsl(232_40%_22%)] hidden md:inline-block" />
           <div className="flex items-center gap-2 px-2 py-1 rounded-md bg-[hsl(2_70%_55%/0.15)] border border-[hsl(2_70%_55%/0.35)] whitespace-nowrap" data-testid="indicator-live">
@@ -202,10 +266,16 @@ export function VoiceChannelView(props: Props) {
           </div>
         </div>
       )}
-      {error && !previewMode && (
+      {lkConnecting && !previewMode && (
+        <div className="px-4 py-2 bg-[hsl(40_90%_55%/0.1)] border-b border-[hsl(40_90%_55%/0.3)] flex items-center gap-2 text-xs" data-testid="banner-lk-connecting">
+          <Loader2 className="w-3.5 h-3.5 text-vs-amber animate-spin" />
+          <span className="text-[hsl(40_85%_75%)]">Connecting to call…</span>
+        </div>
+      )}
+      {(error || lk.error) && !previewMode && (
         <div className="px-4 py-2 bg-[hsl(2_70%_55%/0.12)] border-b border-[hsl(2_70%_55%/0.4)] flex items-center gap-2 text-xs">
           <AlertTriangle className="w-3.5 h-3.5 text-vs-red" />
-          <span className="text-[hsl(2_85%_75%)]">{error}</span>
+          <span className="text-[hsl(2_85%_75%)]">{error ?? lk.error}</span>
         </div>
       )}
 
@@ -217,14 +287,22 @@ export function VoiceChannelView(props: Props) {
               : callParticipants.length <= 4 ? "grid-cols-2"
               : "grid-cols-2 lg:grid-cols-3",
           ].join(" ")}>
-            {callParticipants.map((m, idx) => {
+            {callParticipants.map((m) => {
               const isMe = m.id === me.id;
-              const muted = isMe ? myMicMuted : idx === 3;
-              const hasVideo = isMe ? myVideoOn : videoMemberIds.includes(m.id);
-              const speaking = speakingId === m.id && !muted;
+              // In real mode use LiveKit's view of mic/video/speaking;
+              // in demo mode fall back to local toggle + deterministic mock.
+              const muted = m.live
+                ? m.live.micMuted
+                : (isMe ? myMicMuted : false);
+              const hasVideo = m.live
+                ? !!m.live.videoTrack
+                : (isMe ? myVideoOn : previewVideoIds.includes(m.id));
+              const speaking = m.live
+                ? (m.live.isSpeaking && !m.live.micMuted)
+                : (speakingId === m.id && !muted);
               return (
                 <ParticipantTile
-                  key={m.id}
+                  key={m.id || m.live?.identity}
                   member={m}
                   isMe={isMe}
                   muted={muted}
@@ -236,7 +314,28 @@ export function VoiceChannelView(props: Props) {
             })}
           </div>
 
-          {(myScreenSharing || screenSharerId) && (
+          {/* Hidden audio sinks: LiveKit doesn't auto-play remote audio,
+              so we mount one <audio> per remote participant and attach
+              their mic publication. Autoplay-with-sound is allowed once
+              the user has clicked Join, which is how they got here. */}
+          <RemoteAudioMixer participants={callParticipants} myId={me.id} />
+
+          {/* Screen-share preview region. In real mode the largest video
+              attaches to the screenTrack; in demo mode we keep the
+              existing notice line. */}
+          {realScreenSharer ? (
+            <div className="max-w-5xl mx-auto mt-4 rounded-lg overflow-hidden border border-[hsl(218_100%_68%/0.4)] bg-black">
+              <div className="px-4 py-2 bg-[hsl(218_100%_68%/0.1)] border-b border-[hsl(218_100%_68%/0.3)] flex items-center gap-3 text-sm">
+                <MonitorUp className="w-4 h-4 text-vs-blue" />
+                <span className="font-semibold text-vs-blue-light">
+                  {realScreenSharer.id === me.id ? "You are " : `${realScreenSharer.name} is `}
+                </span>
+                <span className="text-white">sharing screen</span>
+                <span className="ml-auto text-[hsl(0_0%_65%)] text-xs">{channel.topic ?? "Live"}</span>
+              </div>
+              <ScreenShareVideo track={realScreenSharer.live?.screenTrack ?? null} />
+            </div>
+          ) : (myScreenSharing || screenSharerId) && (
             <div className="max-w-5xl mx-auto mt-4 px-4 py-3 rounded-lg bg-[hsl(218_100%_68%/0.1)] border border-[hsl(218_100%_68%/0.3)] flex items-center gap-3">
               <MonitorUp className="w-5 h-5 text-vs-blue" />
               <div className="text-sm text-white">
@@ -256,10 +355,12 @@ export function VoiceChannelView(props: Props) {
               Recording failed to start. Ensure LiveKit credentials and S3 storage are configured.
             </div>
           )}
-          {livekitInfo && (
+          {livekitInfo && lk.status === "connected" && (
             <div className="max-w-5xl mx-auto mt-4 px-4 py-2 rounded-md bg-[hsl(145_60%_48%/0.1)] border border-[hsl(145_60%_48%/0.3)] text-xs font-mono text-vs-green flex items-center gap-2" data-testid="banner-livekit-connected">
               <Signal className="w-3.5 h-3.5" />
-              LiveKit room <span className="text-white">{livekitInfo.roomName}</span> · token issued · 6h TTL
+              LiveKit room <span className="text-white">{livekitInfo.roomName}</span> · {lk.participants.length} live · {lk.micPublished ? "mic on" : "mic off"}
+              {lk.cameraPublished && " · cam on"}
+              {lk.screenPublished && " · screen on"}
             </div>
           )}
         </div>
@@ -295,6 +396,75 @@ export function VoiceChannelView(props: Props) {
   );
 }
 
+/**
+ * Mounts a <video> element bound to a LiveKit camera track. We use a
+ * ref + effect rather than a JSX prop so React can manage attach/detach
+ * lifecycle exactly once per track change. If `track` is null we render
+ * a placeholder gradient (the parent tile already provides one).
+ */
+function LiveVideo({ track, mirror }: { track: Track | null; mirror?: boolean }) {
+  const ref = useRef<HTMLVideoElement | null>(null);
+  useEffect(() => {
+    if (!ref.current) return;
+    return attachTrack(track, ref.current);
+  }, [track]);
+  if (!track) return null;
+  return (
+    <video
+      ref={ref}
+      autoPlay
+      playsInline
+      muted // remote audio handled by RemoteAudioMixer; mute video element to avoid duplicate output
+      className="absolute inset-0 w-full h-full object-cover"
+      style={{ transform: mirror ? "scaleX(-1)" : undefined }}
+    />
+  );
+}
+
+/** Full-width screen-share video sized to fit the preview region. */
+function ScreenShareVideo({ track }: { track: Track | null }) {
+  const ref = useRef<HTMLVideoElement | null>(null);
+  useEffect(() => {
+    if (!ref.current) return;
+    return attachTrack(track, ref.current);
+  }, [track]);
+  if (!track) {
+    return <div className="aspect-video w-full bg-[hsl(232_55%_11%)] flex items-center justify-center text-xs text-[hsl(0_0%_55%)]">Waiting for screen…</div>;
+  }
+  return <video ref={ref} autoPlay playsInline muted className="w-full max-h-[480px] object-contain bg-black" />;
+}
+
+/**
+ * One hidden <audio> per remote participant so their mic track plays
+ * through speakers. We exclude the local participant — playing your
+ * own mic back would create feedback. Browsers permit autoplay-with-
+ * sound after a user gesture; clicking Join counts as one.
+ */
+function RemoteAudioMixer({ participants, myId }: { participants: CallParticipant[]; myId: number }) {
+  return (
+    <div aria-hidden className="sr-only">
+      {participants
+        .filter(p => p.live && !p.live.isLocal && p.id !== myId)
+        .map(p => (
+          <RemoteAudioSink key={p.live!.identity} participant={p.live!} />
+        ))}
+    </div>
+  );
+}
+
+function RemoteAudioSink({ participant }: { participant: RoomParticipantState }) {
+  const ref = useRef<HTMLAudioElement | null>(null);
+  // Re-attach whenever the publisher swaps tracks (republish on unmute,
+  // network reconnect, etc.). The hook re-renders the snapshot on
+  // TrackSubscribed/Unsubscribed so `audioTrack` always reflects the
+  // currently subscribed RemoteAudioTrack.
+  useEffect(() => {
+    if (!ref.current) return;
+    return attachTrack(participant.audioTrack, ref.current);
+  }, [participant.audioTrack]);
+  return <audio ref={ref} autoPlay data-identity={participant.identity} />;
+}
+
 function ParticipantTile({
   member, isMe, muted, hasVideo, speaking, isHandRaised,
 }: {
@@ -305,6 +475,7 @@ function ParticipantTile({
   speaking: boolean;
   isHandRaised: boolean;
 }) {
+  const liveVideoTrack = member.live?.videoTrack ?? null;
   return (
     <motion.div
       layout
@@ -314,13 +485,18 @@ function ParticipantTile({
         speaking ? "border-vs-blue shadow-lg" : "border-[hsl(232_40%_25%)]",
       ].join(" ")}
       style={{
-        background: hasVideo
+        background: hasVideo && !liveVideoTrack
           ? `linear-gradient(135deg, hsl(${member.hue} 60% 22%) 0%, hsl(${(member.hue + 40) % 360} 50% 12%) 100%)`
           : "hsl(232 55% 11%)",
       }}
       data-testid={`tile-${member.id}`}
     >
-      {hasVideo ? (
+      {/* Real camera track (real mode) */}
+      {liveVideoTrack && (
+        <LiveVideo track={liveVideoTrack} mirror={isMe} />
+      )}
+      {/* Demo "video" placeholder when no real track */}
+      {hasVideo && !liveVideoTrack && (
         <div className="absolute inset-0 flex items-center justify-center">
           <svg viewBox="0 0 200 100" className="absolute inset-0 w-full h-full">
             <defs>
@@ -342,7 +518,9 @@ function ParticipantTile({
             {member.name.split(/\s+/).slice(0, 2).map(s => s[0] ?? "").join("").toUpperCase()}
           </div>
         </div>
-      ) : (
+      )}
+      {/* No-video fallback (avatar) */}
+      {!hasVideo && (
         <div className="absolute inset-0 flex items-center justify-center">
           <div className={speaking ? "speaking-ring rounded-full" : ""}>
             <Avatar member={{ name: member.name, hue: member.hue }} size={88} ring={speaking ? "blue" : "none"} />
@@ -442,7 +620,7 @@ function CallSidebar({
               <div className="text-xs font-semibold text-white truncate">{m.name}</div>
               <div className="text-[10px] text-[hsl(0_0%_60%)] truncate font-mono">{m.title || ROLE_LABEL[m.role]}</div>
             </div>
-            <Mic className="w-3 h-3 text-vs-green shrink-0" />
+            <Mic className={`w-3 h-3 shrink-0 ${m.live?.micMuted === false ? "text-vs-green" : m.live ? "text-[hsl(0_0%_45%)]" : "text-vs-green"}`} />
           </div>
         ))}
       </div>
