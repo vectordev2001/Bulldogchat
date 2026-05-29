@@ -1,6 +1,6 @@
-/* Vector Chat service worker — push + notification click */
+/* Bulldog Chat service worker — push + notification click */
 
-const SW_VERSION = "vector-chat-1.0.0";
+const SW_VERSION = "bulldog-chat-1.0.0";
 
 self.addEventListener("install", (event) => {
   self.skipWaiting();
@@ -12,13 +12,13 @@ self.addEventListener("activate", (event) => {
 
 self.addEventListener("push", (event) => {
   let data = {};
-  try { data = event.data ? event.data.json() : {}; } catch (_) { data = { title: "Vector Chat", body: event.data ? event.data.text() : "" }; }
-  const title = data.title || "Vector Chat";
+  try { data = event.data ? event.data.json() : {}; } catch (_) { data = { title: "Bulldog Chat", body: event.data ? event.data.text() : "" }; }
+  const title = data.title || "Bulldog Chat";
   const opts = {
     body: data.body || "",
     icon: "/icon-192.png",
     badge: "/icon-192.png",
-    tag: data.tag || "vector-chat",
+    tag: data.tag || "bulldog-chat",
     data: { url: data.url || "/#/" },
     requireInteraction: false,
   };

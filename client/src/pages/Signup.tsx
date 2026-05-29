@@ -34,7 +34,7 @@ export default function Signup() {
       <div className="text-center mb-7">
         <VectorLogo size={56} className="mx-auto text-vs-blue" monochrome />
         <h1 className="font-display text-2xl text-white mt-4 tracking-tight">Start a new workspace</h1>
-        <p className="text-sm text-[hsl(0_0%_70%)] mt-1">Spin up a Vector Chat org in seconds</p>
+        <p className="text-sm text-[hsl(0_0%_70%)] mt-1">Spin up a Bulldog Chat org in seconds</p>
       </div>
 
       <form onSubmit={onSubmit} className="space-y-3.5" data-testid="form-signup">

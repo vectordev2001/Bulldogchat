@@ -1,5 +1,5 @@
-// Vector Chat logo — chevron of stacked angled lines with three red stars above.
-// Inspired by vectorservicesus.com. Works at 24px–200px.
+// Bulldog Chat logo — chevron of stacked angled lines with three red stars above.
+// Works at 24px–200px.
 
 interface Props {
   size?: number;
@@ -18,7 +18,7 @@ export function VectorLogo({ size = 40, className = "", stars = true, monochrome
       viewBox="0 0 64 64"
       fill="none"
       xmlns="http://www.w3.org/2000/svg"
-      aria-label="Vector Chat"
+      aria-label="Bulldog Chat"
       className={className}
     >
       {/* Three small red 5-point stars above the chevron */}
@@ -77,7 +77,7 @@ export function VectorWordmark({ className = "" }: { className?: string }) {
     <div className={`inline-flex items-center gap-2.5 ${className}`}>
       <VectorLogo size={32} />
       <div className="font-display text-white tracking-[0.18em] text-sm uppercase">
-        Vector <span className="text-vs-red">Chat</span>
+        Bulldog <span className="text-vs-red">Chat</span>
       </div>
     </div>
   );

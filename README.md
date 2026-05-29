@@ -1,9 +1,9 @@
-# Vector Chat
+# Bulldog Chat
 
-> Group text, voice, and video for Vector Services field crews.
+> Group text, voice, and video for Vector Services field crews. Part of the **Bulldog Suite**.
 > **Rooted in Service. Driven by Discipline.**
 
-Vector Chat is a multi-tenant corporate communications app built for
+Bulldog Chat is a multi-tenant corporate communications app built for
 [Vector Services](https://vectorservicesus.com) — a Service-Disabled Veteran-Owned
 utility construction firm. It is a self-hosted Discord/Slack alternative
 designed to ship a single Docker container to Render and run on a single

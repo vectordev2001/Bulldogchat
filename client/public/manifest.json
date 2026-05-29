@@ -1,7 +1,7 @@
 {
-  "name": "Vector Chat",
-  "short_name": "Vector Chat",
-  "description": "Group text, voice, and video for Vector Services field crews.",
+  "name": "Bulldog Chat",
+  "short_name": "Bulldog Chat",
+  "description": "Group text, voice, and video for Bulldog Suite field crews.",
   "start_url": "/#/",
   "scope": "/",
   "display": "standalone",

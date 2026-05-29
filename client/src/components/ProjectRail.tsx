@@ -34,7 +34,7 @@ export function ProjectRail({ projects, activeId, onSelect, unreadByProjectId, s
         type="button"
         className="w-12 h-12 rounded-2xl flex items-center justify-center hover:rounded-xl transition-all bg-[hsl(232_45%_27%)] hover:bg-vs-red group relative"
         onClick={() => projects[0] && onSelect(projects[0].id)}
-        title="Vector Chat"
+        title="Bulldog Chat"
         data-testid="button-home"
       >
         <VectorLogo size={32} className="text-white" monochrome />

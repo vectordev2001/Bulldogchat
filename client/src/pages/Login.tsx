@@ -37,7 +37,7 @@ export default function Login() {
       <div className="text-center mb-7">
         <VectorLogo size={56} className="mx-auto text-vs-blue" monochrome />
         <h1 className="font-display text-2xl text-white mt-4 tracking-tight">Welcome back</h1>
-        <p className="text-sm text-[hsl(0_0%_70%)] mt-1">Sign in to Vector Chat</p>
+        <p className="text-sm text-[hsl(0_0%_70%)] mt-1">Sign in to Bulldog Chat</p>
       </div>
 
       <form onSubmit={onSubmit} className="space-y-3.5" data-testid="form-login">
@@ -91,7 +91,7 @@ export default function Login() {
       </button>
 
       <div className="mt-7 pt-5 border-t border-[hsl(232_40%_25%)] text-center text-[12.5px] text-[hsl(0_0%_65%)]">
-        New to Vector Chat?{" "}
+        New to Bulldog Chat?{" "}
         <Link href="/signup" className="text-vs-blue hover:underline font-medium" data-testid="link-signup">
           Create an organization
         </Link>
@@ -109,7 +109,7 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
         <div className="absolute inset-0 vs-grain opacity-30" />
         <div className="relative z-10">
           <VectorLogo size={44} className="text-white" monochrome />
-          <div className="mt-2 font-display text-white text-sm tracking-[0.18em] uppercase">Vector Chat</div>
+          <div className="mt-2 font-display text-white text-sm tracking-[0.18em] uppercase">Bulldog Chat</div>
         </div>
         <div className="relative z-10 max-w-md">
           <div className="text-[11px] font-mono uppercase tracking-[0.22em] text-vs-red mb-3">

@@ -131,7 +131,7 @@ export default function Home() {
       <div className="min-h-screen flex flex-col items-center justify-center bg-[hsl(232_60%_9%)] text-white gap-4">
         <VectorLogo size={56} className="text-vs-blue" monochrome />
         <Loader2 className="w-5 h-5 animate-spin text-vs-blue" />
-        <p className="text-sm text-white/60">Loading Vector Chat…</p>
+        <p className="text-sm text-white/60">Loading Bulldog Chat…</p>
       </div>
     );
   }
@@ -227,7 +227,7 @@ export default function Home() {
           </button>
           <div className="flex items-center gap-2">
             <VectorLogo size={22} className="text-white" monochrome />
-            <span className="text-sm font-display tracking-wide">Vector Chat</span>
+            <span className="text-sm font-display tracking-wide">Bulldog Chat</span>
           </div>
           <div className="w-9" />
         </div>
