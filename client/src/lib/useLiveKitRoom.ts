@@ -335,10 +335,28 @@ export function useLiveKitRoom(args: Args): LiveKitHookResult {
           }
         } else {
           if (!cameraTrackRef.current) {
-            const t = await createLocalVideoTrack({
-              resolution: { width: 1280, height: 720, frameRate: 24 },
-              facingMode: "user",
-            });
+            // iOS Safari is fussy about strict resolution constraints in a PWA.
+            // Request mobile-friendly defaults; the encoder will scale up on
+            // desktop where 640p capture is plenty for a 1:1 call.
+            const isCoarsePointer =
+              typeof window !== "undefined" &&
+              window.matchMedia &&
+              window.matchMedia("(pointer: coarse)").matches;
+            const videoOpts = isCoarsePointer
+              ? { resolution: { width: 640, height: 480, frameRate: 24 }, facingMode: "user" as const }
+              : { resolution: { width: 1280, height: 720, frameRate: 24 }, facingMode: "user" as const };
+            // Wrap with a hard timeout so the UI doesn't appear to hang when
+            // permission is silently denied or the camera is busy. LiveKit's
+            // own errors propagate before this fires; the timeout is a backstop.
+            const t = (await Promise.race([
+              createLocalVideoTrack(videoOpts),
+              new Promise<never>((_, reject) =>
+                setTimeout(
+                  () => reject(new Error("Camera did not start in 10s. Check camera permission in iOS Settings → Bulldog → Camera.")),
+                  10_000,
+                ),
+              ),
+            ])) as Awaited<ReturnType<typeof createLocalVideoTrack>>;
             await room.localParticipant.publishTrack(t, { source: Track.Source.Camera });
             if (cancelled) {
               t.stop();
