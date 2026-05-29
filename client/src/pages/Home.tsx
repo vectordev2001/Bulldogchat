@@ -271,7 +271,7 @@ export default function Home() {
       {/* Right rail: members (desktop only, on text channels) */}
       {activeChannel?.type === "text" && (
         <div className="hidden xl:flex">
-          <MemberList members={members} />
+          <MemberList members={members} meId={(user as ApiUser)?.id} />
         </div>
       )}
     </div>

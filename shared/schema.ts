@@ -213,6 +213,25 @@ export const expoPushTokens = sqliteTable("expo_push_tokens", {
 });
 export type ExpoPushToken = typeof expoPushTokens.$inferSelect;
 
+/* ─────────────────── DIRECT CALLS (1:1 ringing) ─────────────────── */
+export const directCallStatuses = ["ringing", "active", "missed", "declined", "ended"] as const;
+export type DirectCallStatus = typeof directCallStatuses[number];
+
+export const directCalls = sqliteTable("direct_calls", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  orgId: integer("org_id").notNull().references(() => organizations.id),
+  callerId: integer("caller_id").notNull().references(() => users.id),
+  calleeId: integer("callee_id").notNull().references(() => users.id),
+  // LiveKit room name; we use direct-<id> so it's unique even across orgs.
+  roomName: text("room_name").notNull(),
+  kind: text("kind", { enum: ["voice", "video"] as const }).notNull().default("voice"),
+  status: text("status", { enum: directCallStatuses }).notNull().default("ringing"),
+  startedAt: integer("started_at", { mode: "timestamp" }).notNull(),
+  answeredAt: integer("answered_at", { mode: "timestamp" }),
+  endedAt: integer("ended_at", { mode: "timestamp" }),
+});
+export type DirectCall = typeof directCalls.$inferSelect;
+
 /* ─────────────────── LIVEKIT ROOMS ─────────────────── */
 export const livekitRooms = sqliteTable("livekit_rooms", {
   id: integer("id").primaryKey({ autoIncrement: true }),

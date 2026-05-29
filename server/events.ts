@@ -55,6 +55,44 @@ export function emitReactionChange(orgId: number, payload: { messageId: number; 
   }
 }
 
+/**
+ * 1:1 call events. We target the specific user (callee or caller) by id
+ * so we don't leak ringing across the org. SSE clients subscribe by
+ * user, so this is naturally a single open browser tab per device.
+ */
+export interface CallEventPayload {
+  callId: number;
+  callerId: number;
+  calleeId: number;
+  callerName: string;
+  callerHue: number;
+  kind: "voice" | "video";
+  roomName: string;
+}
+
+function emitToUser(userId: number, event: string, data: unknown) {
+  for (const sub of subscribers) {
+    if (sub.userId === userId) send(sub, event, data);
+  }
+}
+
+export function emitCallIncoming(payload: CallEventPayload) {
+  // Ring the callee. We also notify the caller (optional, but useful so
+  // the caller's other tabs can show "calling\u2026" UI consistently).
+  emitToUser(payload.calleeId, "call:incoming", payload);
+  emitToUser(payload.callerId, "call:outgoing", payload);
+}
+
+export function emitCallAccepted(payload: CallEventPayload) {
+  emitToUser(payload.callerId, "call:accepted", payload);
+  emitToUser(payload.calleeId, "call:accepted", payload);
+}
+
+export function emitCallEnded(payload: CallEventPayload & { reason: "declined" | "missed" | "ended" }) {
+  emitToUser(payload.callerId, "call:ended", payload);
+  emitToUser(payload.calleeId, "call:ended", payload);
+}
+
 // Periodic heartbeat to keep connections alive
 setInterval(() => {
   for (const sub of subscribers) {

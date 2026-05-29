@@ -7,7 +7,7 @@ import {
   insertProjectSchema, insertChannelSchema, insertInviteSchema,
 } from "@shared/schema";
 import { hashPassword, verifyPassword, signJwt, requireAuth, requireRole, setAuthCookie, clearAuthCookie, AuthedRequest, AUTH_COOKIE } from "./auth";
-import { addSubscriber, removeSubscriber, emitMessageNew, emitMessageDelete, emitMessageUpdate, emitReactionChange, WireMessage } from "./events";
+import { addSubscriber, removeSubscriber, emitMessageNew, emitMessageDelete, emitMessageUpdate, emitReactionChange, emitCallIncoming, emitCallAccepted, emitCallEnded, type CallEventPayload, WireMessage } from "./events";
 import { generateLivekitToken, livekitConfigured } from "./livekit";
 import { setupWebPush, pushConfigured, getPublicVapidKey, sendNotificationToUsers } from "./push";
 import { runMigrations } from "./migrate";
@@ -480,6 +480,162 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
       userId: u.id, userName: u.name, roomName, canPublish: true,
     });
     res.json({ token, ws_url: process.env.LIVEKIT_WS_URL, room_name: roomName });
+  });
+
+  // ── DIRECT (1:1) CALLS ──
+  // Start a 1:1 call. Creates a direct_call row in 'ringing' state, mints
+  // LiveKit tokens for both peers (returns the caller's), and fires SSE +
+  // web-push to the callee so their browser/PWA can show an incoming call.
+  app.post("/api/calls/start", requireAuth, async (req, res) => {
+    const u = (req as AuthedRequest).user;
+    const calleeId = Number(req.body?.calleeId);
+    const kind = (req.body?.kind === "video" ? "video" : "voice") as "voice" | "video";
+    if (!calleeId || calleeId === u.id) return res.status(400).json({ message: "Invalid callee" });
+    const callee = storage.getUser(calleeId);
+    if (!callee || callee.orgId !== u.orgId) return res.status(404).json({ message: "User not found" });
+    if (callee.deactivated) return res.status(400).json({ message: "User is deactivated" });
+
+    if (!livekitConfigured()) {
+      return res.status(503).json({ message: "Calling unavailable: LiveKit not configured" });
+    }
+
+    // Pre-allocate the row so we have an id for the room name.
+    const row = storage.createDirectCall({
+      orgId: u.orgId, callerId: u.id, calleeId, roomName: "", kind,
+    });
+    const roomName = `direct-${row.id}`;
+    // Update the row with the now-known roomName. Drizzle has no
+    // "update returning" in this layer, so re-fetch.
+    storage.updateDirectCallStatus(row.id, "ringing");
+    // Persist roomName via raw SQL since it's a single field and we
+    // already loaded the schema. We use the storage method indirectly
+    // by updating status (already done) and patching room_name here.
+    (await import("./db")).rawDb.prepare(`UPDATE direct_calls SET room_name = ? WHERE id = ?`).run(roomName, row.id);
+
+    const token = await generateLivekitToken({
+      userId: u.id, userName: u.name, roomName, canPublish: true,
+    });
+
+    const payload: CallEventPayload = {
+      callId: row.id, callerId: u.id, calleeId,
+      callerName: u.name, callerHue: u.hue, kind, roomName,
+    };
+    emitCallIncoming(payload);
+
+    // Fire push notification to the callee — the in-tab SSE catches the
+    // call when chat is open; the push wakes the device when it isn't.
+    void sendNotificationToUsers([calleeId], {
+      title: `\ud83d\udcde ${u.name} is calling`,
+      body: kind === "video" ? "Incoming video call" : "Incoming voice call",
+      url: `/call/${row.id}`,
+      tag: `call-${row.id}`,
+    });
+
+    // Auto-miss after 45s if not answered. Setinterval/timeout is fine
+    // for a single-instance Render deployment; if we ever scale out
+    // we'll need a job queue.
+    setTimeout(() => {
+      const current = storage.getDirectCall(row.id);
+      if (current && current.status === "ringing") {
+        storage.updateDirectCallStatus(row.id, "missed", { endedAt: new Date() });
+        emitCallEnded({ ...payload, reason: "missed" });
+      }
+    }, 45_000);
+
+    res.json({
+      callId: row.id,
+      roomName,
+      token,
+      ws_url: process.env.LIVEKIT_WS_URL,
+    });
+  });
+
+  // Callee accepts. Mints their token and flips the row to 'active'.
+  app.post("/api/calls/:id/accept", requireAuth, async (req, res) => {
+    const u = (req as AuthedRequest).user;
+    const id = Number(req.params.id);
+    const call = storage.getDirectCall(id);
+    if (!call || call.orgId !== u.orgId) return res.status(404).json({ message: "Not found" });
+    if (call.calleeId !== u.id) return res.status(403).json({ message: "Not your call" });
+    if (call.status !== "ringing") return res.status(409).json({ message: `Call already ${call.status}` });
+
+    storage.updateDirectCallStatus(id, "active", { answeredAt: new Date() });
+    const token = await generateLivekitToken({
+      userId: u.id, userName: u.name, roomName: call.roomName, canPublish: true,
+    });
+    const caller = storage.getUser(call.callerId);
+    const payload: CallEventPayload = {
+      callId: call.id, callerId: call.callerId, calleeId: call.calleeId,
+      callerName: caller?.name ?? "", callerHue: caller?.hue ?? 220,
+      kind: call.kind as "voice" | "video", roomName: call.roomName,
+    };
+    emitCallAccepted(payload);
+    res.json({ callId: id, roomName: call.roomName, token, ws_url: process.env.LIVEKIT_WS_URL });
+  });
+
+  // Either peer can decline (callee) or end (either). 'decline' marks
+  // 'declined' if not yet active; otherwise treated as 'ended'.
+  app.post("/api/calls/:id/end", requireAuth, (req, res) => {
+    const u = (req as AuthedRequest).user;
+    const id = Number(req.params.id);
+    const action = (req.body?.action === "decline" ? "decline" : "end") as "decline" | "end";
+    const call = storage.getDirectCall(id);
+    if (!call || call.orgId !== u.orgId) return res.status(404).json({ message: "Not found" });
+    if (call.callerId !== u.id && call.calleeId !== u.id) {
+      return res.status(403).json({ message: "Not your call" });
+    }
+    if (call.status === "ended" || call.status === "missed" || call.status === "declined") {
+      return res.json({ ok: true, status: call.status }); // idempotent
+    }
+    const nextStatus = action === "decline" && call.status === "ringing" ? "declined" : "ended";
+    storage.updateDirectCallStatus(id, nextStatus, { endedAt: new Date() });
+    const caller = storage.getUser(call.callerId);
+    emitCallEnded({
+      callId: call.id, callerId: call.callerId, calleeId: call.calleeId,
+      callerName: caller?.name ?? "", callerHue: caller?.hue ?? 220,
+      kind: call.kind as "voice" | "video", roomName: call.roomName,
+      reason: nextStatus === "declined" ? "declined" : "ended",
+    });
+    res.json({ ok: true, status: nextStatus });
+  });
+
+  // Fetch call details + a fresh token (used by /call/:id page on direct
+  // navigation, e.g. when the push notification is clicked).
+  app.get("/api/calls/:id", requireAuth, async (req, res) => {
+    const u = (req as AuthedRequest).user;
+    const id = Number(req.params.id);
+    const call = storage.getDirectCall(id);
+    if (!call || call.orgId !== u.orgId) return res.status(404).json({ message: "Not found" });
+    if (call.callerId !== u.id && call.calleeId !== u.id) {
+      return res.status(403).json({ message: "Not your call" });
+    }
+    const otherId = call.callerId === u.id ? call.calleeId : call.callerId;
+    const other = storage.getUser(otherId);
+    // Only mint a token if the call is still live; ended calls just
+    // return metadata so the page can render a "Call ended" state.
+    let token: string | null = null;
+    if (livekitConfigured() && (call.status === "ringing" || call.status === "active")) {
+      token = await generateLivekitToken({
+        userId: u.id, userName: u.name, roomName: call.roomName, canPublish: true,
+      });
+    }
+    res.json({
+      call: {
+        id: call.id,
+        callerId: call.callerId,
+        calleeId: call.calleeId,
+        roomName: call.roomName,
+        kind: call.kind,
+        status: call.status,
+        startedAt: call.startedAt,
+      },
+      other: other ? {
+        id: other.id, name: other.name, hue: other.hue, role: other.role, title: other.title,
+      } : null,
+      iAm: call.callerId === u.id ? "caller" : "callee",
+      token,
+      ws_url: process.env.LIVEKIT_WS_URL,
+    });
   });
 
   // ── PUSH ──

@@ -2,7 +2,7 @@ import { db, rawDb } from "./db";
 import {
   organizations, users, projects, projectMembers, channels, messages,
   reactions, readReceipts, pushSubscriptions, sessions, invites, livekitRooms,
-  attachments, messageMentions, recordings, expoPushTokens,
+  attachments, messageMentions, recordings, expoPushTokens, directCalls,
 } from "@shared/schema";
 import type {
   Organization, InsertOrganization,
@@ -17,6 +17,7 @@ import type {
   Attachment, MessageMention, MentionType,
   Recording, RecordingStatus,
   ExpoPushToken,
+  DirectCall, DirectCallStatus,
 } from "@shared/schema";
 import { and, eq, desc, lt, asc, sql, inArray, isNull } from "drizzle-orm";
 
@@ -75,6 +76,12 @@ export interface IStorage {
   addPushSubscription(input: { userId: number; endpoint: string; p256dh: string; auth: string; deviceLabel?: string }): PushSub;
   deletePushSubscription(id: number, userId: number): void;
   listPushSubscriptionsForUsers(userIds: number[]): PushSub[];
+
+  /* Direct calls (1:1) */
+  createDirectCall(input: { orgId: number; callerId: number; calleeId: number; roomName: string; kind: "voice" | "video" }): DirectCall;
+  getDirectCall(id: number): DirectCall | undefined;
+  updateDirectCallStatus(id: number, status: DirectCallStatus, opts?: { answeredAt?: Date; endedAt?: Date }): DirectCall | undefined;
+  listActiveCallsForUser(userId: number): DirectCall[];
 
   /* Sessions */
   createSession(input: { id: string; userId: number; tokenHash: string; expiresAt: Date }): Session;
@@ -290,6 +297,40 @@ class DatabaseStorage implements IStorage {
   listPushSubscriptionsForUsers(userIds: number[]) {
     if (userIds.length === 0) return [];
     return db.select().from(pushSubscriptions).where(inArray(pushSubscriptions.userId, userIds)).all();
+  }
+
+  /* Direct calls (1:1 ringing) */
+  createDirectCall(input: { orgId: number; callerId: number; calleeId: number; roomName: string; kind: "voice" | "video" }): DirectCall {
+    return db.insert(directCalls).values({
+      orgId: input.orgId,
+      callerId: input.callerId,
+      calleeId: input.calleeId,
+      roomName: input.roomName,
+      kind: input.kind,
+      status: "ringing",
+      startedAt: new Date(),
+    }).returning().get();
+  }
+  getDirectCall(id: number): DirectCall | undefined {
+    return db.select().from(directCalls).where(eq(directCalls.id, id)).get();
+  }
+  updateDirectCallStatus(id: number, status: DirectCallStatus, opts?: { answeredAt?: Date; endedAt?: Date }): DirectCall | undefined {
+    const patch: Record<string, unknown> = { status };
+    if (opts?.answeredAt) patch.answeredAt = opts.answeredAt;
+    if (opts?.endedAt) patch.endedAt = opts.endedAt;
+    db.update(directCalls).set(patch).where(eq(directCalls.id, id)).run();
+    return this.getDirectCall(id);
+  }
+  listActiveCallsForUser(userId: number): DirectCall[] {
+    // Calls this user is involved in that haven't ended yet. Used for
+    // surfacing a missed-call indicator and for the /call/:id route to
+    // verify membership.
+    return db.select().from(directCalls)
+      .where(and(
+        inArray(directCalls.status, ["ringing", "active"] as DirectCallStatus[]),
+        sql`(${directCalls.callerId} = ${userId} OR ${directCalls.calleeId} = ${userId})`,
+      ))
+      .all();
   }
 
   /* Sessions */

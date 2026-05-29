@@ -177,6 +177,24 @@ export function runMigrations() {
   );
   CREATE INDEX IF NOT EXISTS expo_tokens_user_idx ON expo_push_tokens(user_id);
 
+  -- v3: direct (1:1) calls — ringing, accepted, ended, missed.
+  -- One row per call attempt. roomName is the LiveKit room both peers join.
+  CREATE TABLE IF NOT EXISTS direct_calls (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    org_id INTEGER NOT NULL REFERENCES organizations(id),
+    caller_id INTEGER NOT NULL REFERENCES users(id),
+    callee_id INTEGER NOT NULL REFERENCES users(id),
+    room_name TEXT NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'voice',
+    status TEXT NOT NULL DEFAULT 'ringing',
+    started_at INTEGER NOT NULL,
+    answered_at INTEGER,
+    ended_at INTEGER
+  );
+  CREATE INDEX IF NOT EXISTS direct_calls_caller_idx ON direct_calls(caller_id);
+  CREATE INDEX IF NOT EXISTS direct_calls_callee_idx ON direct_calls(callee_id);
+  CREATE INDEX IF NOT EXISTS direct_calls_status_idx ON direct_calls(status);
+
   -- v2: org settings (deactivated users)
   -- Add 'deactivated' column to users via ALTER if it doesn't exist
   `);

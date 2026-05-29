@@ -11,6 +11,8 @@ import Signup from "@/pages/Signup";
 import AcceptInvite from "@/pages/AcceptInvite";
 import AdminPanel from "@/pages/AdminPanel";
 import { AuthProvider, useAuth } from "@/lib/auth";
+import { CallProvider } from "@/lib/CallContext";
+import { CallOverlays } from "@/components/CallOverlays";
 import { useEffect } from "react";
 import { Loader2 } from "lucide-react";
 import { VectorLogo } from "@/components/VectorLogo";
@@ -52,12 +54,15 @@ function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
-        <TooltipProvider>
-          <Toaster />
-          <Router hook={useHashLocation}>
-            <AppRouter />
-          </Router>
-        </TooltipProvider>
+        <CallProvider>
+          <TooltipProvider>
+            <Toaster />
+            <Router hook={useHashLocation}>
+              <AppRouter />
+            </Router>
+            <CallOverlays />
+          </TooltipProvider>
+        </CallProvider>
       </AuthProvider>
     </QueryClientProvider>
   );
