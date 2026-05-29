@@ -66,6 +66,14 @@ export type ProjectMember = typeof projectMembers.$inferSelect;
 export const channelTypes = ["text", "voice"] as const;
 export type ChannelType = typeof channelTypes[number];
 
+// scope semantics:
+//   global  → everyone in the project (legacy default; back-compat)
+//   entity  → only users whose user.entityId matches channel.entityId
+//   team    → only users whose user.role matches channel.teamRole
+//   private → only users explicitly listed in channel_members
+export const channelScopes = ["global", "entity", "team", "private"] as const;
+export type ChannelScope = typeof channelScopes[number];
+
 export const channels = sqliteTable("channels", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   projectId: integer("project_id").notNull().references(() => projects.id),
@@ -73,11 +81,43 @@ export const channels = sqliteTable("channels", {
   type: text("type", { enum: channelTypes }).notNull().default("text"),
   topic: text("topic"),
   position: integer("position").notNull().default(0),
+  scope: text("scope", { enum: channelScopes }).notNull().default("global"),
+  entityId: text("entity_id"),
+  teamRole: text("team_role", { enum: userRoles }),
   createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
 });
 export const insertChannelSchema = createInsertSchema(channels).omit({ id: true, createdAt: true });
 export type Channel = typeof channels.$inferSelect;
 export type InsertChannel = z.infer<typeof insertChannelSchema>;
+
+// Channel-create payload accepted on POST /api/projects/:id/channels.
+// We do scope-aware validation here to keep routes thin.
+export const channelCreateSchema = z.object({
+  name: z.string().min(1).max(80),
+  type: z.enum(channelTypes).default("text"),
+  topic: z.string().max(500).optional().nullable(),
+  scope: z.enum(channelScopes).default("global"),
+  entityId: z.string().max(80).optional().nullable(),
+  teamRole: z.enum(userRoles).optional().nullable(),
+  memberIds: z.array(z.number().int().positive()).optional(),
+}).refine(
+  (d) => d.scope !== "entity" || (typeof d.entityId === "string" && d.entityId.length > 0),
+  { message: "entity scope requires entityId", path: ["entityId"] },
+).refine(
+  (d) => d.scope !== "team" || !!d.teamRole,
+  { message: "team scope requires teamRole", path: ["teamRole"] },
+).refine(
+  (d) => d.scope !== "private" || (Array.isArray(d.memberIds) && d.memberIds.length > 0),
+  { message: "private scope requires at least one memberId", path: ["memberIds"] },
+);
+export type ChannelCreateInput = z.infer<typeof channelCreateSchema>;
+
+/* ─────────────────── CHANNEL MEMBERS (private scope) ─────────────────── */
+export const channelMembers = sqliteTable("channel_members", {
+  channelId: integer("channel_id").notNull().references(() => channels.id),
+  userId: integer("user_id").notNull().references(() => users.id),
+}, (t) => ({ pk: primaryKey({ columns: [t.channelId, t.userId] }) }));
+export type ChannelMember = typeof channelMembers.$inferSelect;
 
 /* ─────────────────── MESSAGES ─────────────────── */
 export const messages = sqliteTable("messages", {

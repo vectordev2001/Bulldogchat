@@ -1,6 +1,6 @@
 import { db, rawDb } from "./db";
 import {
-  organizations, users, projects, projectMembers, channels, messages,
+  organizations, users, projects, projectMembers, channels, channelMembers, messages,
   reactions, readReceipts, pushSubscriptions, sessions, invites, livekitRooms,
   attachments, messageMentions, recordings, expoPushTokens, directCalls,
 } from "@shared/schema";
@@ -53,8 +53,14 @@ export interface IStorage {
 
   /* Channels */
   listChannelsByProject(projectId: number): Channel[];
+  listChannelsForUserInProject(projectId: number, userId: number): Channel[];
   getChannel(id: number): Channel | undefined;
   createChannel(input: InsertChannel): Channel;
+  addChannelMembers(channelId: number, userIds: number[]): void;
+  listChannelMemberIds(channelId: number): number[];
+  isChannelMember(channelId: number, userId: number): boolean;
+  removeChannelMember(channelId: number, userId: number): void;
+  userCanSeeChannel(channel: Channel, user: User): boolean;
 
   /* Messages */
   listMessages(channelId: number, opts?: { before?: number; limit?: number }): Message[];
@@ -219,9 +225,59 @@ class DatabaseStorage implements IStorage {
   listChannelsByProject(projectId: number) {
     return db.select().from(channels).where(eq(channels.projectId, projectId)).orderBy(asc(channels.position), asc(channels.id)).all();
   }
+  // Channels in this project that the given user is allowed to see, given
+  // each channel's scope. Computed in JS (not SQL) so the rule set stays in
+  // one place.
+  listChannelsForUserInProject(projectId: number, userId: number) {
+    const all = this.listChannelsByProject(projectId);
+    const user = this.getUser(userId);
+    if (!user) return [];
+    return all.filter(c => this.userCanSeeChannel(c, user));
+  }
   getChannel(id: number) { return db.select().from(channels).where(eq(channels.id, id)).get(); }
   createChannel(input: InsertChannel) {
     return db.insert(channels).values({ ...input, createdAt: new Date() }).returning().get();
+  }
+  addChannelMembers(channelId: number, userIds: number[]) {
+    if (userIds.length === 0) return;
+    const stmt = rawDb.prepare(`INSERT OR IGNORE INTO channel_members (channel_id, user_id) VALUES (?, ?)`);
+    const tx = rawDb.transaction((ids: number[]) => {
+      for (const uid of ids) stmt.run(channelId, uid);
+    });
+    tx(userIds);
+  }
+  listChannelMemberIds(channelId: number) {
+    return db.select({ userId: channelMembers.userId }).from(channelMembers)
+      .where(eq(channelMembers.channelId, channelId)).all().map(r => r.userId);
+  }
+  isChannelMember(channelId: number, userId: number) {
+    return !!db.select().from(channelMembers)
+      .where(and(eq(channelMembers.channelId, channelId), eq(channelMembers.userId, userId))).get();
+  }
+  removeChannelMember(channelId: number, userId: number) {
+    db.delete(channelMembers)
+      .where(and(eq(channelMembers.channelId, channelId), eq(channelMembers.userId, userId))).run();
+  }
+  // Single source of truth for scope visibility. Admins always see every
+  // channel in their org (so admin chat tools stay functional). For everyone
+  // else, the rule is by scope.
+  userCanSeeChannel(channel: Channel, user: User) {
+    if (user.role === "admin") return true;
+    const scope = (channel.scope ?? "global") as "global" | "entity" | "team" | "private";
+    if (scope === "global") return true;
+    if (scope === "entity") {
+      if (!channel.entityId) return false;
+      // We treat user.title as the user's entity / department tag.
+      return (user.title ?? "").toLowerCase() === channel.entityId.toLowerCase();
+    }
+    if (scope === "team") {
+      if (!channel.teamRole) return false;
+      return user.role === channel.teamRole;
+    }
+    if (scope === "private") {
+      return this.isChannelMember(channel.id, user.id);
+    }
+    return false;
   }
 
   /* Messages */

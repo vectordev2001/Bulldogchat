@@ -210,6 +210,35 @@ export function runMigrations() {
     console.warn("[migrate] users.deactivated add skipped:", e);
   }
 
+  // v4: channel scopes — global / entity / team / private.
+  // Idempotent column adds + channel_members table.
+  try {
+    const cols = rawDb.prepare(`PRAGMA table_info(channels)`).all() as Array<{ name: string }>;
+    const have = new Set(cols.map(c => c.name));
+    if (!have.has("scope")) {
+      rawDb.exec(`ALTER TABLE channels ADD COLUMN scope TEXT NOT NULL DEFAULT 'global';`);
+      console.log("[migrate] Added channels.scope column");
+    }
+    if (!have.has("entity_id")) {
+      rawDb.exec(`ALTER TABLE channels ADD COLUMN entity_id TEXT;`);
+      console.log("[migrate] Added channels.entity_id column");
+    }
+    if (!have.has("team_role")) {
+      rawDb.exec(`ALTER TABLE channels ADD COLUMN team_role TEXT;`);
+      console.log("[migrate] Added channels.team_role column");
+    }
+    rawDb.exec(`
+      CREATE TABLE IF NOT EXISTS channel_members (
+        channel_id INTEGER NOT NULL REFERENCES channels(id),
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        PRIMARY KEY (channel_id, user_id)
+      );
+      CREATE INDEX IF NOT EXISTS channel_members_user_idx ON channel_members(user_id);
+    `);
+  } catch (e) {
+    console.warn("[migrate] channel scopes setup skipped:", e);
+  }
+
   // FTS5 for messages — virtual table + sync triggers
   try {
     rawDb.exec(`

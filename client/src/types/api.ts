@@ -28,6 +28,7 @@ export interface ApiProject {
 }
 
 export type ChannelType = "text" | "voice";
+export type ChannelScope = "global" | "entity" | "team" | "private";
 
 export interface ApiChannel {
   id: number;
@@ -36,6 +37,9 @@ export interface ApiChannel {
   type: ChannelType;
   topic: string | null;
   position: number;
+  scope?: ChannelScope;
+  entityId?: string | null;
+  teamRole?: UserRole | null;
   createdAt: string;
 }
 

@@ -1,4 +1,4 @@
-import { Hash, Volume2, ChevronDown, Plus, Mic, MicOff, Headphones, Settings, Search, Shield, ShieldCheck } from "lucide-react";
+import { Hash, Volume2, ChevronDown, Plus, Mic, MicOff, Headphones, Settings, Search, Shield, ShieldCheck, Globe, Building2, Users, Lock } from "lucide-react";
 import { useLocation } from "wouter";
 import { useState, useMemo } from "react";
 import { Avatar } from "./Avatar";
@@ -15,12 +15,14 @@ interface Props {
   myDeafened: boolean;
   onToggleMic: () => void;
   onToggleDeafen: () => void;
+  onCreateChannel?: () => void;
 }
 
 export function ChannelSidebar({
   project, channels, projectMembers, activeChannelId, onSelectChannel,
-  me, myMicMuted, myDeafened, onToggleMic, onToggleDeafen,
+  me, myMicMuted, myDeafened, onToggleMic, onToggleDeafen, onCreateChannel,
 }: Props) {
+  const canCreateChannel = me.role === "admin" || me.role === "foreman";
   const { text, voice } = useMemo(() => {
     const t = channels.filter(c => c.type === "text").sort((a, b) => a.position - b.position);
     const v = channels.filter(c => c.type === "voice").sort((a, b) => a.position - b.position);
@@ -71,7 +73,7 @@ export function ChannelSidebar({
       </div>
 
       <div className="flex-1 overflow-y-auto px-2 py-3 space-y-4">
-        <Section label="Text Channels" open={textOpen} onToggle={() => setTextOpen(!textOpen)}>
+        <Section label="Text Channels" open={textOpen} onToggle={() => setTextOpen(!textOpen)} onAdd={canCreateChannel ? onCreateChannel : undefined}>
           {textOpen && filteredText.map((c) => (
             <ChannelRow
               key={c.id}
@@ -85,7 +87,7 @@ export function ChannelSidebar({
           )}
         </Section>
 
-        <Section label="Voice Channels" open={voiceOpen} onToggle={() => setVoiceOpen(!voiceOpen)}>
+        <Section label="Voice Channels" open={voiceOpen} onToggle={() => setVoiceOpen(!voiceOpen)} onAdd={canCreateChannel ? onCreateChannel : undefined}>
           {voiceOpen && filteredVoice.map((c) => (
             <ChannelRow
               key={c.id}
@@ -126,21 +128,31 @@ export function ChannelSidebar({
 }
 
 function Section({
-  label, open, onToggle, children,
-}: { label: string; open: boolean; onToggle: () => void; children: React.ReactNode }) {
+  label, open, onToggle, onAdd, children,
+}: { label: string; open: boolean; onToggle: () => void; onAdd?: () => void; children: React.ReactNode }) {
   return (
-    <div>
-      <button
-        type="button"
-        onClick={onToggle}
-        className="group w-full flex items-center justify-between px-1.5 py-1 text-[10px] uppercase tracking-[0.16em] font-bold text-[hsl(0_0%_55%)] hover:text-white transition-colors"
-      >
-        <span className="flex items-center gap-1">
+    <div className="group">
+      <div className="flex items-center justify-between px-1.5 py-1 text-[10px] uppercase tracking-[0.16em] font-bold text-[hsl(0_0%_55%)]">
+        <button
+          type="button"
+          onClick={onToggle}
+          className="flex items-center gap-1 hover:text-white transition-colors"
+        >
           <ChevronDown className={`w-3 h-3 transition-transform ${open ? "" : "-rotate-90"}`} />
           {label}
-        </span>
-        <Plus className="w-3.5 h-3.5 opacity-0 group-hover:opacity-100 transition-opacity" />
-      </button>
+        </button>
+        {onAdd && (
+          <button
+            type="button"
+            onClick={onAdd}
+            title="New channel"
+            data-testid="button-new-channel"
+            className="opacity-0 group-hover:opacity-100 transition-opacity hover:text-white"
+          >
+            <Plus className="w-3.5 h-3.5" />
+          </button>
+        )}
+      </div>
       <div className="mt-1 space-y-0.5">{children}</div>
     </div>
   );
@@ -150,6 +162,17 @@ function ChannelRow({
   channel, active, onClick,
 }: { channel: ApiChannel; active: boolean; onClick: () => void }) {
   const Icon = channel.type === "voice" ? Volume2 : Hash;
+  // Subtle indicator that surfaces scope without taking row real estate.
+  // Hidden for the default 'global' scope to avoid clutter.
+  const scope = channel.scope ?? "global";
+  const ScopeIcon = scope === "entity" ? Building2
+    : scope === "team" ? Users
+    : scope === "private" ? Lock
+    : Globe;
+  const scopeTitle = scope === "entity" ? `Entity: ${channel.entityId ?? ""}`
+    : scope === "team" ? `Team: ${channel.teamRole ?? ""}`
+    : scope === "private" ? "Private channel"
+    : "Global channel";
   return (
     <button
       type="button"
@@ -163,6 +186,12 @@ function ChannelRow({
       {active && <span className="absolute left-0 top-1.5 bottom-1.5 w-[3px] rounded-r-full bg-vs-red" />}
       <Icon className={`w-4 h-4 shrink-0 ${active ? "text-vs-red" : "text-[hsl(0_0%_50%)]"}`} />
       <span className="truncate font-medium">{channel.name}</span>
+      {scope !== "global" && (
+        <ScopeIcon
+          className="w-3 h-3 shrink-0 ml-auto text-[hsl(0_0%_45%)] group-hover:text-[hsl(0_0%_70%)]"
+          aria-label={scopeTitle}
+        />
+      )}
     </button>
   );
 }

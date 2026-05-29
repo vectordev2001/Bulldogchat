@@ -4,7 +4,7 @@ import { nanoid } from "nanoid";
 import { storage, sanitize } from "./storage";
 import {
   signupSchema, loginSchema, acceptInviteSchema, sendMessageSchema, reactionSchema,
-  insertProjectSchema, insertChannelSchema, insertInviteSchema,
+  insertProjectSchema, insertChannelSchema, insertInviteSchema, channelCreateSchema,
 } from "@shared/schema";
 import { hashPassword, verifyPassword, signJwt, requireAuth, requireRole, setAuthCookie, clearAuthCookie, AuthedRequest, AUTH_COOKIE } from "./auth";
 import { addSubscriber, removeSubscriber, emitMessageNew, emitMessageDelete, emitMessageUpdate, emitReactionChange, emitCallIncoming, emitCallAccepted, emitCallEnded, type CallEventPayload, WireMessage } from "./events";
@@ -70,6 +70,9 @@ function userCanAccessChannel(userId: number, orgId: number, channelId: number):
   const project = storage.getProject(channel.projectId);
   if (!project || project.orgId !== orgId) return null;
   if (!storage.isProjectMember(project.id, userId)) return null;
+  const user = storage.getUser(userId);
+  if (!user) return null;
+  if (!storage.userCanSeeChannel(channel, user)) return null;
   return { channel, project };
 }
 
@@ -199,18 +202,79 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     const u = (req as AuthedRequest).user;
     const id = Number(req.params.id);
     if (!userCanAccessProject(u.id, u.orgId, id)) return res.status(404).json({ message: "Not found" });
-    res.json(storage.listChannelsByProject(id));
+    // Scope-aware list: admins see everything; others only see channels they
+    // are permitted by scope (global / matching entity / matching team-role /
+    // private membership).
+    res.json(storage.listChannelsForUserInProject(id, u.id));
   });
 
   app.post("/api/projects/:id/channels", requireAuth, requireRole(["admin", "foreman"]), (req, res) => {
     const u = (req as AuthedRequest).user;
     const id = Number(req.params.id);
     if (!userCanAccessProject(u.id, u.orgId, id)) return res.status(404).json({ message: "Not found" });
-    const parsed = insertChannelSchema.omit({ projectId: true, position: true }).safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ message: "Invalid input" });
+    const parsed = channelCreateSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.issues[0]?.message ?? "Invalid input" });
     const existing = storage.listChannelsByProject(id);
-    const channel = storage.createChannel({ ...parsed.data, projectId: id, position: existing.length });
+    const channel = storage.createChannel({
+      projectId: id,
+      position: existing.length,
+      name: parsed.data.name,
+      type: parsed.data.type,
+      topic: parsed.data.topic ?? null,
+      scope: parsed.data.scope,
+      entityId: parsed.data.scope === "entity" ? parsed.data.entityId ?? null : null,
+      teamRole: parsed.data.scope === "team" ? parsed.data.teamRole ?? null : null,
+    });
+    // Seed private membership. Caller is always added so they don't lose
+    // access to the channel they just created.
+    if (parsed.data.scope === "private") {
+      const ids = new Set<number>(parsed.data.memberIds ?? []);
+      ids.add(u.id);
+      // Filter to org members only (defence-in-depth).
+      const orgMemberIds = new Set(storage.listUsersByOrg(u.orgId).map(m => m.id));
+      const filtered = Array.from(ids).filter(id => orgMemberIds.has(id));
+      storage.addChannelMembers(channel.id, filtered);
+    }
     res.json(channel);
+  });
+
+  // List members of a private channel (admin/creator visibility, but here
+  // we allow any project member who can see the channel to read the roster).
+  app.get("/api/channels/:id/members", requireAuth, (req, res) => {
+    const u = (req as AuthedRequest).user;
+    const channelId = Number(req.params.id);
+    const access = userCanAccessChannel(u.id, u.orgId, channelId);
+    if (!access) return res.status(404).json({ message: "Not found" });
+    const ids = storage.listChannelMemberIds(channelId);
+    res.json(storage.listUsersByIds(ids).map(sanitize));
+  });
+
+  // Add members to a private channel. Admins only — keeps the surface
+  // small. Foreman can be added later if needed.
+  app.post("/api/channels/:id/members", requireAuth, requireRole(["admin"]), (req, res) => {
+    const u = (req as AuthedRequest).user;
+    const channelId = Number(req.params.id);
+    const access = userCanAccessChannel(u.id, u.orgId, channelId);
+    if (!access || !access.channel) return res.status(404).json({ message: "Not found" });
+    if (access.channel.scope !== "private") return res.status(400).json({ message: "Channel is not private" });
+    const raw = Array.isArray(req.body?.userIds) ? req.body.userIds : [];
+    const wanted = raw.map((v: unknown) => Number(v)).filter((n: number) => Number.isFinite(n) && n > 0);
+    if (wanted.length === 0) return res.status(400).json({ message: "userIds required" });
+    const orgMemberIds = new Set(storage.listUsersByOrg(u.orgId).map(m => m.id));
+    const filtered = wanted.filter((id: number) => orgMemberIds.has(id));
+    storage.addChannelMembers(channelId, filtered);
+    res.json({ ok: true, memberIds: storage.listChannelMemberIds(channelId) });
+  });
+
+  app.delete("/api/channels/:id/members/:userId", requireAuth, requireRole(["admin"]), (req, res) => {
+    const u = (req as AuthedRequest).user;
+    const channelId = Number(req.params.id);
+    const targetId = Number(req.params.userId);
+    const access = userCanAccessChannel(u.id, u.orgId, channelId);
+    if (!access || !access.channel) return res.status(404).json({ message: "Not found" });
+    if (access.channel.scope !== "private") return res.status(400).json({ message: "Channel is not private" });
+    storage.removeChannelMember(channelId, targetId);
+    res.json({ ok: true });
   });
 
   // ── MESSAGES ──

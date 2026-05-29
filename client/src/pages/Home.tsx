@@ -7,6 +7,7 @@ import { queryClient } from "@/lib/queryClient";
 import { useSSE } from "@/hooks/use-sse";
 import { ProjectRail } from "@/components/ProjectRail";
 import { ChannelSidebar } from "@/components/ChannelSidebar";
+import { CreateChannelDialog } from "@/components/CreateChannelDialog";
 import { TextChannelView } from "@/components/TextChannelView";
 import { VoiceChannelView } from "@/components/VoiceChannelView";
 import { MemberList } from "@/components/MemberList";
@@ -20,6 +21,7 @@ export default function Home() {
   const [activeProjectId, setActiveProjectId] = useState<number | null>(null);
   const [channelByProject, setChannelByProject] = useState<Record<number, number>>({});
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [createChannelOpen, setCreateChannelOpen] = useState(false);
 
   // Self-call state
   const [myMicMuted, setMyMicMuted] = useState(false);
@@ -208,6 +210,19 @@ export default function Home() {
             myDeafened={myDeafened}
             onToggleMic={() => setMyMicMuted((v) => !v)}
             onToggleDeafen={() => setMyDeafened((v) => !v)}
+            onCreateChannel={() => setCreateChannelOpen(true)}
+          />
+        )}
+        {activeProject && user && (
+          <CreateChannelDialog
+            open={createChannelOpen}
+            onClose={() => setCreateChannelOpen(false)}
+            projectId={activeProject.id}
+            me={user as ApiUser}
+            onCreated={(ch) => {
+              // Auto-select the new channel for the creator.
+              setChannelByProject((prev) => ({ ...prev, [activeProject.id]: ch.id }));
+            }}
           />
         )}
       </div>
