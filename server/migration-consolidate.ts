@@ -91,15 +91,29 @@ export function mountMigrationConsolidate(app: Express) {
       const tx = rawDb.transaction(() => {
         const placeholders = oldIds.map(() => "?").join(",");
 
-        // Step A: for each uniqueness-constrained table, delete rows where (old user) would duplicate (keep user)'s row
+        // Step A: for each uniqueness-constrained table, dedupe in TWO passes so the
+        // subsequent UPDATE never violates a unique index.
+        //   A1: delete old-user rows that would duplicate the KEEP user's existing row
+        //   A2: among the remaining old-user rows, keep only one per (other key cols),
+        //       so when they all get rewritten to keep.id we don't collide with each other.
         for (const { table, keyCols, userCol } of dedupeIndexes) {
           const otherKeys = keyCols.filter(k => k !== userCol);
           if (otherKeys.length === 0) continue;
           const otherKeysCsv = otherKeys.join(", ");
-          const sql = `DELETE FROM ${table} WHERE ${userCol} IN (${placeholders}) AND (${otherKeysCsv}) IN (SELECT ${otherKeysCsv} FROM ${table} WHERE ${userCol} = ?)`;
-          const r = rawDb.prepare(sql).run(...oldIds, keep.id);
-          if (r.changes > 0) {
-            plan.push({ table, column: userCol, affected: 0, deduped: r.changes });
+
+          // A1: old vs keep collisions
+          const sqlA1 = `DELETE FROM ${table} WHERE ${userCol} IN (${placeholders}) AND (${otherKeysCsv}) IN (SELECT ${otherKeysCsv} FROM ${table} WHERE ${userCol} = ?)`;
+          const r1 = rawDb.prepare(sqlA1).run(...oldIds, keep.id);
+
+          // A2: old vs old collisions — keep MIN(rowid) per (otherKeys) among old rows.
+          // SQLite doesn't allow DELETE … WHERE rowid NOT IN (SELECT … FROM same table) reliably across versions,
+          // so we materialize the survivors via a temp set.
+          const sqlA2 = `DELETE FROM ${table} WHERE ${userCol} IN (${placeholders}) AND rowid NOT IN (SELECT MIN(rowid) FROM ${table} WHERE ${userCol} IN (${placeholders}) GROUP BY ${otherKeysCsv})`;
+          const r2 = rawDb.prepare(sqlA2).run(...oldIds, ...oldIds);
+
+          const total = (r1.changes || 0) + (r2.changes || 0);
+          if (total > 0) {
+            plan.push({ table, column: userCol, affected: 0, deduped: total });
           }
         }
 
