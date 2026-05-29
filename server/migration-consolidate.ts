@@ -53,11 +53,57 @@ export function mountMigrationConsolidate(app: Express) {
         }
       }
 
-      // 4. Plan: reassign each FK column, count rows affected, then delete users
-      const plan: Array<{ table: string; column: string; affected: number }> = [];
+      // Discover all uniqueness constraints involving user-FK columns so we can dedupe BEFORE the update.
+      // We collect (table, [keyCols]) for: (a) composite primary keys, (b) unique indexes on multi-column sets that include a user FK.
+      const dedupeIndexes: Array<{ table: string; keyCols: string[]; userCol: string }> = [];
+      for (const t of tables) {
+        if (t.name === "users") continue;
+        const userColsOnTable = fkColumns.filter(fc => fc.table === t.name).map(fc => fc.column);
+        if (userColsOnTable.length === 0) continue;
+
+        // (a) composite primary key
+        const cols = rawDb.prepare(`PRAGMA table_info(${t.name})`).all() as Array<{ name: string; pk: number }>;
+        const pkCols = cols.filter(c => c.pk > 0).map(c => c.name);
+        if (pkCols.length >= 2) {
+          for (const uc of userColsOnTable) {
+            if (pkCols.includes(uc)) dedupeIndexes.push({ table: t.name, keyCols: pkCols, userCol: uc });
+          }
+        }
+
+        // (b) unique indexes
+        const idxs = rawDb.prepare(`PRAGMA index_list(${t.name})`).all() as Array<{ name: string; unique: number }>;
+        for (const idx of idxs.filter(x => x.unique === 1)) {
+          const idxCols = (rawDb.prepare(`PRAGMA index_info(${idx.name})`).all() as Array<{ name: string }>).map(x => x.name);
+          if (idxCols.length < 2) continue; // single-column uniques on user_id won't collide for our case (each user appears once anyway)
+          for (const uc of userColsOnTable) {
+            if (idxCols.includes(uc)) {
+              // Skip if same key set already recorded
+              if (!dedupeIndexes.some(d => d.table === t.name && d.userCol === uc && d.keyCols.join(',') === idxCols.join(','))) {
+                dedupeIndexes.push({ table: t.name, keyCols: idxCols, userCol: uc });
+              }
+            }
+          }
+        }
+      }
+
+      // 4. Plan: dedupe junction tables, reassign each FK column, then delete users
+      const plan: Array<{ table: string; column: string; affected: number; deduped?: number }> = [];
       const tx = rawDb.transaction(() => {
+        const placeholders = oldIds.map(() => "?").join(",");
+
+        // Step A: for each uniqueness-constrained table, delete rows where (old user) would duplicate (keep user)'s row
+        for (const { table, keyCols, userCol } of dedupeIndexes) {
+          const otherKeys = keyCols.filter(k => k !== userCol);
+          if (otherKeys.length === 0) continue;
+          const otherKeysCsv = otherKeys.join(", ");
+          const sql = `DELETE FROM ${table} WHERE ${userCol} IN (${placeholders}) AND (${otherKeysCsv}) IN (SELECT ${otherKeysCsv} FROM ${table} WHERE ${userCol} = ?)`;
+          const r = rawDb.prepare(sql).run(...oldIds, keep.id);
+          if (r.changes > 0) {
+            plan.push({ table, column: userCol, affected: 0, deduped: r.changes });
+          }
+        }
+
         for (const { table, column } of fkColumns) {
-          const placeholders = oldIds.map(() => "?").join(",");
           const before = rawDb.prepare(
             `SELECT COUNT(*) as c FROM ${table} WHERE ${column} IN (${placeholders})`,
           ).get(...oldIds) as { c: number };
@@ -69,7 +115,6 @@ export function mountMigrationConsolidate(app: Express) {
           plan.push({ table, column, affected: before.c });
         }
         if (oldIds.length > 0) {
-          const placeholders = oldIds.map(() => "?").join(",");
           rawDb.prepare(`DELETE FROM users WHERE id IN (${placeholders})`).run(...oldIds);
         }
         if (dryRun) {
