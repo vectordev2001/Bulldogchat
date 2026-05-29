@@ -1,9 +1,11 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <rect width="64" height="64" rx="14" fill="#191E4A"/>
-  <polygon points="20,10 21.2,12.4 24,12.8 22,14.6 22.4,17.4 20,16.1 17.6,17.4 18,14.6 16,12.8 18.8,12.4" fill="#DD403D"/>
-  <polygon points="32,8 33.2,10.4 36,10.8 34,12.6 34.4,15.4 32,14.1 29.6,15.4 30,12.6 28,10.8 30.8,10.4" fill="#DD403D"/>
-  <polygon points="44,10 45.2,12.4 48,12.8 46,14.6 46.4,17.4 44,16.1 41.6,17.4 42,14.6 40,12.8 42.8,12.4" fill="#DD403D"/>
-  <path d="M8 50 L32 22 L56 50" stroke="#FFFFFF" stroke-width="5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M16 50 L32 32 L48 50" stroke="#FFFFFF" stroke-width="5" fill="none" stroke-linecap="round" stroke-linejoin="round" opacity="0.85"/>
-  <path d="M24 50 L32 42 L40 50" stroke="#FFFFFF" stroke-width="5" fill="none" stroke-linecap="round" stroke-linejoin="round" opacity="0.7"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <rect width="64" height="64" rx="12" fill="hsl(232 60% 9%)"/>
+  <g>
+    <polygon points="20,7.8 20.92,9.65 22.97,9.95 21.49,11.36 21.83,13.4 20,12.45 18.17,13.4 18.51,11.36 17.03,9.95 19.08,9.65" fill="hsl(2 70% 55%)"/>
+    <polygon points="32,5.8 32.92,7.65 34.97,7.95 33.49,9.36 33.83,11.4 32,10.45 30.17,11.4 30.51,9.36 29.03,7.95 31.08,7.65" fill="hsl(2 70% 55%)"/>
+    <polygon points="44,7.8 44.92,9.65 46.97,9.95 45.49,11.36 45.83,13.4 44,12.45 42.17,13.4 42.51,11.36 41.03,9.95 43.08,9.65" fill="hsl(2 70% 55%)"/>
+  </g>
+  <path d="M8 52 L32 24 L56 52" stroke="white" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M16 52 L32 34 L48 52" stroke="white" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" opacity="0.85"/>
+  <path d="M24 52 L32 44 L40 52" stroke="white" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" opacity="0.7"/>
 </svg>
