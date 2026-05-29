@@ -21,6 +21,9 @@ export interface AppSwitcherProps {
   className?: string;
   /** Render compact dark variant (for dark headers). */
   dark?: boolean;
+  /** Where the popover opens relative to the trigger. Default 'bottom-end' (right-aligned).
+   *  Use 'right-start' when the trigger lives on the left edge of the viewport (e.g. ProjectRail). */
+  placement?: "bottom-end" | "bottom-start" | "right-start" | "top-start";
 }
 
 const DEFAULT_LINKS: Record<"chat" | "contracts" | "ops" | "auth" | "home", string> = {
@@ -77,7 +80,7 @@ const ENTRIES: AppEntry[] = [
   },
 ];
 
-export function AppSwitcher({ currentApp, links, className, dark }: AppSwitcherProps) {
+export function AppSwitcher({ currentApp, links, className, dark, placement = "bottom-end" }: AppSwitcherProps) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -124,7 +127,12 @@ export function AppSwitcher({ currentApp, links, className, dark }: AppSwitcherP
       </button>
 
       {open && (
-        <div className="absolute right-0 mt-2 w-72 rounded-xl bg-white shadow-xl border border-slate-200 p-2 z-50">
+        <div className={`absolute w-72 rounded-xl bg-white shadow-xl border border-slate-200 p-2 z-50 ${
+          placement === "right-start" ? "left-full top-0 ml-2" :
+          placement === "top-start" ? "left-0 bottom-full mb-2" :
+          placement === "bottom-start" ? "left-0 mt-2" :
+          "right-0 mt-2"
+        }`}>
           <div className="px-3 pt-2 pb-1 flex items-center justify-between">
             <div className="text-xs font-medium text-slate-500 uppercase tracking-wider">Bulldog Suite</div>
             <a
