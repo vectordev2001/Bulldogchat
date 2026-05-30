@@ -92,6 +92,16 @@ export function bulldogSsoBridge(): RequestHandler {
           }
         }
         if (!local) return next();
+        // Keep the chat row's display name in sync with bulldog-auth.
+        // Without this, seed users keep whatever name the demo seed gave
+        // them even after an admin renames them in auth. Run on every
+        // bridge so renames propagate quickly; updateUser is a no-op when
+        // the value hasn't changed at the DB level for our purposes.
+        const authName = (req.user.name || "").trim();
+        if (authName && authName !== local.name) {
+          try { storage.updateUser(local.id, { name: authName }); }
+          catch (e) { console.warn("[chat bulldogSsoBridge] name sync failed:", e); }
+        }
         // Backfill: if an existing local user is in zero projects, seed them
         // into every org project. Cheap idempotent guard for users created
         // before the auto-seed code above shipped.
