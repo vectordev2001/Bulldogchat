@@ -230,7 +230,7 @@ export default function Home() {
       {/* Main column */}
       <main className="flex-1 min-w-0 flex flex-col">
         {/* Mobile top bar */}
-        <div className="md:hidden h-12 flex items-center justify-between px-3 bg-[hsl(232_55%_14%)] border-b border-black/40">
+        <div className="md:hidden h-12 shrink-0 flex items-center justify-between px-3 bg-[hsl(232_55%_14%)] border-b border-black/40 sticky top-0 z-30">
           <button
             type="button"
             className="p-2 rounded hover-elevate"
