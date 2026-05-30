@@ -23,7 +23,23 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const [, setLocation] = useLocation();
 
   useEffect(() => {
-    if (!loading && !user) setLocation("/login");
+    if (loading || user) return;
+    // Bulldog Suite SSO: bounce to auth.bulldogops.com which sets the
+    // cross-subdomain bulldog_access cookie and returns via ?next=.
+    // ?local=1 keeps the legacy local /login page for emergencies.
+    const search = new URLSearchParams(window.location.search);
+    const wantsLocal = search.get("local") === "1";
+    const isLocalDev =
+      window.location.hostname === "localhost" ||
+      window.location.hostname === "127.0.0.1";
+    if (wantsLocal || isLocalDev) {
+      setLocation("/login");
+      return;
+    }
+    const here = window.location.href;
+    window.location.replace(
+      `https://auth.bulldogops.com/?next=${encodeURIComponent(here)}`,
+    );
   }, [loading, user, setLocation]);
 
   if (loading) {

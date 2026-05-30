@@ -620,6 +620,114 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     });
   });
 
+  // ── GROUP CALLS FROM A TEXT CHANNEL ──
+  // The user is in a text channel and wants to start a voice/video call that
+  // pulls in some/all channel members. We piggyback on the 1:1 calling
+  // infrastructure: one direct_call row PER invitee, all pointing at the
+  // SAME LiveKit room. Each invitee sees the standard incoming-call modal
+  // and accepts — their accept-flow already publishes them into the room.
+  // The caller is returned a token for the shared room immediately.
+  app.post("/api/channels/:id/group-call/start", requireAuth, async (req, res) => {
+    const u = (req as AuthedRequest).user;
+    const channelId = Number(req.params.id);
+    const kind = (req.body?.kind === "video" ? "video" : "voice") as "voice" | "video";
+    const rawInvitees: unknown = req.body?.inviteeIds;
+    if (!Array.isArray(rawInvitees) || rawInvitees.length === 0) {
+      return res.status(400).json({ message: "inviteeIds[] required" });
+    }
+    const inviteeIds: number[] = Array.from(
+      new Set(
+        rawInvitees
+          .map((x) => Number(x))
+          .filter((n) => Number.isFinite(n) && n > 0 && n !== u.id),
+      ),
+    );
+    if (inviteeIds.length === 0) {
+      return res.status(400).json({ message: "No valid invitees" });
+    }
+
+    const access = userCanAccessChannel(u.id, u.orgId, channelId);
+    if (!access) return res.status(404).json({ message: "Channel not found" });
+
+    if (!livekitConfigured()) {
+      return res.status(503).json({ message: "Calling unavailable: LiveKit not configured" });
+    }
+
+    // One shared LiveKit room for the whole group call. We tie it to the
+    // channel id + epoch so back-to-back group calls don't collide.
+    const groupRoomName = `group-channel-${channelId}-${Date.now()}`;
+
+    // Validate invitees and filter to same-org, non-deactivated users.
+    const validInvitees = inviteeIds
+      .map((id) => ({ id, user: storage.getUser(id) }))
+      .filter((x) => x.user && x.user.orgId === u.orgId && !x.user.deactivated)
+      .map((x) => x.id);
+    if (validInvitees.length === 0) {
+      return res.status(400).json({ message: "No reachable invitees" });
+    }
+
+    // Create one direct_call row per invitee, all sharing the same room.
+    for (const calleeId of validInvitees) {
+      const row = storage.createDirectCall({
+        orgId: u.orgId, callerId: u.id, calleeId, roomName: groupRoomName, kind,
+      });
+      storage.updateDirectCallStatus(row.id, "ringing");
+      // Patch room_name in case createDirectCall ignored it (defensive —
+      // mirrors what /api/calls/start does for the 1:1 path).
+      try {
+        (await import("./db")).rawDb
+          .prepare(`UPDATE direct_calls SET room_name = ? WHERE id = ?`)
+          .run(groupRoomName, row.id);
+      } catch {
+        /* best-effort */
+      }
+
+      const payload: CallEventPayload = {
+        callId: row.id,
+        callerId: u.id,
+        calleeId,
+        callerName: u.name,
+        callerHue: u.hue,
+        kind,
+        roomName: groupRoomName,
+      };
+      emitCallIncoming(payload);
+
+      // Auto-miss after 60s if no answer. Group calls get a slightly longer
+      // window than 1:1 since people may be ringing in a noisy environment.
+      setTimeout(() => {
+        const current = storage.getDirectCall(row.id);
+        if (current && current.status === "ringing") {
+          storage.updateDirectCallStatus(row.id, "missed", { endedAt: new Date() });
+          emitCallEnded({ ...payload, reason: "missed" });
+        }
+      }, 60_000);
+    }
+
+    // Fire a single batched push to all invitees with the group-call label.
+    void sendNotificationToUsers(validInvitees, {
+      title: `\ud83d\udcde ${u.name} is calling`,
+      body:
+        kind === "video"
+          ? `Group video call — ${access.channel?.name ? "#" + access.channel.name : "channel"}`
+          : `Group voice call — ${access.channel?.name ? "#" + access.channel.name : "channel"}`,
+      url: `/#/call/group/${encodeURIComponent(groupRoomName)}`,
+      tag: `group-call-${groupRoomName}`,
+    });
+
+    // Mint the caller's token for the shared room and return.
+    const token = await generateLivekitToken({
+      userId: u.id, userName: u.name, roomName: groupRoomName, canPublish: true,
+    });
+    res.json({
+      roomName: groupRoomName,
+      token,
+      ws_url: process.env.LIVEKIT_WS_URL,
+      invitedUserIds: validInvitees,
+      kind,
+    });
+  });
+
   // Callee accepts. Mints their token and flips the row to 'active'.
   app.post("/api/calls/:id/accept", requireAuth, async (req, res) => {
     const u = (req as AuthedRequest).user;
