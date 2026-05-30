@@ -31,7 +31,7 @@ const DEFAULT_LINKS: Record<"chat" | "contracts" | "ops" | "auth" | "home", stri
   chat: "https://chat.bulldogops.com",
   contracts: "https://vectorcontracts.bulldogops.com",
   ops: "https://ops.bulldogops.com",
-  auth: "https://auth.bulldogops.com",
+  auth: "https://auth.bulldogops.com/?account=1",
 };
 
 interface AppEntry {

@@ -309,10 +309,19 @@ export function useLiveKitRoom(args: Args): LiveKitHookResult {
   }, [micMuted, status, refreshParticipants, onTrackError]);
 
   // --- Camera reconciliation ---------------------------------------------
-  // Same rationale as mic: use the high-level API so iOS Safari's media
-  // pipeline initializes cleanly. The previous manual path could crash
-  // the WebKit content process on iPhone when a permission prompt
-  // arrived during an active LiveKit session.
+  // iOS Safari (especially in a homescreen PWA) is notoriously fragile
+  // here: combining `resolution` + `frameRate` + `facingMode` constraints
+  // mid-call can hard-crash the WebKit content process. The hardened
+  // approach below:
+  //   1. Detects iOS and uses NO resolution/frameRate constraints there
+  //      — just `facingMode: 'user'`. iOS picks safe defaults.
+  //   2. Primes the permission with a bare getUserMedia({video:true})
+  //      call BEFORE asking LiveKit to publish. The primer stream is
+  //      stopped immediately; this decouples the iOS permission prompt
+  //      from the LiveKit publish pipeline, which is what historically
+  //      triggered the crash.
+  //   3. Yields to the event loop so the user's tap gesture commits and
+  //      any existing audio session settles before we touch the camera.
   useEffect(() => {
     const room = roomRef.current;
     if (!room || status !== "connected") return;
@@ -320,27 +329,70 @@ export function useLiveKitRoom(args: Args): LiveKitHookResult {
     let cancelled = false;
     (async () => {
       try {
+        if (!videoOn) {
+          // Turn-off path: no permission prompt, no priming.
+          await room.localParticipant.setCameraEnabled(false);
+          if (cancelled) return;
+          cameraTrackRef.current = null;
+          setCameraPublished(false);
+          refreshParticipants();
+          return;
+        }
+
+        const ua = typeof navigator !== "undefined" ? navigator.userAgent : "";
+        const isIOS =
+          /iPad|iPhone|iPod/.test(ua) ||
+          (ua.includes("Mac") && typeof navigator !== "undefined" && (navigator as any).maxTouchPoints > 1);
         const isCoarsePointer =
           typeof window !== "undefined" &&
           window.matchMedia &&
           window.matchMedia("(pointer: coarse)").matches;
-        const videoOpts = isCoarsePointer
-          ? { resolution: { width: 640, height: 480, frameRate: 24 }, facingMode: "user" as const }
-          : { resolution: { width: 1280, height: 720, frameRate: 24 }, facingMode: "user" as const };
 
-        // 12s safety timeout so the UI doesn't appear to hang if iOS
-        // silently denies permission. LiveKit's own errors fire first.
+        // Step 1: prime camera permission with a bare getUserMedia. This
+        // gets the iOS permission prompt out of the way — if the user
+        // denies, we get a clean NotAllowedError instead of a WebKit
+        // process crash. The primer stream is immediately stopped.
+        if (typeof navigator !== "undefined" && navigator.mediaDevices?.getUserMedia) {
+          try {
+            const primer = await navigator.mediaDevices.getUserMedia({
+              video: isIOS ? { facingMode: "user" } : true,
+              audio: false,
+            });
+            primer.getTracks().forEach((t) => t.stop());
+          } catch (primerErr) {
+            // Permission denied or device busy. Surface and bail — don't
+            // even try LiveKit, which is what was crashing iOS.
+            if (!cancelled) onTrackError?.("camera", primerErr);
+            return;
+          }
+        }
+        if (cancelled) return;
+
+        // Step 2: brief yield so the iOS audio/video session can settle
+        // after the primer. 80ms is enough on real devices.
+        await new Promise((r) => setTimeout(r, 80));
+        if (cancelled) return;
+
+        // Step 3: ask LiveKit to publish. On iOS use ONLY facingMode —
+        // no resolution/frameRate — the most stable combo on WebKit.
+        const videoOpts = isIOS
+          ? { facingMode: "user" as const }
+          : isCoarsePointer
+            ? { resolution: { width: 640, height: 480, frameRate: 24 }, facingMode: "user" as const }
+            : { resolution: { width: 1280, height: 720, frameRate: 24 }, facingMode: "user" as const };
+
+        // 15s timeout backstop. Permission errors fire much faster.
         await Promise.race([
-          room.localParticipant.setCameraEnabled(videoOn, videoOpts),
+          room.localParticipant.setCameraEnabled(true, videoOpts),
           new Promise<never>((_, reject) =>
             setTimeout(
               () =>
                 reject(
                   new Error(
-                    "Camera did not start in 12s. Check camera permission in iOS Settings → Bulldog → Camera.",
+                    "Camera did not start in 15s. Check camera permission in iOS Settings → Safari → Camera.",
                   ),
                 ),
-              12_000,
+              15_000,
             ),
           ),
         ]);
