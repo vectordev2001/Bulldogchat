@@ -75,7 +75,7 @@ export function ChannelSidebar({
       </div>
 
       <div className="flex-1 overflow-y-auto px-2 py-3 space-y-4">
-        <Section label="Text Channels" open={textOpen} onToggle={() => setTextOpen(!textOpen)} onAdd={canCreateChannel ? onCreateChannel : undefined}>
+        <Section label="Sitrep Channels" open={textOpen} onToggle={() => setTextOpen(!textOpen)} onAdd={canCreateChannel ? onCreateChannel : undefined}>
           {textOpen && filteredText.map((c) => (
             <ChannelRow
               key={c.id}
@@ -89,7 +89,7 @@ export function ChannelSidebar({
           )}
         </Section>
 
-        <Section label="Voice Channels" open={voiceOpen} onToggle={() => setVoiceOpen(!voiceOpen)} onAdd={canCreateChannel ? onCreateChannel : undefined}>
+        <Section label="Net Channels" open={voiceOpen} onToggle={() => setVoiceOpen(!voiceOpen)} onAdd={canCreateChannel ? onCreateChannel : undefined}>
           {voiceOpen && filteredVoice.map((c) => (
             <ChannelRow
               key={c.id}

@@ -75,7 +75,7 @@ export function ThreadPanel({ parentMessage, channelId, me, onClose }: Props) {
             <div className="flex items-center gap-2">
               <MessageSquare className="w-4 h-4 text-vs-red" />
               <div>
-                <div className="text-sm font-display text-white">Thread</div>
+                <div className="text-sm font-display text-white">Comms</div>
                 <div className="text-[10px] text-[hsl(0_0%_55%)] font-mono">{replies.length} {replies.length === 1 ? "reply" : "replies"}</div>
               </div>
             </div>
@@ -109,7 +109,7 @@ export function ThreadPanel({ parentMessage, channelId, me, onClose }: Props) {
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
                 onKeyDown={handleKey}
-                placeholder="Reply in thread…"
+                placeholder="Reply in comms…"
                 rows={1}
                 className="flex-1 bg-transparent text-sm text-white placeholder:text-[hsl(0_0%_50%)] resize-none outline-none max-h-24 py-1"
                 data-testid="textarea-thread-composer"

@@ -14,10 +14,10 @@ interface Props {
 }
 
 const SCOPES: { value: ChannelScope; label: string; desc: string; Icon: typeof Globe }[] = [
-  { value: "global", label: "Global", desc: "Everyone in this project.", Icon: Globe },
-  { value: "entity", label: "Entity", desc: "Only users whose title matches the entity.", Icon: Building2 },
-  { value: "team", label: "Team", desc: "Only users with a specific role.", Icon: Users },
-  { value: "private", label: "Private", desc: "Only named members.", Icon: Lock },
+  { value: "global", label: "All-Hands", desc: "Everyone in this project.", Icon: Globe },
+  { value: "entity", label: "Detachment", desc: "Only users whose title matches the detachment tag.", Icon: Building2 },
+  { value: "team", label: "Squad", desc: "Only users with a specific role.", Icon: Users },
+  { value: "private", label: "Restricted", desc: "Only named members.", Icon: Lock },
 ];
 
 const ROLES: { value: UserRole; label: string }[] = [
@@ -141,8 +141,8 @@ export function CreateChannelDialog({ open, onClose, projectId, me, onCreated }:
               className="rounded-md border border-[hsl(0_0%_18%)] bg-[hsl(0_0%_8%)] px-2 py-2 text-sm"
               data-testid="select-channel-type"
             >
-              <option value="text">Text</option>
-              <option value="voice">Voice</option>
+              <option value="text">Sitrep</option>
+              <option value="voice">Net</option>
             </select>
           </div>
 
@@ -157,7 +157,7 @@ export function CreateChannelDialog({ open, onClose, projectId, me, onCreated }:
 
           {/* Scope picker */}
           <div className="space-y-2">
-            <div className="text-xs uppercase tracking-wider text-[hsl(0_0%_55%)]">Visibility</div>
+            <div className="text-xs uppercase tracking-wider text-[hsl(0_0%_55%)]">Clearance</div>
             <div className="grid grid-cols-2 gap-2">
               {SCOPES.map(({ value, label, desc, Icon }) => (
                 <button
@@ -183,7 +183,7 @@ export function CreateChannelDialog({ open, onClose, projectId, me, onCreated }:
 
           {scope === "entity" && (
             <div className="space-y-1.5">
-              <label className="text-xs text-[hsl(0_0%_55%)]">Entity tag (matches user title)</label>
+              <label className="text-xs text-[hsl(0_0%_55%)]">Detachment tag (matches user title)</label>
               <input
                 value={entityId}
                 onChange={(e) => setEntityId(e.target.value)}

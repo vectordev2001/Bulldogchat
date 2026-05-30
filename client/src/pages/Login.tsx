@@ -121,7 +121,7 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
             <span className="text-vs-blue-light">Work moves.</span>
           </h2>
           <p className="mt-5 text-[hsl(0_0%_75%)] text-sm leading-relaxed">
-            Project-scoped text and voice channels for utility construction. Built for substations,
+            Project-scoped sitrep and net channels for utility construction. Built for substations,
             fiber crews, pole replacements, and the office that backs them up.
           </p>
         </div>

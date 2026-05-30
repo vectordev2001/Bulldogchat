@@ -540,7 +540,7 @@ function MessageRow({ msg, grouped, isMe, meId, onOpenThread }: { msg: ApiMessag
           type="button"
           onClick={onOpenThread}
           className="p-1 rounded hover:bg-[hsl(232_45%_22%)] text-[hsl(0_0%_70%)] hover:text-vs-red"
-          title="Reply in thread"
+          title="Reply in comms"
           data-testid={`button-reply-thread-${msg.id}`}
         >
           <Reply className="w-3.5 h-3.5" />
