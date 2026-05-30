@@ -61,6 +61,18 @@ interface CallCtxValue {
   lastEnded: { reason: "declined" | "missed" | "ended"; otherName: string } | null;
 
   startCall(opts: { calleeId: number; calleeName: string; calleeHue: number; kind?: "voice" | "video" }): Promise<void>;
+  /**
+   * Start a group call from a text channel. Server rings every invitee
+   * with the same shared LiveKit room name; the caller is dropped into
+   * that room immediately (no "calling…" wait state — invitees can
+   * trickle in as they accept).
+   */
+  startGroupCall(opts: {
+    channelId: number;
+    channelName: string;
+    inviteeIds: number[];
+    kind?: "voice" | "video";
+  }): Promise<void>;
   acceptIncoming(): Promise<void>;
   declineIncoming(): Promise<void>;
   endActive(): Promise<void>;
@@ -81,6 +93,14 @@ interface StartCallResponse {
   roomName: string;
   token: string;
   ws_url: string;
+}
+
+interface StartGroupCallResponse {
+  roomName: string;
+  token: string;
+  ws_url: string;
+  invitedUserIds: number[];
+  kind: "voice" | "video";
 }
 
 export function CallProvider({ children }: { children: ReactNode }) {
@@ -231,6 +251,33 @@ export function CallProvider({ children }: { children: ReactNode }) {
     // before acceptance \u2014 there'd be one-way audio bleed.
   }, [outgoing, active, playRing]);
 
+  // Group call from a text channel. Server creates one direct_call row
+  // per invitee (all pointing at the same room) and rings them. The caller
+  // joins the LiveKit room immediately so they don't sit on a "calling…"
+  // screen while waiting for the first accept.
+  const startGroupCall = useCallback<CallCtxValue["startGroupCall"]>(async ({
+    channelId, channelName, inviteeIds, kind = "voice",
+  }) => {
+    if (outgoing || active) return;
+    const resp = await apiRequest<StartGroupCallResponse>(
+      "POST", `/api/channels/${channelId}/group-call/start`, { inviteeIds, kind },
+    );
+    setActive({
+      // No single callId for a group call — we use 0 as a sentinel and
+      // skip /api/calls/:id/end on hangup (per-invitee rows are cleaned
+      // up server-side as they accept/miss).
+      callId: 0,
+      roomName: resp.roomName,
+      token: resp.token,
+      wsUrl: resp.ws_url,
+      otherName: `#${channelName}`,
+      otherHue: 215, // neutral channel hue
+      kind: resp.kind,
+      iAmCaller: true,
+      active: true,
+    });
+  }, [outgoing, active]);
+
   const acceptIncoming = useCallback(async () => {
     const inc = incomingRef.current;
     if (!inc) return;
@@ -272,6 +319,9 @@ export function CallProvider({ children }: { children: ReactNode }) {
     const cur = activeRef.current;
     if (!cur) return;
     setActive(null);
+    // Group calls have no single callId — just drop locally; per-invitee
+    // rows clean up as participants leave their own LiveKit sessions.
+    if (cur.callId === 0) return;
     await apiRequest("POST", `/api/calls/${cur.callId}/end`, { action: "end" });
   }, []);
 
@@ -280,7 +330,7 @@ export function CallProvider({ children }: { children: ReactNode }) {
   return (
     <CallCtx.Provider value={{
       incoming, outgoing, active, lastEnded,
-      startCall, acceptIncoming, declineIncoming, endActive, cancelOutgoing, clearLastEnded,
+      startCall, startGroupCall, acceptIncoming, declineIncoming, endActive, cancelOutgoing, clearLastEnded,
     }}>
       {children}
     </CallCtx.Provider>

@@ -1,4 +1,6 @@
-import { Hash, Pin, Plus, Smile, Paperclip, Send, Bell, Users, Search, Inbox, HelpCircle, Loader2, MessageSquare, X, Reply } from "lucide-react";
+import { Hash, Pin, Plus, Smile, Paperclip, Send, Bell, Users, Search, Inbox, HelpCircle, Loader2, MessageSquare, X, Reply, Phone, Video } from "lucide-react";
+import { ChannelCallDialog } from "@/components/ChannelCallDialog";
+import { useCalls } from "@/lib/CallContext";
 import { Avatar } from "./Avatar";
 import { useState, useRef, useEffect, KeyboardEvent, useCallback, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -57,6 +59,9 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers }: 
   const [dragOver, setDragOver] = useState(false);
   const [mentionMatch, setMentionMatch] = useState<MentionMatch | null>(null);
   const [mentionSelectedIdx, setMentionSelectedIdx] = useState(0);
+  const [callDialog, setCallDialog] = useState<null | "voice" | "video">(null);
+  const { active: activeCall, outgoing: outgoingCall } = useCalls();
+  const callBusy = !!activeCall || !!outgoingCall;
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
@@ -225,6 +230,29 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers }: 
           </>
         )}
         <div className="ml-auto flex items-center gap-1 text-[hsl(0_0%_65%)]">
+          {/* Group-call quick actions — ring channel members from the
+              text view without having to navigate to a voice channel. */}
+          <button
+            type="button"
+            onClick={() => setCallDialog("voice")}
+            disabled={callBusy}
+            className="p-2 rounded hover-elevate text-[hsl(0_0%_70%)] hover:text-white disabled:opacity-40 disabled:cursor-not-allowed"
+            title={callBusy ? "Already in a call" : "Start voice call"}
+            data-testid="button-channel-call"
+          >
+            <Phone className="w-4 h-4" />
+          </button>
+          <button
+            type="button"
+            onClick={() => setCallDialog("video")}
+            disabled={callBusy}
+            className="p-2 rounded hover-elevate text-[hsl(0_0%_70%)] hover:text-white disabled:opacity-40 disabled:cursor-not-allowed"
+            title={callBusy ? "Already in a call" : "Start video call"}
+            data-testid="button-channel-video"
+          >
+            <Video className="w-4 h-4" />
+          </button>
+          <span className="w-px h-5 bg-[hsl(232_40%_22%)] mx-1" />
           <HeaderIcon title="Notifications"><Bell className="w-4 h-4" /></HeaderIcon>
           <HeaderIcon title="Pinned"><Pin className="w-4 h-4" /></HeaderIcon>
           <HeaderIcon title="Members"><Users className="w-4 h-4" /></HeaderIcon>
@@ -439,6 +467,14 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers }: 
         onClose={() => setSearchOpen(false)}
         onJump={(_chId, _msgId) => { /* TODO scroll to message */ }}
         channelId={channel.id}
+      />
+      <ChannelCallDialog
+        channel={channel}
+        fallbackMembers={orgMembers}
+        meId={me.id}
+        open={!!callDialog}
+        initialKind={callDialog || "voice"}
+        onClose={() => setCallDialog(null)}
       />
     </section>
   );

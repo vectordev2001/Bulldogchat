@@ -279,6 +279,30 @@ export function VoiceChannelView(props: Props) {
         </div>
       )}
 
+      {/* Privacy: mic-on indicator. Always visible whenever the local mic is
+          publishing audio so you cannot accidentally forget you're hot. */}
+      {lk.micPublished && (
+        <div
+          className="px-4 py-2 bg-gradient-to-r from-vs-red/30 via-vs-red/20 to-vs-red/10 border-b-2 border-vs-red flex items-center justify-center gap-3 text-xs shadow-[0_2px_12px_-2px_rgba(220,38,38,0.5)]"
+          data-testid="banner-mic-on"
+        >
+          <span className="relative flex w-2.5 h-2.5">
+            <span className="absolute inset-0 rounded-full bg-vs-red opacity-75 animate-ping" />
+            <span className="relative inline-flex w-2.5 h-2.5 rounded-full bg-vs-red" />
+          </span>
+          <Mic className="w-4 h-4 text-white" />
+          <span className="font-mono font-bold tracking-wider text-white uppercase text-[11px]">Mic On — You can be heard</span>
+          <button
+            type="button"
+            onClick={onToggleMic}
+            className="ml-2 px-2 py-0.5 rounded bg-white/15 hover:bg-white/25 text-white font-mono text-[10px] uppercase tracking-wider transition-colors"
+            data-testid="button-quick-mute"
+          >
+            Mute
+          </button>
+        </div>
+      )}
+
       <div className="flex-1 flex min-h-0">
         <div className="flex-1 p-6 overflow-y-auto">
           <div className={[

@@ -142,6 +142,10 @@ export function useLiveKitRoom(args: Args): LiveKitHookResult {
   const roomRef = useRef<Room | null>(null);
   const micTrackRef = useRef<LocalAudioTrack | null>(null);
   const cameraTrackRef = useRef<LocalVideoTrack | null>(null);
+  // Promise chain that serializes camera enable/disable ops. iOS Safari
+  // hangs if two setCameraEnabled() calls overlap; we await the prior
+  // op before firing the next one.
+  const cameraOpRef = useRef<Promise<void> | null>(null);
 
   const [status, setStatus] = useState<ConnectionStatus>("idle");
   const [error, setError] = useState<string | null>(null);
@@ -309,28 +313,37 @@ export function useLiveKitRoom(args: Args): LiveKitHookResult {
   }, [micMuted, status, refreshParticipants, onTrackError]);
 
   // --- Camera reconciliation ---------------------------------------------
-  // iOS Safari (especially in a homescreen PWA) is notoriously fragile
-  // here: combining `resolution` + `frameRate` + `facingMode` constraints
-  // mid-call can hard-crash the WebKit content process. The hardened
-  // approach below:
-  //   1. Detects iOS and uses NO resolution/frameRate constraints there
-  //      — just `facingMode: 'user'`. iOS picks safe defaults.
-  //   2. Primes the permission with a bare getUserMedia({video:true})
-  //      call BEFORE asking LiveKit to publish. The primer stream is
-  //      stopped immediately; this decouples the iOS permission prompt
-  //      from the LiveKit publish pipeline, which is what historically
-  //      triggered the crash.
-  //   3. Yields to the event loop so the user's tap gesture commits and
-  //      any existing audio session settles before we touch the camera.
+  // Hard-won lessons on iOS Safari:
+  //   * Calling a bare getUserMedia as a "primer" before LiveKit's own
+  //     publish triggers a SECOND permission prompt every time and
+  //     freezes the page if the two prompts overlap. We removed the
+  //     primer entirely.
+  //   * Stacking constraints (resolution + frameRate + facingMode) is
+  //     unstable on iOS Safari WebRTC. On iOS we use ZERO constraints —
+  //     just `true` — and let iOS pick whatever it wants.
+  //   * Effect re-runs that flip `videoOn` rapidly can race two
+  //     setCameraEnabled() calls into the same room. We serialize them
+  //     with a small in-flight ref so the second tap waits for the first.
   useEffect(() => {
     const room = roomRef.current;
     if (!room || status !== "connected") return;
 
     let cancelled = false;
     (async () => {
+      // Serialize: wait for any prior camera op to settle so we don't
+      // double-fire setCameraEnabled, which iOS handles badly.
+      const prior = cameraOpRef.current;
+      let release: () => void = () => {};
+      const next = new Promise<void>((res) => (release = res));
+      cameraOpRef.current = prior ? prior.then(() => next) : next;
+      if (prior) {
+        try { await prior; } catch { /* swallow */ }
+      }
+      if (cancelled) { release(); return; }
+
       try {
         if (!videoOn) {
-          // Turn-off path: no permission prompt, no priming.
+          // Turn-off path: no permission prompt needed.
           await room.localParticipant.setCameraEnabled(false);
           if (cancelled) return;
           cameraTrackRef.current = null;
@@ -348,42 +361,19 @@ export function useLiveKitRoom(args: Args): LiveKitHookResult {
           window.matchMedia &&
           window.matchMedia("(pointer: coarse)").matches;
 
-        // Step 1: prime camera permission with a bare getUserMedia. This
-        // gets the iOS permission prompt out of the way — if the user
-        // denies, we get a clean NotAllowedError instead of a WebKit
-        // process crash. The primer stream is immediately stopped.
-        if (typeof navigator !== "undefined" && navigator.mediaDevices?.getUserMedia) {
-          try {
-            const primer = await navigator.mediaDevices.getUserMedia({
-              video: isIOS ? { facingMode: "user" } : true,
-              audio: false,
-            });
-            primer.getTracks().forEach((t) => t.stop());
-          } catch (primerErr) {
-            // Permission denied or device busy. Surface and bail — don't
-            // even try LiveKit, which is what was crashing iOS.
-            if (!cancelled) onTrackError?.("camera", primerErr);
-            return;
-          }
-        }
-        if (cancelled) return;
-
-        // Step 2: brief yield so the iOS audio/video session can settle
-        // after the primer. 80ms is enough on real devices.
-        await new Promise((r) => setTimeout(r, 80));
-        if (cancelled) return;
-
-        // Step 3: ask LiveKit to publish. On iOS use ONLY facingMode —
-        // no resolution/frameRate — the most stable combo on WebKit.
-        const videoOpts = isIOS
-          ? { facingMode: "user" as const }
+        // iOS gets NO constraints. Period. Anything else has crashed
+        // WebKit during testing. Desktop keeps the prior 720p target.
+        const videoOpts: true | { resolution?: { width: number; height: number; frameRate: number }; facingMode?: "user" } = isIOS
+          ? true
           : isCoarsePointer
-            ? { resolution: { width: 640, height: 480, frameRate: 24 }, facingMode: "user" as const }
-            : { resolution: { width: 1280, height: 720, frameRate: 24 }, facingMode: "user" as const };
+            ? { resolution: { width: 640, height: 480, frameRate: 24 }, facingMode: "user" }
+            : { resolution: { width: 1280, height: 720, frameRate: 24 }, facingMode: "user" };
 
         // 15s timeout backstop. Permission errors fire much faster.
         await Promise.race([
-          room.localParticipant.setCameraEnabled(true, videoOpts),
+          (videoOpts === true
+            ? room.localParticipant.setCameraEnabled(true)
+            : room.localParticipant.setCameraEnabled(true, videoOpts)),
           new Promise<never>((_, reject) =>
             setTimeout(
               () =>
@@ -403,6 +393,11 @@ export function useLiveKitRoom(args: Args): LiveKitHookResult {
         refreshParticipants();
       } catch (err) {
         if (!cancelled) onTrackError?.("camera", err);
+      } finally {
+        release();
+        // If we're the tail of the chain, clear the ref so the next op
+        // starts clean rather than chaining onto a resolved promise.
+        if (cameraOpRef.current === next) cameraOpRef.current = null;
       }
     })();
     return () => {
