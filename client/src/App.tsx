@@ -13,6 +13,7 @@ import AdminPanel from "@/pages/AdminPanel";
 import { AuthProvider, useAuth } from "@/lib/auth";
 import { CallProvider } from "@/lib/CallContext";
 import { CallOverlays } from "@/components/CallOverlays";
+import { IosInstallBanner } from "@/components/IosInstallBanner";
 import { useEffect } from "react";
 import { Loader2 } from "lucide-react";
 import { VectorLogo } from "@/components/VectorLogo";
@@ -57,9 +58,14 @@ function App() {
         <CallProvider>
           <TooltipProvider>
             <Toaster />
-            <Router hook={useHashLocation}>
-              <AppRouter />
-            </Router>
+            <div className="min-h-[100dvh] flex flex-col">
+              <IosInstallBanner appName="Bulldog Chat" />
+              <div className="flex-1 min-h-0 flex flex-col">
+                <Router hook={useHashLocation}>
+                  <AppRouter />
+                </Router>
+              </div>
+            </div>
             <CallOverlays />
           </TooltipProvider>
         </CallProvider>

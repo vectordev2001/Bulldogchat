@@ -369,12 +369,32 @@ export function VoiceChannelView(props: Props) {
       </div>
 
       {/* Bottom control bar */}
+      {/* Mic/Cam/Screen buttons are gated on the LiveKit room being in the
+          "connected" state. iOS Safari needs the gesture-driven publish to
+          fire AFTER the room is connected; before that the reconcile
+          effects skip the call and the toggle silently does nothing. We
+          surface the wait state on the buttons + an inline strip so the
+          user can see what's happening. */}
+      {!!livekitInfo && lk.status !== "connected" && (
+        <div className="shrink-0 px-4 py-1.5 bg-[hsl(232_55%_14%)] border-t border-[hsl(232_40%_22%)] flex items-center justify-center gap-2 text-[11px] font-mono" data-testid="banner-call-waiting">
+          {lk.status === "connecting" || lk.status === "reconnecting" ? (
+            <><Loader2 className="w-3 h-3 animate-spin text-vs-amber" /><span className="text-vs-amber uppercase tracking-wider">{lk.status === "reconnecting" ? "Reconnecting" : "Connecting to call"}…</span><span className="text-[hsl(0_0%_55%)]">mic & video unlock when ready</span></>
+          ) : lk.status === "failed" ? (
+            <><AlertTriangle className="w-3 h-3 text-[hsl(2_85%_72%)]" /><span className="text-[hsl(2_85%_72%)] uppercase tracking-wider">Call failed</span><span className="text-[hsl(0_0%_55%)]">{lk.error ?? "Tap Leave and rejoin"}</span></>
+          ) : (
+            <><Loader2 className="w-3 h-3 animate-spin text-[hsl(0_0%_55%)]" /><span className="text-[hsl(0_0%_55%)] uppercase tracking-wider">Waiting for media…</span></>
+          )}
+        </div>
+      )}
       <div className="shrink-0 px-6 py-3 border-t border-[hsl(232_40%_22%)] bg-[hsl(232_55%_11%)] flex items-center justify-center gap-2" data-testid="bar-call-controls">
         <CallButton on={!myMicMuted} onClick={onToggleMic} title={myMicMuted ? "Unmute" : "Mute"}
+          disabled={!!livekitInfo && lk.status !== "connected"}
           activeIcon={<Mic className="w-5 h-5" />} inactiveIcon={<MicOff className="w-5 h-5" />} testid="button-call-mic" />
         <CallButton on={myVideoOn} onClick={onToggleVideo} title={myVideoOn ? "Stop video" : "Start video"}
+          disabled={!!livekitInfo && lk.status !== "connected"}
           activeIcon={<Video className="w-5 h-5" />} inactiveIcon={<VideoOff className="w-5 h-5" />} testid="button-call-video" />
         <CallButton on={myScreenSharing} onClick={onToggleScreen} title={myScreenSharing ? "Stop sharing" : "Share screen"}
+          disabled={!!livekitInfo && lk.status !== "connected"}
           activeIcon={<MonitorUp className="w-5 h-5" />} inactiveIcon={<ScreenShareOff className="w-5 h-5" />} testid="button-call-screen" />
         <CallButton on={myHandRaised} onClick={onToggleHand} title={myHandRaised ? "Lower hand" : "Raise hand"}
           activeIcon={<Hand className="w-5 h-5" />} inactiveIcon={<Hand className="w-5 h-5" />} testid="button-call-hand" />
@@ -564,7 +584,7 @@ function ParticipantTile({
 }
 
 function CallButton({
-  on, onClick, title, activeIcon, inactiveIcon, neutral, testid,
+  on, onClick, title, activeIcon, inactiveIcon, neutral, testid, disabled,
 }: {
   on: boolean;
   onClick?: () => void;
@@ -573,20 +593,25 @@ function CallButton({
   inactiveIcon: React.ReactNode;
   neutral?: boolean;
   testid?: string;
+  disabled?: boolean;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
-      title={title}
+      title={disabled ? `${title} (waiting for call to connect)` : title}
       data-testid={testid}
+      disabled={disabled}
+      aria-disabled={disabled}
       className={[
         "w-11 h-11 rounded-full flex items-center justify-center transition-all",
-        neutral
-          ? "bg-[hsl(232_45%_27%)] hover:bg-[hsl(232_45%_32%)] text-[hsl(0_0%_85%)]"
-          : on
-            ? "bg-[hsl(232_45%_27%)] hover:bg-[hsl(232_45%_32%)] text-white"
-            : "bg-[hsl(2_70%_55%/0.2)] hover:bg-[hsl(2_70%_55%/0.3)] text-[hsl(2_85%_72%)] ring-1 ring-[hsl(2_70%_55%/0.4)]",
+        disabled
+          ? "bg-[hsl(232_45%_18%)] text-[hsl(0_0%_45%)] cursor-not-allowed opacity-60"
+          : neutral
+            ? "bg-[hsl(232_45%_27%)] hover:bg-[hsl(232_45%_32%)] text-[hsl(0_0%_85%)]"
+            : on
+              ? "bg-[hsl(232_45%_27%)] hover:bg-[hsl(232_45%_32%)] text-white"
+              : "bg-[hsl(2_70%_55%/0.2)] hover:bg-[hsl(2_70%_55%/0.3)] text-[hsl(2_85%_72%)] ring-1 ring-[hsl(2_70%_55%/0.4)]",
       ].join(" ")}
     >
       {on || neutral ? activeIcon : inactiveIcon}
