@@ -169,10 +169,24 @@ function ActiveCallOverlay() {
       )}
 
       {/* Controls */}
-      <div className="shrink-0 px-6 py-4 border-t border-[hsl(232_40%_22%)] bg-[hsl(232_55%_11%)] flex items-center justify-center gap-3">
-        <CtrlBtn on={!micMuted} onClick={() => setMicMuted(m => !m)} onIcon={<Mic className="w-5 h-5" />} offIcon={<MicOff className="w-5 h-5" />} title={micMuted ? "Unmute" : "Mute"} testid="call-mic" />
-        <CtrlBtn on={videoOn} onClick={() => setVideoOn(v => !v)} onIcon={<Video className="w-5 h-5" />} offIcon={<VideoOff className="w-5 h-5" />} title={videoOn ? "Stop video" : "Start video"} testid="call-video" />
-        <CtrlBtn on={screenSharing} onClick={() => setScreenSharing(s => !s)} onIcon={<MonitorUp className="w-5 h-5" />} offIcon={<MonitorUp className="w-5 h-5" />} title={screenSharing ? "Stop sharing" : "Share screen"} testid="call-screen" />
+      <div className="shrink-0 px-6 py-4 border-t border-[hsl(232_40%_22%)] bg-[hsl(232_55%_11%)] flex flex-col items-center gap-2">
+        {/* When LiveKit isn't connected yet the toggles below are no-ops.
+            Make that loud and visible so users don't think the buttons are
+            broken — the underlying reconcile effects only fire once we
+            reach "connected". */}
+        {lk.status !== "connected" && (
+          <div className="text-[11px] uppercase tracking-wider font-mono text-[hsl(40_80%_60%)]">
+            {lk.status === "connecting" || lk.status === "reconnecting"
+              ? "Connecting… controls active once connected"
+              : lk.status === "failed"
+              ? "Call failed to connect. End and try again."
+              : "Waiting for media…"}
+          </div>
+        )}
+        <div className="flex items-center justify-center gap-3">
+        <CtrlBtn on={!micMuted} onClick={() => setMicMuted(m => !m)} disabled={lk.status !== "connected"} onIcon={<Mic className="w-5 h-5" />} offIcon={<MicOff className="w-5 h-5" />} title={micMuted ? "Unmute" : "Mute"} testid="call-mic" />
+        <CtrlBtn on={videoOn} onClick={() => setVideoOn(v => !v)} disabled={lk.status !== "connected"} onIcon={<Video className="w-5 h-5" />} offIcon={<VideoOff className="w-5 h-5" />} title={videoOn ? "Stop video" : "Start video"} testid="call-video" />
+        <CtrlBtn on={screenSharing} onClick={() => setScreenSharing(s => !s)} disabled={lk.status !== "connected"} onIcon={<MonitorUp className="w-5 h-5" />} offIcon={<MonitorUp className="w-5 h-5" />} title={screenSharing ? "Stop sharing" : "Share screen"} testid="call-screen" />
         <div className="w-3" />
         <button
           type="button"
@@ -183,6 +197,7 @@ function ActiveCallOverlay() {
           <PhoneOff className="w-4 h-4" />
           <span className="text-sm font-semibold">End</span>
         </button>
+        </div>
       </div>
     </div>
   );
@@ -259,7 +274,7 @@ function RemoteAudio({ participant }: { participant: RoomParticipantState | null
 }
 
 function CtrlBtn({
-  on, onClick, onIcon, offIcon, title, testid,
+  on, onClick, onIcon, offIcon, title, testid, disabled,
 }: {
   on: boolean;
   onClick(): void;
@@ -267,15 +282,18 @@ function CtrlBtn({
   offIcon: React.ReactNode;
   title: string;
   testid?: string;
+  disabled?: boolean;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
-      title={title}
+      disabled={disabled}
+      title={disabled ? `${title} (not connected yet)` : title}
       data-testid={testid}
       className={[
         "w-12 h-12 rounded-full flex items-center justify-center transition-all",
+        disabled ? "opacity-40 cursor-not-allowed" : "",
         on
           ? "bg-[hsl(232_45%_27%)] hover:bg-[hsl(232_45%_32%)] text-white"
           : "bg-[hsl(2_70%_55%/0.25)] hover:bg-[hsl(2_70%_55%/0.35)] text-[hsl(2_85%_72%)] ring-1 ring-[hsl(2_70%_55%/0.4)]",

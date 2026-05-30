@@ -256,7 +256,8 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     const channelId = Number(req.params.id);
     const access = userCanAccessChannel(u.id, u.orgId, channelId);
     if (!access || !access.channel) return res.status(404).json({ message: "Not found" });
-    if (access.channel.scope !== "private") return res.status(400).json({ message: "Channel is not private" });
+    // Any scope can have explicit members — they serve as extra grants on
+    // top of the scope's built-in visibility (entity/team/global).
     const raw = Array.isArray(req.body?.userIds) ? req.body.userIds : [];
     const wanted = raw.map((v: unknown) => Number(v)).filter((n: number) => Number.isFinite(n) && n > 0);
     if (wanted.length === 0) return res.status(400).json({ message: "userIds required" });
@@ -266,13 +267,18 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     res.json({ ok: true, memberIds: storage.listChannelMemberIds(channelId) });
   });
 
-  app.delete("/api/channels/:id/members/:userId", requireAuth, requireRole(["admin"]), (req, res) => {
+  // Remove a channel member. Admins can remove anyone; a non-admin can
+  // only remove themself (self-leave). Scope-specific channels keep their
+  // role/entity visibility — the removal only strips the explicit grant.
+  app.delete("/api/channels/:id/members/:userId", requireAuth, (req, res) => {
     const u = (req as AuthedRequest).user;
     const channelId = Number(req.params.id);
     const targetId = Number(req.params.userId);
     const access = userCanAccessChannel(u.id, u.orgId, channelId);
     if (!access || !access.channel) return res.status(404).json({ message: "Not found" });
-    if (access.channel.scope !== "private") return res.status(400).json({ message: "Channel is not private" });
+    if (u.role !== "admin" && targetId !== u.id) {
+      return res.status(403).json({ message: "Only admins can remove other members" });
+    }
     storage.removeChannelMember(channelId, targetId);
     res.json({ ok: true });
   });

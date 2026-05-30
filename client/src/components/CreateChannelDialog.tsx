@@ -91,7 +91,10 @@ export function CreateChannelDialog({ open, onClose, projectId, me, onCreated }:
       };
       if (scope === "entity") body.entityId = entityId.trim();
       if (scope === "team") body.teamRole = teamRole;
-      if (scope === "private") body.memberIds = Array.from(memberIds);
+      // Any scope may carry an explicit extra-invites list. For private
+      // channels these are the only members; for other scopes they layer
+      // on top of the visibility rule.
+      if (memberIds.size > 0) body.memberIds = Array.from(memberIds);
       const created = await apiRequest<ApiChannel>("POST", `/api/projects/${projectId}/channels`, body);
       await queryClient.invalidateQueries({ queryKey: ["/api/projects", projectId, "channels"] });
       onCreated?.(created);
@@ -103,11 +106,9 @@ export function CreateChannelDialog({ open, onClose, projectId, me, onCreated }:
     }
   };
 
-  // Only admin/foreman should see the create option; the parent gates this,
-  // but we double-check here for safety.
+  // Any signed-in user can create a channel. The chosen scope handles who
+  // sees it.
   if (!me) return null;
-  const canCreate = me.role === "admin" || me.role === "foreman";
-  if (!canCreate) return null;
 
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
@@ -214,11 +215,15 @@ export function CreateChannelDialog({ open, onClose, projectId, me, onCreated }:
             </div>
           )}
 
-          {scope === "private" && (
-            <div className="space-y-1.5">
-              <label className="text-xs text-[hsl(0_0%_55%)]">
-                Members ({memberIds.size} selected — you are automatically included)
-              </label>
+          {/* Optional explicit invites — works on every scope. For private
+              channels these are required; for global/entity/team they are
+              extra grants on top of the scope's rule. */}
+          <div className="space-y-1.5">
+            <label className="text-xs text-[hsl(0_0%_55%)]">
+              {scope === "private"
+                ? `Members (${memberIds.size} selected — you are automatically included)`
+                : `Also invite specific people (optional — ${memberIds.size} selected)`}
+            </label>
               <div className="max-h-48 overflow-y-auto rounded-md border border-[hsl(0_0%_18%)] bg-[hsl(0_0%_8%)] p-1">
                 {(orgMembersQ.data ?? []).filter(m => m.id !== me.id).map(m => (
                   <label
@@ -241,8 +246,7 @@ export function CreateChannelDialog({ open, onClose, projectId, me, onCreated }:
                   <div className="px-2 py-3 text-xs text-[hsl(0_0%_55%)]">Loading members…</div>
                 )}
               </div>
-            </div>
-          )}
+          </div>
 
           {error && (
             <div className="rounded-md border border-[hsl(0_70%_45%)] bg-[hsl(0_40%_15%)] px-3 py-2 text-sm text-[hsl(0_80%_85%)]" data-testid="text-error">

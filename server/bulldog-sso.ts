@@ -74,12 +74,39 @@ export function bulldogSsoBridge(): RequestHandler {
               name: req.user.name || emailLower,
               role: chatRole,
             });
+            // Auto-add new SSO users to every project in their org so they
+            // can immediately see global channels. Without this, brand-new
+            // users see an empty sidebar.
+            try {
+              const orgProjects = storage.listProjectsByOrg(local.orgId);
+              for (const p of orgProjects) {
+                try { storage.addProjectMember(p.id, local.id, "member"); }
+                catch { /* duplicate is fine */ }
+              }
+            } catch (e) {
+              console.warn("[chat bulldogSsoBridge] failed to seed project membership:", e);
+            }
           } catch (e) {
             console.error("[chat bulldogSsoBridge] provision failed:", e);
             return next();
           }
         }
         if (!local) return next();
+        // Backfill: if an existing local user is in zero projects, seed them
+        // into every org project. Cheap idempotent guard for users created
+        // before the auto-seed code above shipped.
+        try {
+          const memberOf = storage.listProjectsForUser(local.id);
+          if (memberOf.length === 0) {
+            const orgProjects = storage.listProjectsByOrg(local.orgId);
+            for (const p of orgProjects) {
+              try { storage.addProjectMember(p.id, local.id, "member"); }
+              catch { /* duplicate is fine */ }
+            }
+          }
+        } catch (e) {
+          console.warn("[chat bulldogSsoBridge] backfill membership failed:", e);
+        }
         // Issue a chat JWT and set the vc_token cookie for subsequent requests.
         const token = signJwt(local.id);
         setAuthCookie(res, token);

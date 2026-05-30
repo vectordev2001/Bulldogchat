@@ -22,7 +22,9 @@ export function ChannelSidebar({
   project, channels, projectMembers, activeChannelId, onSelectChannel,
   me, myMicMuted, myDeafened, onToggleMic, onToggleDeafen, onCreateChannel,
 }: Props) {
-  const canCreateChannel = me.role === "admin" || me.role === "foreman";
+  // Any signed-in user can create a channel. Visibility is controlled by
+  // the scope they pick in the dialog (global / entity / team / private).
+  const canCreateChannel = true;
   const { text, voice } = useMemo(() => {
     const t = channels.filter(c => c.type === "text").sort((a, b) => a.position - b.position);
     const v = channels.filter(c => c.type === "voice").sort((a, b) => a.position - b.position);
