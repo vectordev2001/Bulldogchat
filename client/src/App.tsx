@@ -58,14 +58,10 @@ function App() {
         <CallProvider>
           <TooltipProvider>
             <Toaster />
-            <div className="min-h-[100dvh] flex flex-col">
-              <IosInstallBanner appName="Bulldog Chat" />
-              <div className="flex-1 min-h-0 flex flex-col">
-                <Router hook={useHashLocation}>
-                  <AppRouter />
-                </Router>
-              </div>
-            </div>
+            <IosInstallBanner appName="Bulldog Chat" />
+            <Router hook={useHashLocation}>
+              <AppRouter />
+            </Router>
             <CallOverlays />
           </TooltipProvider>
         </CallProvider>

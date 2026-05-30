@@ -55,7 +55,7 @@ export function IosInstallBanner({ appName }: Props) {
 
   return (
     <div
-      className="shrink-0 bg-gradient-to-r from-vs-red/80 to-[hsl(218_100%_38%)] text-white text-[12px] px-3 py-2 flex items-center gap-2 border-b border-black/40"
+      className="fixed top-0 left-0 right-0 z-[100] bg-gradient-to-r from-vs-red/90 to-[hsl(218_100%_38%)] text-white text-[12px] px-3 py-2 flex items-center gap-2 border-b border-black/40 shadow-lg"
       data-testid="banner-ios-install"
       style={{ paddingTop: "max(0.5rem, env(safe-area-inset-top))" }}
     >

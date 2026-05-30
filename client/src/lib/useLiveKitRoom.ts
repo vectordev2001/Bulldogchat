@@ -29,8 +29,6 @@ import {
   RemoteParticipant,
   Participant,
   ConnectionState,
-  createLocalAudioTrack,
-  createLocalVideoTrack,
   type LocalAudioTrack,
   type LocalVideoTrack,
   type RemoteTrack,
@@ -275,6 +273,12 @@ export function useLiveKitRoom(args: Args): LiveKitHookResult {
   }, [roomKey, token, wsUrl]);
 
   // --- Mic reconciliation -------------------------------------------------
+  // We use LiveKit's high-level `setMicrophoneEnabled` API instead of
+  // manual createLocalAudioTrack + publishTrack. The high-level API
+  // properly initializes the iOS Safari audio session (which otherwise
+  // can crash the WebKit content process on iPhone PWAs when a raw
+  // getUserMedia is invoked mid-call). It also handles re-publish and
+  // cleanup atomically.
   useEffect(() => {
     const room = roomRef.current;
     if (!room || status !== "connected") return;
@@ -282,35 +286,21 @@ export function useLiveKitRoom(args: Args): LiveKitHookResult {
     let cancelled = false;
     (async () => {
       try {
-        if (micMuted) {
-          // Stop publishing the mic when muted instead of just muting
-          // the track. This makes the browser drop the red recording
-          // dot and feels safer to users than a "muted but live" mic.
-          if (micTrackRef.current) {
-            await room.localParticipant.unpublishTrack(micTrackRef.current);
-            micTrackRef.current.stop();
-            micTrackRef.current = null;
-            if (!cancelled) setMicPublished(false);
-          }
-        } else {
-          if (!micTrackRef.current) {
-            const t = await createLocalAudioTrack({
-              echoCancellation: true,
-              noiseSuppression: true,
-              autoGainControl: true,
-            });
-            await room.localParticipant.publishTrack(t, { source: Track.Source.Microphone });
-            if (cancelled) {
-              t.stop();
-              return;
-            }
-            micTrackRef.current = t;
-            setMicPublished(true);
-          }
-        }
+        await room.localParticipant.setMicrophoneEnabled(!micMuted, {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        });
+        if (cancelled) return;
+        // Keep our internal ref in sync for the explicit-stop path on disconnect.
+        const pub = room.localParticipant.getTrackPublication(Track.Source.Microphone);
+        micTrackRef.current = (pub?.track as LocalAudioTrack | undefined) ?? null;
+        setMicPublished(!!micTrackRef.current);
         refreshParticipants();
       } catch (err) {
-        onTrackError?.("mic", err);
+        // Never let an iOS permission rejection or AudioContext failure
+        // bubble up — surface via onTrackError so the banner explains it.
+        if (!cancelled) onTrackError?.("mic", err);
       }
     })();
     return () => {
@@ -319,6 +309,10 @@ export function useLiveKitRoom(args: Args): LiveKitHookResult {
   }, [micMuted, status, refreshParticipants, onTrackError]);
 
   // --- Camera reconciliation ---------------------------------------------
+  // Same rationale as mic: use the high-level API so iOS Safari's media
+  // pipeline initializes cleanly. The previous manual path could crash
+  // the WebKit content process on iPhone when a permission prompt
+  // arrived during an active LiveKit session.
   useEffect(() => {
     const room = roomRef.current;
     if (!room || status !== "connected") return;
@@ -326,49 +320,37 @@ export function useLiveKitRoom(args: Args): LiveKitHookResult {
     let cancelled = false;
     (async () => {
       try {
-        if (!videoOn) {
-          if (cameraTrackRef.current) {
-            await room.localParticipant.unpublishTrack(cameraTrackRef.current);
-            cameraTrackRef.current.stop();
-            cameraTrackRef.current = null;
-            if (!cancelled) setCameraPublished(false);
-          }
-        } else {
-          if (!cameraTrackRef.current) {
-            // iOS Safari is fussy about strict resolution constraints in a PWA.
-            // Request mobile-friendly defaults; the encoder will scale up on
-            // desktop where 640p capture is plenty for a 1:1 call.
-            const isCoarsePointer =
-              typeof window !== "undefined" &&
-              window.matchMedia &&
-              window.matchMedia("(pointer: coarse)").matches;
-            const videoOpts = isCoarsePointer
-              ? { resolution: { width: 640, height: 480, frameRate: 24 }, facingMode: "user" as const }
-              : { resolution: { width: 1280, height: 720, frameRate: 24 }, facingMode: "user" as const };
-            // Wrap with a hard timeout so the UI doesn't appear to hang when
-            // permission is silently denied or the camera is busy. LiveKit's
-            // own errors propagate before this fires; the timeout is a backstop.
-            const t = (await Promise.race([
-              createLocalVideoTrack(videoOpts),
-              new Promise<never>((_, reject) =>
-                setTimeout(
-                  () => reject(new Error("Camera did not start in 10s. Check camera permission in iOS Settings → Bulldog → Camera.")),
-                  10_000,
+        const isCoarsePointer =
+          typeof window !== "undefined" &&
+          window.matchMedia &&
+          window.matchMedia("(pointer: coarse)").matches;
+        const videoOpts = isCoarsePointer
+          ? { resolution: { width: 640, height: 480, frameRate: 24 }, facingMode: "user" as const }
+          : { resolution: { width: 1280, height: 720, frameRate: 24 }, facingMode: "user" as const };
+
+        // 12s safety timeout so the UI doesn't appear to hang if iOS
+        // silently denies permission. LiveKit's own errors fire first.
+        await Promise.race([
+          room.localParticipant.setCameraEnabled(videoOn, videoOpts),
+          new Promise<never>((_, reject) =>
+            setTimeout(
+              () =>
+                reject(
+                  new Error(
+                    "Camera did not start in 12s. Check camera permission in iOS Settings → Bulldog → Camera.",
+                  ),
                 ),
-              ),
-            ])) as Awaited<ReturnType<typeof createLocalVideoTrack>>;
-            await room.localParticipant.publishTrack(t, { source: Track.Source.Camera });
-            if (cancelled) {
-              t.stop();
-              return;
-            }
-            cameraTrackRef.current = t;
-            setCameraPublished(true);
-          }
-        }
+              12_000,
+            ),
+          ),
+        ]);
+        if (cancelled) return;
+        const pub = room.localParticipant.getTrackPublication(Track.Source.Camera);
+        cameraTrackRef.current = (pub?.track as LocalVideoTrack | undefined) ?? null;
+        setCameraPublished(!!cameraTrackRef.current);
         refreshParticipants();
       } catch (err) {
-        onTrackError?.("camera", err);
+        if (!cancelled) onTrackError?.("camera", err);
       }
     })();
     return () => {
