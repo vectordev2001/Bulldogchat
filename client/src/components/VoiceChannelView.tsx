@@ -414,7 +414,22 @@ export function VoiceChannelView(props: Props) {
         <CallButton on={!myMicMuted} onClick={onToggleMic} title={myMicMuted ? "Unmute" : "Mute"}
           disabled={!!livekitInfo && lk.status !== "connected"}
           activeIcon={<Mic className="w-5 h-5" />} inactiveIcon={<MicOff className="w-5 h-5" />} testid="button-call-mic" />
-        <CallButton on={myVideoOn} onClick={onToggleVideo} title={myVideoOn ? "Stop video" : "Start video"}
+        <CallButton
+          on={myVideoOn}
+          // iOS Safari: invoke lk.toggleCamera() SYNCHRONOUSLY inside the
+          // user-gesture click. It performs getUserMedia inside the gesture
+          // window (which iOS requires), then we mirror the resulting
+          // desired state back into the parent. Non-iOS browsers fall
+          // through to the declarative reconciliation effect.
+          onClick={() => {
+            // Fire-and-forget: lk.toggleCamera() returns a promise but the
+            // critical getUserMedia call inside it is synchronous from this
+            // click handler's perspective.
+            void lk.toggleCamera().then((nowOn) => {
+              if (nowOn !== myVideoOn) onToggleVideo();
+            });
+          }}
+          title={myVideoOn ? "Stop video" : "Start video"}
           disabled={!!livekitInfo && lk.status !== "connected"}
           activeIcon={<Video className="w-5 h-5" />} inactiveIcon={<VideoOff className="w-5 h-5" />} testid="button-call-video" />
         <CallButton on={myScreenSharing} onClick={onToggleScreen} title={myScreenSharing ? "Stop sharing" : "Share screen"}

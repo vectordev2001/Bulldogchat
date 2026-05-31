@@ -29,11 +29,21 @@ import {
   RemoteParticipant,
   Participant,
   ConnectionState,
-  type LocalAudioTrack,
-  type LocalVideoTrack,
+  LocalVideoTrack,
+  LocalAudioTrack,
   type RemoteTrack,
   type TrackPublication,
 } from "livekit-client";
+
+// Detect iOS Safari (including iPadOS-as-desktop). iOS Safari is the only
+// platform where we need the user-gesture-preserving camera path.
+function detectIOS(): boolean {
+  if (typeof navigator === "undefined") return false;
+  const ua = navigator.userAgent;
+  if (/iPad|iPhone|iPod/.test(ua)) return true;
+  // iPad in "desktop site" mode reports Mac UA but has touch points.
+  return ua.includes("Mac") && (navigator as any).maxTouchPoints > 1;
+}
 
 export interface RoomParticipantState {
   /** Numeric user id parsed from LiveKit identity `u_<id>`. */
@@ -70,6 +80,14 @@ export interface LiveKitHookResult {
   cameraPublished: boolean;
   /** True when local screen-share is published. */
   screenPublished: boolean;
+  /**
+   * iOS-safe camera enable. MUST be called synchronously from inside
+   * a user-gesture handler (onClick/onTouchEnd) — it acquires the
+   * MediaStream inside the gesture and then hands the resulting track
+   * to LiveKit. Returns the new desired state (true=on, false=off).
+   * On non-iOS browsers this is a thin wrapper over setCameraEnabled.
+   */
+  toggleCamera: () => Promise<boolean>;
 }
 
 interface Args {
@@ -153,6 +171,13 @@ export function useLiveKitRoom(args: Args): LiveKitHookResult {
   const [micPublished, setMicPublished] = useState(false);
   const [cameraPublished, setCameraPublished] = useState(false);
   const [screenPublished, setScreenPublished] = useState(false);
+
+  // We track "desired video" inside the hook (mirrored from props) so the
+  // imperative iOS path can flip it without going through React state.
+  // The reconciliation effect respects this when isIOS=true to avoid
+  // double-firing the camera path.
+  const desiredVideoRef = useRef(videoOn);
+  useEffect(() => { desiredVideoRef.current = videoOn; }, [videoOn]);
 
   // Helper: re-derive the participant array from the current room state.
   // We keep a stable closure via useCallback so event handlers can be
@@ -313,25 +338,33 @@ export function useLiveKitRoom(args: Args): LiveKitHookResult {
   }, [micMuted, status, refreshParticipants, onTrackError]);
 
   // --- Camera reconciliation ---------------------------------------------
-  // Hard-won lessons on iOS Safari:
-  //   * Calling a bare getUserMedia as a "primer" before LiveKit's own
-  //     publish triggers a SECOND permission prompt every time and
-  //     freezes the page if the two prompts overlap. We removed the
-  //     primer entirely.
-  //   * Stacking constraints (resolution + frameRate + facingMode) is
-  //     unstable on iOS Safari WebRTC. On iOS we use ZERO constraints —
-  //     just `true` — and let iOS pick whatever it wants.
-  //   * Effect re-runs that flip `videoOn` rapidly can race two
-  //     setCameraEnabled() calls into the same room. We serialize them
-  //     with a small in-flight ref so the second tap waits for the first.
+  // Hard-won lessons on iOS Safari (PWA + browser):
+  //   * setCameraEnabled() internally calls getUserMedia in a microtask,
+  //     which on iOS happens AFTER the user-gesture context expires.
+  //     The permission prompt shows, the user taps Allow, and then
+  //     getUserMedia returns a track whose MediaStream produces no
+  //     frames — publish hangs forever and the WebView locks up.
+  //   * Fix: on iOS, acquire the MediaStreamTrack via getUserMedia
+  //     SYNCHRONOUSLY inside the click handler, then hand that track
+  //     to LocalVideoTrack + publishTrack. Because the gesture is still
+  //     active when getUserMedia is invoked, iOS returns a working track.
+  //   * Non-iOS browsers (Chrome desktop, Android Chrome, Firefox) handle
+  //     setCameraEnabled() correctly and keep the simpler path.
+  //   * Off-path always uses setCameraEnabled(false) — no permission
+  //     prompt, safe in any context.
+  const isIOS = detectIOS();
+
   useEffect(() => {
+    // On iOS we drive camera state imperatively via toggleCamera(); the
+    // reconciliation effect would race against it. Off-state still flows
+    // through here (no permission needed, no gesture race).
+    if (isIOS && videoOn) return;
+
     const room = roomRef.current;
     if (!room || status !== "connected") return;
 
     let cancelled = false;
     (async () => {
-      // Serialize: wait for any prior camera op to settle so we don't
-      // double-fire setCameraEnabled, which iOS handles badly.
       const prior = cameraOpRef.current;
       let release: () => void = () => {};
       const next = new Promise<void>((res) => (release = res));
@@ -343,45 +376,35 @@ export function useLiveKitRoom(args: Args): LiveKitHookResult {
 
       try {
         if (!videoOn) {
-          // Turn-off path: no permission prompt needed.
           await room.localParticipant.setCameraEnabled(false);
           if (cancelled) return;
-          cameraTrackRef.current = null;
+          // Also unpublish any manually-published iOS track.
+          if (cameraTrackRef.current) {
+            try {
+              await room.localParticipant.unpublishTrack(cameraTrackRef.current);
+            } catch { /* ignore */ }
+            try { cameraTrackRef.current.stop(); } catch { /* ignore */ }
+            cameraTrackRef.current = null;
+          }
           setCameraPublished(false);
           refreshParticipants();
           return;
         }
 
-        const ua = typeof navigator !== "undefined" ? navigator.userAgent : "";
-        const isIOS =
-          /iPad|iPhone|iPod/.test(ua) ||
-          (ua.includes("Mac") && typeof navigator !== "undefined" && (navigator as any).maxTouchPoints > 1);
+        // Non-iOS "on" path: declarative setCameraEnabled with constraints.
         const isCoarsePointer =
           typeof window !== "undefined" &&
           window.matchMedia &&
           window.matchMedia("(pointer: coarse)").matches;
+        const videoOpts = isCoarsePointer
+          ? { resolution: { width: 640, height: 480, frameRate: 24 }, facingMode: "user" as const }
+          : { resolution: { width: 1280, height: 720, frameRate: 24 }, facingMode: "user" as const };
 
-        // iOS gets NO constraints. Period. Anything else has crashed
-        // WebKit during testing. Desktop keeps the prior 720p target.
-        const videoOpts: true | { resolution?: { width: number; height: number; frameRate: number }; facingMode?: "user" } = isIOS
-          ? true
-          : isCoarsePointer
-            ? { resolution: { width: 640, height: 480, frameRate: 24 }, facingMode: "user" }
-            : { resolution: { width: 1280, height: 720, frameRate: 24 }, facingMode: "user" };
-
-        // 15s timeout backstop. Permission errors fire much faster.
         await Promise.race([
-          (videoOpts === true
-            ? room.localParticipant.setCameraEnabled(true)
-            : room.localParticipant.setCameraEnabled(true, videoOpts)),
+          room.localParticipant.setCameraEnabled(true, videoOpts),
           new Promise<never>((_, reject) =>
             setTimeout(
-              () =>
-                reject(
-                  new Error(
-                    "Camera did not start in 15s. Check camera permission in iOS Settings → Safari → Camera.",
-                  ),
-                ),
+              () => reject(new Error("Camera did not start in 15s. Check browser camera permissions.")),
               15_000,
             ),
           ),
@@ -395,15 +418,93 @@ export function useLiveKitRoom(args: Args): LiveKitHookResult {
         if (!cancelled) onTrackError?.("camera", err);
       } finally {
         release();
-        // If we're the tail of the chain, clear the ref so the next op
-        // starts clean rather than chaining onto a resolved promise.
         if (cameraOpRef.current === next) cameraOpRef.current = null;
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [videoOn, status, refreshParticipants, onTrackError]);
+  }, [videoOn, status, refreshParticipants, onTrackError, isIOS]);
+
+  // --- iOS-safe imperative camera toggle ---------------------------------
+  // Call this directly from the button's onClick. Because getUserMedia
+  // is invoked synchronously inside the gesture handler, iOS Safari
+  // returns a working MediaStreamTrack instead of a dead one.
+  const toggleCamera = useCallback(async (): Promise<boolean> => {
+    const room = roomRef.current;
+    if (!room || status !== "connected") {
+      // Surface a friendly error and keep desired state where it was.
+      onTrackError?.("camera", new Error("Not connected to call yet — try again in a second."));
+      return desiredVideoRef.current;
+    }
+
+    // Off path: no gesture needed.
+    if (desiredVideoRef.current) {
+      try {
+        if (cameraTrackRef.current) {
+          try { await room.localParticipant.unpublishTrack(cameraTrackRef.current); } catch { /* ignore */ }
+          try { cameraTrackRef.current.stop(); } catch { /* ignore */ }
+          cameraTrackRef.current = null;
+        }
+        await room.localParticipant.setCameraEnabled(false);
+        setCameraPublished(false);
+        refreshParticipants();
+      } catch (err) {
+        onTrackError?.("camera", err);
+      }
+      desiredVideoRef.current = false;
+      return false;
+    }
+
+    // On path. On iOS, getUserMedia MUST run synchronously here.
+    if (!isIOS) {
+      // Non-iOS: just flip the desired flag; the reconciliation effect picks it up.
+      desiredVideoRef.current = true;
+      return true;
+    }
+
+    // iOS gesture-preserving path. NO awaits before getUserMedia.
+    let stream: MediaStream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        // No resolution/frameRate/facingMode constraints on iOS — they
+        // are unreliable in PWA WebKit. Plain `true` lets iOS pick its
+        // best front camera at its preferred preset.
+        video: true,
+        audio: false,
+      });
+    } catch (err) {
+      // Permission denied, no camera, etc. Don't flip the flag.
+      onTrackError?.("camera", err);
+      return false;
+    }
+
+    const msTrack = stream.getVideoTracks()[0];
+    if (!msTrack) {
+      onTrackError?.("camera", new Error("No camera track returned by iOS"));
+      try { stream.getTracks().forEach((t) => t.stop()); } catch { /* ignore */ }
+      return false;
+    }
+
+    try {
+      const lkTrack = new LocalVideoTrack(msTrack);
+      await room.localParticipant.publishTrack(lkTrack, {
+        source: Track.Source.Camera,
+        name: "camera",
+      });
+      cameraTrackRef.current = lkTrack;
+      setCameraPublished(true);
+      desiredVideoRef.current = true;
+      refreshParticipants();
+      return true;
+    } catch (err) {
+      // Publish failed — release the underlying MediaStream so we don't
+      // hold the camera open invisibly.
+      try { msTrack.stop(); } catch { /* ignore */ }
+      onTrackError?.("camera", err);
+      return false;
+    }
+  }, [status, isIOS, refreshParticipants, onTrackError]);
 
   // --- Screen share reconciliation ---------------------------------------
   useEffect(() => {
@@ -435,6 +536,7 @@ export function useLiveKitRoom(args: Args): LiveKitHookResult {
     micPublished,
     cameraPublished,
     screenPublished,
+    toggleCamera,
   };
 }
 
