@@ -648,7 +648,7 @@ function InviteModal({
                   className={`w-full flex items-center gap-3 px-3 py-2 rounded-md text-left hover:bg-[hsl(232_45%_18%)] ${checked ? "bg-[hsl(218_100%_68%/0.12)] ring-1 ring-[hsl(218_100%_68%/0.4)]" : ""}`}
                   data-testid={`button-invite-pick-${u.id}`}
                 >
-                  <Avatar name={u.name} hue={u.hue} size={28} />
+                  <Avatar member={u} size={28} />
                   <div className="flex-1 min-w-0">
                     <div className="text-sm text-white truncate flex items-center gap-2">
                       {u.name}
