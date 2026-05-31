@@ -146,6 +146,27 @@ export interface IStorage {
   listExpoTokensForUsers(userIds: number[]): ExpoPushToken[];
   deleteExpoTokenByToken(token: string): void;
 
+  /* Work Objects */
+  createWorkObject(input: { orgId: number; kind: WorkObjectKind; ref: string; title: string; status?: WorkObjectStatus; description?: string | null; parentId?: number | null; ownerUserId?: number | null; attributes?: string | null; createdByUserId: number }): WorkObject;
+  getWorkObject(id: number): WorkObject | undefined;
+  getWorkObjectByRef(orgId: number, kind: WorkObjectKind, ref: string): WorkObject | undefined;
+  findWorkObjectByRefAcrossKinds(orgId: number, ref: string): WorkObject | undefined;
+  listWorkObjectsByOrg(orgId: number, opts?: { kind?: WorkObjectKind; status?: WorkObjectStatus; includeClosed?: boolean; limit?: number }): WorkObject[];
+  listWorkObjectsByIds(ids: number[]): WorkObject[];
+  updateWorkObject(id: number, patch: Partial<Pick<WorkObject, "title" | "status" | "description" | "ownerUserId" | "parentId" | "attributes" | "closedAt">>): WorkObject | undefined;
+
+  /* Work Object ↔ Channel links */
+  linkWorkObjectToChannel(input: { workObjectId: number; channelId: number; linkType?: "primary" | "secondary"; linkedByUserId: number }): WorkObjectChannelLink;
+  unlinkWorkObjectFromChannel(workObjectId: number, channelId: number): void;
+  listLinksForChannel(channelId: number): WorkObjectChannelLink[];
+  listLinksForWorkObject(workObjectId: number): WorkObjectChannelLink[];
+  listChannelsForWorkObject(workObjectId: number): Channel[];
+  listWorkObjectsForChannel(channelId: number): WorkObject[];
+
+  /* Work Object activity */
+  appendWorkObjectActivity(input: { workObjectId: number; type: WorkObjectActivityType; actorUserId?: number | null; payload?: string | null }): WorkObjectActivity;
+  listWorkObjectActivity(workObjectId: number, opts?: { limit?: number }): WorkObjectActivity[];
+
   /* Admin */
   resetUserPassword(userId: number, newHash: string): void;
   setUserDeactivated(userId: number, deactivated: boolean): User | undefined;
@@ -589,6 +610,127 @@ class DatabaseStorage implements IStorage {
   }
   deleteExpoTokenByToken(token: string) {
     db.delete(expoPushTokens).where(eq(expoPushTokens.token, token)).run();
+  }
+
+  /* Work Objects */
+  createWorkObject(input) {
+    const now = new Date();
+    return db.insert(workObjects).values({
+      orgId: input.orgId,
+      kind: input.kind,
+      ref: input.ref,
+      title: input.title,
+      status: input.status ?? "active",
+      description: input.description ?? null,
+      parentId: input.parentId ?? null,
+      ownerUserId: input.ownerUserId ?? null,
+      attributes: input.attributes ?? null,
+      createdByUserId: input.createdByUserId,
+      createdAt: now,
+      updatedAt: now,
+      closedAt: null,
+    }).returning().get();
+  }
+  getWorkObject(id: number) {
+    return db.select().from(workObjects).where(eq(workObjects.id, id)).get();
+  }
+  getWorkObjectByRef(orgId: number, kind: WorkObjectKind, ref: string) {
+    return db.select().from(workObjects).where(and(
+      eq(workObjects.orgId, orgId),
+      eq(workObjects.kind, kind),
+      eq(workObjects.ref, ref),
+    )).get();
+  }
+  // /object can take a bare ref; resolve across kinds within the org. If
+  // multiple kinds happen to share the same ref string (unlikely with the
+  // (org_id, kind, ref) uniqueness), we return the most-recent.
+  findWorkObjectByRefAcrossKinds(orgId: number, ref: string) {
+    return db.select().from(workObjects).where(and(
+      eq(workObjects.orgId, orgId),
+      eq(workObjects.ref, ref),
+    )).orderBy(desc(workObjects.updatedAt)).get();
+  }
+  listWorkObjectsByOrg(orgId: number, opts?: { kind?: WorkObjectKind; status?: WorkObjectStatus; includeClosed?: boolean; limit?: number }) {
+    const filters = [eq(workObjects.orgId, orgId)];
+    if (opts?.kind) filters.push(eq(workObjects.kind, opts.kind));
+    if (opts?.status) filters.push(eq(workObjects.status, opts.status));
+    if (!opts?.includeClosed && !opts?.status) {
+      // Default behaviour: hide closed objects unless caller asked for them.
+      filters.push(sql`${workObjects.status} != 'closed'`);
+    }
+    const q = db.select().from(workObjects).where(and(...filters)).orderBy(desc(workObjects.updatedAt));
+    if (opts?.limit) return q.limit(opts.limit).all();
+    return q.all();
+  }
+  listWorkObjectsByIds(ids: number[]) {
+    if (ids.length === 0) return [];
+    return db.select().from(workObjects).where(inArray(workObjects.id, ids)).all();
+  }
+  updateWorkObject(id: number, patch) {
+    const next = { ...patch, updatedAt: new Date() };
+    return db.update(workObjects).set(next).where(eq(workObjects.id, id)).returning().get();
+  }
+
+  /* Work Object ↔ Channel links */
+  linkWorkObjectToChannel(input) {
+    const row = {
+      workObjectId: input.workObjectId,
+      channelId: input.channelId,
+      linkType: input.linkType ?? "primary",
+      linkedAt: new Date(),
+      linkedByUserId: input.linkedByUserId,
+    };
+    // INSERT OR IGNORE: if already linked, leave the existing row intact.
+    rawDb.prepare(`INSERT OR IGNORE INTO work_object_channel_links
+      (work_object_id, channel_id, link_type, linked_at, linked_by_user_id)
+      VALUES (?, ?, ?, ?, ?)`).run(
+      row.workObjectId, row.channelId, row.linkType,
+      Math.floor(row.linkedAt.getTime() / 1000), row.linkedByUserId,
+    );
+    return db.select().from(workObjectChannelLinks).where(and(
+      eq(workObjectChannelLinks.workObjectId, input.workObjectId),
+      eq(workObjectChannelLinks.channelId, input.channelId),
+    )).get()!;
+  }
+  unlinkWorkObjectFromChannel(workObjectId: number, channelId: number) {
+    db.delete(workObjectChannelLinks).where(and(
+      eq(workObjectChannelLinks.workObjectId, workObjectId),
+      eq(workObjectChannelLinks.channelId, channelId),
+    )).run();
+  }
+  listLinksForChannel(channelId: number) {
+    return db.select().from(workObjectChannelLinks).where(eq(workObjectChannelLinks.channelId, channelId)).all();
+  }
+  listLinksForWorkObject(workObjectId: number) {
+    return db.select().from(workObjectChannelLinks).where(eq(workObjectChannelLinks.workObjectId, workObjectId)).all();
+  }
+  listChannelsForWorkObject(workObjectId: number) {
+    const links = this.listLinksForWorkObject(workObjectId);
+    if (links.length === 0) return [];
+    return db.select().from(channels).where(inArray(channels.id, links.map(l => l.channelId))).all();
+  }
+  listWorkObjectsForChannel(channelId: number) {
+    const links = this.listLinksForChannel(channelId);
+    if (links.length === 0) return [];
+    return db.select().from(workObjects).where(inArray(workObjects.id, links.map(l => l.workObjectId))).all();
+  }
+
+  /* Work Object activity */
+  appendWorkObjectActivity(input) {
+    return db.insert(workObjectActivity).values({
+      workObjectId: input.workObjectId,
+      type: input.type,
+      actorUserId: input.actorUserId ?? null,
+      payload: input.payload ?? null,
+      createdAt: new Date(),
+    }).returning().get();
+  }
+  listWorkObjectActivity(workObjectId: number, opts?: { limit?: number }) {
+    const q = db.select().from(workObjectActivity)
+      .where(eq(workObjectActivity.workObjectId, workObjectId))
+      .orderBy(desc(workObjectActivity.createdAt));
+    if (opts?.limit) return q.limit(opts.limit).all();
+    return q.all();
   }
 
   /* Admin */

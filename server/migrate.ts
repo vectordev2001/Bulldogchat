@@ -285,6 +285,57 @@ export function runMigrations() {
     console.warn("[migrate] users.phone add skipped:", e);
   }
 
+  // v6: Work Objects (Phase 1 of the post-call-polish roadmap). Idempotent.
+  // We index (org_id, kind, ref) so /object BOE-FIBER-01 lookups are fast,
+  // and (org_id, kind, status) so the right-rail "active by kind" queries
+  // don't full-scan. Closed objects stay queryable but drop out of default
+  // lists via WHERE status != 'closed'.
+  rawDb.exec(`
+  CREATE TABLE IF NOT EXISTS work_objects (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    org_id INTEGER NOT NULL REFERENCES organizations(id),
+    kind TEXT NOT NULL,
+    ref TEXT NOT NULL,
+    title TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active',
+    description TEXT,
+    parent_id INTEGER,
+    owner_user_id INTEGER REFERENCES users(id),
+    attributes TEXT,
+    created_by_user_id INTEGER NOT NULL REFERENCES users(id),
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    closed_at INTEGER
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS work_objects_org_kind_ref_idx
+    ON work_objects(org_id, kind, ref);
+  CREATE INDEX IF NOT EXISTS work_objects_org_kind_status_idx
+    ON work_objects(org_id, kind, status);
+  CREATE INDEX IF NOT EXISTS work_objects_parent_idx
+    ON work_objects(parent_id);
+
+  CREATE TABLE IF NOT EXISTS work_object_channel_links (
+    work_object_id INTEGER NOT NULL REFERENCES work_objects(id),
+    channel_id INTEGER NOT NULL REFERENCES channels(id),
+    link_type TEXT NOT NULL DEFAULT 'primary',
+    linked_at INTEGER NOT NULL,
+    linked_by_user_id INTEGER NOT NULL REFERENCES users(id),
+    PRIMARY KEY (work_object_id, channel_id)
+  );
+  CREATE INDEX IF NOT EXISTS wocl_channel_idx ON work_object_channel_links(channel_id);
+  CREATE INDEX IF NOT EXISTS wocl_obj_idx ON work_object_channel_links(work_object_id);
+
+  CREATE TABLE IF NOT EXISTS work_object_activity (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    work_object_id INTEGER NOT NULL REFERENCES work_objects(id),
+    type TEXT NOT NULL,
+    actor_user_id INTEGER REFERENCES users(id),
+    payload TEXT,
+    created_at INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS woa_obj_idx ON work_object_activity(work_object_id, created_at);
+  `);
+
   // Admin email rebrand: if prod has the old email, migrate it.
   try {
     const oldRow = rawDb.prepare(`SELECT id FROM users WHERE email = ?`).get("admin@vectorservicesus.com") as { id: number } | undefined;

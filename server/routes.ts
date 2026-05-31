@@ -13,6 +13,7 @@ import { setupWebPush, pushConfigured, getPublicVapidKey, sendNotificationToUser
 import { runMigrations } from "./migrate";
 import { runSeed } from "./seed";
 import { registerV2Routes, parseMentions } from "./routes-v2";
+import { registerWorkObjectRoutes } from "./routes-work-objects";
 import { bulldogSsoBridge } from "./bulldog-sso";
 import { dialPhoneIntoRoom, sipConfigured } from "./sip";
 
@@ -88,6 +89,7 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
   app.use(bulldogSsoBridge());
 
   registerV2Routes(app);
+  registerWorkObjectRoutes(app);
 
   // Health
   app.get("/api/health", (_req, res) => {

@@ -276,6 +276,162 @@ export const directCalls = sqliteTable("direct_calls", {
 });
 export type DirectCall = typeof directCalls.$inferSelect;
 
+/* ─────────────────── WORK OBJECTS ─────────────────── */
+// A work_object is a domain entity (job_site, work_project, change_order,
+// safety_incident) that lives alongside chat. Channels link to one or more
+// work_objects, and activity on the object is auto-posted into the channel
+// timeline as system messages.
+//
+// We use a single table with a `kind` discriminator + typed JSON `attributes`
+// blob so we can add new kinds (e.g. "crew", "asset", "rfi") without a
+// migration. Common fields (status, owner, ref) are first-class columns so
+// they can be indexed and queried efficiently.
+//
+// NOTE: `work_project` is the utility-construction job project (e.g. "Boeing
+// Fiber Install") — different from the chat-side `projects` table which is
+// the chat workspace / Discord-style "server". Naming them differently here
+// avoids the collision.
+export const workObjectKinds = ["job_site", "work_project", "change_order", "safety_incident"] as const;
+export type WorkObjectKind = typeof workObjectKinds[number];
+
+// Generic status vocabulary. Different kinds may use a subset:
+//   job_site:        planned | active | paused | closed
+//   work_project:    planned | active | paused | closed
+//   change_order:    draft | submitted | approved | rejected | closed
+//   safety_incident: open | investigating | resolved | closed
+export const workObjectStatuses = [
+  "planned", "active", "paused", "closed",
+  "draft", "submitted", "approved", "rejected",
+  "open", "investigating", "resolved",
+] as const;
+export type WorkObjectStatus = typeof workObjectStatuses[number];
+
+export const workObjects = sqliteTable("work_objects", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  orgId: integer("org_id").notNull().references(() => organizations.id),
+  kind: text("kind", { enum: workObjectKinds }).notNull(),
+  // Human reference used in chat ("BOE-FIBER-01", "CO-2026-014"). Unique
+  // within (orgId, kind) so /object BOE-FIBER-01 always resolves.
+  ref: text("ref").notNull(),
+  title: text("title").notNull(),
+  status: text("status", { enum: workObjectStatuses }).notNull().default("active"),
+  description: text("description"),
+  // Optional parent — change_order/safety_incident hang off a work_project.
+  parentId: integer("parent_id"),
+  // User responsible (foreman/PM). Optional; many objects start unassigned.
+  ownerUserId: integer("owner_user_id").references(() => users.id),
+  // JSON blob of kind-specific fields (location, customer, dollar amount,
+  // severity, etc.). Schema enforced in application code via Zod.
+  attributes: text("attributes"),
+  createdByUserId: integer("created_by_user_id").notNull().references(() => users.id),
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+  closedAt: integer("closed_at", { mode: "timestamp" }),
+});
+export type WorkObject = typeof workObjects.$inferSelect;
+
+// Per-kind attribute schemas. Validated server-side before write.
+export const jobSiteAttributesSchema = z.object({
+  address: z.string().max(300).optional().nullable(),
+  city: z.string().max(120).optional().nullable(),
+  state: z.string().max(40).optional().nullable(),
+  zip: z.string().max(20).optional().nullable(),
+  lat: z.number().optional().nullable(),
+  lng: z.number().optional().nullable(),
+  customer: z.string().max(160).optional().nullable(),
+  startDate: z.string().optional().nullable(),   // ISO date
+  targetEndDate: z.string().optional().nullable(),
+}).strict();
+export const workProjectAttributesSchema = z.object({
+  customer: z.string().max(160).optional().nullable(),
+  contractValue: z.number().optional().nullable(),
+  startDate: z.string().optional().nullable(),
+  targetEndDate: z.string().optional().nullable(),
+  pmUserId: z.number().int().positive().optional().nullable(),
+  foremanUserId: z.number().int().positive().optional().nullable(),
+}).strict();
+export const changeOrderAttributesSchema = z.object({
+  amount: z.number().optional().nullable(),
+  reason: z.string().max(2000).optional().nullable(),
+  submittedDate: z.string().optional().nullable(),
+  approvedDate: z.string().optional().nullable(),
+  approvedByName: z.string().max(160).optional().nullable(),
+}).strict();
+export const safetyIncidentSeverities = ["near_miss", "first_aid", "recordable", "lost_time", "fatality"] as const;
+export type SafetyIncidentSeverity = typeof safetyIncidentSeverities[number];
+export const safetyIncidentAttributesSchema = z.object({
+  severity: z.enum(safetyIncidentSeverities).optional().nullable(),
+  occurredAt: z.string().optional().nullable(),   // ISO datetime
+  location: z.string().max(300).optional().nullable(),
+  injuredUserId: z.number().int().positive().optional().nullable(),
+  injuredName: z.string().max(160).optional().nullable(),
+  rootCause: z.string().max(2000).optional().nullable(),
+  correctiveAction: z.string().max(2000).optional().nullable(),
+}).strict();
+
+export type JobSiteAttributes = z.infer<typeof jobSiteAttributesSchema>;
+export type WorkProjectAttributes = z.infer<typeof workProjectAttributesSchema>;
+export type ChangeOrderAttributes = z.infer<typeof changeOrderAttributesSchema>;
+export type SafetyIncidentAttributes = z.infer<typeof safetyIncidentAttributesSchema>;
+
+// Create payload for POST /api/work-objects (and the /object slash command).
+export const workObjectCreateSchema = z.object({
+  kind: z.enum(workObjectKinds),
+  ref: z.string().min(1).max(80).regex(/^[A-Za-z0-9._\-]+$/, "ref may only contain letters, numbers, dot, dash, underscore"),
+  title: z.string().min(1).max(200),
+  status: z.enum(workObjectStatuses).optional(),
+  description: z.string().max(4000).optional().nullable(),
+  parentId: z.number().int().positive().optional().nullable(),
+  ownerUserId: z.number().int().positive().optional().nullable(),
+  attributes: z.record(z.any()).optional(),
+});
+export type WorkObjectCreateInput = z.infer<typeof workObjectCreateSchema>;
+
+export const workObjectUpdateSchema = z.object({
+  title: z.string().min(1).max(200).optional(),
+  status: z.enum(workObjectStatuses).optional(),
+  description: z.string().max(4000).nullable().optional(),
+  ownerUserId: z.number().int().positive().nullable().optional(),
+  parentId: z.number().int().positive().nullable().optional(),
+  attributes: z.record(z.any()).optional(),
+});
+export type WorkObjectUpdateInput = z.infer<typeof workObjectUpdateSchema>;
+
+/* ─────────────────── WORK OBJECT ↔ CHANNEL LINKS ─────────────────── */
+// A channel may be linked to multiple work_objects (and vice-versa) so a
+// joint "#daily-standup" channel can show every active job site, while a
+// dedicated "#boe-fiber-01" channel is linked to exactly one project.
+export const workObjectChannelLinks = sqliteTable("work_object_channel_links", {
+  workObjectId: integer("work_object_id").notNull().references(() => workObjects.id),
+  channelId: integer("channel_id").notNull().references(() => channels.id),
+  // "primary" link auto-posts activity into the channel; "secondary" only
+  // shows in the right-rail. Each channel can have at most one primary.
+  linkType: text("link_type", { enum: ["primary", "secondary"] as const }).notNull().default("primary"),
+  linkedAt: integer("linked_at", { mode: "timestamp" }).notNull(),
+  linkedByUserId: integer("linked_by_user_id").notNull().references(() => users.id),
+}, (t) => ({ pk: primaryKey({ columns: [t.workObjectId, t.channelId] }) }));
+export type WorkObjectChannelLink = typeof workObjectChannelLinks.$inferSelect;
+
+/* ─────────────────── WORK OBJECT ACTIVITY ─────────────────── */
+// Timeline of changes for an object. Each entry can optionally be mirrored
+// as a system message into linked channels.
+export const workObjectActivityTypes = [
+  "created", "status_changed", "owner_changed", "updated", "linked", "unlinked", "closed", "reopened", "comment",
+] as const;
+export type WorkObjectActivityType = typeof workObjectActivityTypes[number];
+
+export const workObjectActivity = sqliteTable("work_object_activity", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  workObjectId: integer("work_object_id").notNull().references(() => workObjects.id),
+  type: text("type", { enum: workObjectActivityTypes }).notNull(),
+  // Actor; null for system-generated events.
+  actorUserId: integer("actor_user_id").references(() => users.id),
+  // Free-form JSON payload describing the change ("from":"active","to":"paused", etc.)
+  payload: text("payload"),
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+});
+export type WorkObjectActivity = typeof workObjectActivity.$inferSelect;
+
 /* ─────────────────── LIVEKIT ROOMS ─────────────────── */
 export const livekitRooms = sqliteTable("livekit_rooms", {
   id: integer("id").primaryKey({ autoIncrement: true }),
