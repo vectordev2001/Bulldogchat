@@ -104,6 +104,13 @@ export interface LiveKitHookResult {
    * no-ops until the room is connected.
    */
   setHandRaised: (raised: boolean) => void;
+  /**
+   * True when this browser supports screen-share (i.e. has
+   * navigator.mediaDevices.getDisplayMedia and is not iOS Safari).
+   * iOS Safari/PWA WebView does not implement getDisplayMedia at all,
+   * so the screen-share button should be hidden or disabled there.
+   */
+  screenShareSupported: boolean;
 }
 
 interface Args {
@@ -713,6 +720,12 @@ export function useLiveKitRoom(args: Args): LiveKitHookResult {
     }
   }, [refreshParticipants]);
 
+  // Quick capability check the UI uses to disable screen-share on
+  // platforms that don't support getDisplayMedia (iOS Safari/PWA).
+  const screenShareSupported = !isIOS &&
+    typeof navigator !== "undefined" &&
+    !!(navigator.mediaDevices as MediaDevices | undefined)?.getDisplayMedia;
+
   return {
     status,
     error,
@@ -723,6 +736,7 @@ export function useLiveKitRoom(args: Args): LiveKitHookResult {
     toggleCamera,
     toggleMic,
     setHandRaised,
+    screenShareSupported,
   };
 }
 

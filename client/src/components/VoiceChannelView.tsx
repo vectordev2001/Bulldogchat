@@ -374,6 +374,12 @@ export function VoiceChannelView(props: Props) {
               attaches to the screenTrack; in demo mode we keep the
               existing notice line. */}
           {realScreenSharer ? (
+            // Bound the screen-share preview to ~45vh so it can't push the
+            // bottom call-controls bar off-screen on phones. On larger
+            // screens we cap it at 480px. Without this, an aspect-video
+            // 16:9 surface filling 100% width of a phone (~720px tall on
+            // a 9:19.5 viewport) eats the entire vertical budget and the
+            // mic/cam/leave row disappears below the fold.
             <div className="max-w-5xl mx-auto mt-4 rounded-lg overflow-hidden border border-[hsl(218_100%_68%/0.4)] bg-black">
               <div className="px-4 py-2 bg-[hsl(218_100%_68%/0.1)] border-b border-[hsl(218_100%_68%/0.3)] flex items-center gap-3 text-sm">
                 <MonitorUp className="w-4 h-4 text-vs-blue" />
@@ -466,8 +472,13 @@ export function VoiceChannelView(props: Props) {
           }}
           title={myVideoOn ? "Stop video" : "Start video"}
           activeIcon={<Video className="w-5 h-5" />} inactiveIcon={<VideoOff className="w-5 h-5" />} testid="button-call-video" />
-        <CallButton on={myScreenSharing} onClick={onToggleScreen} title={myScreenSharing ? "Stop sharing" : "Share screen"}
-          activeIcon={<MonitorUp className="w-5 h-5" />} inactiveIcon={<ScreenShareOff className="w-5 h-5" />} testid="button-call-screen" />
+        {/* Screen-share button. iOS Safari/PWA WebView does NOT support
+            getDisplayMedia at all — hide instead of letting users tap a
+            button that throws "getDisplayMedia not supported". */}
+        {lk.screenShareSupported && (
+          <CallButton on={myScreenSharing} onClick={onToggleScreen} title={myScreenSharing ? "Stop sharing" : "Share screen"}
+            activeIcon={<MonitorUp className="w-5 h-5" />} inactiveIcon={<ScreenShareOff className="w-5 h-5" />} testid="button-call-screen" />
+        )}
         <CallButton on={myHandRaised}
           onClick={() => {
             // Sync to LiveKit so other participants see the hand. We also
@@ -768,7 +779,10 @@ function LiveVideo({ track, mirror }: { track: Track | null; mirror?: boolean })
   );
 }
 
-/** Full-width screen-share video sized to fit the preview region. */
+/** Full-width screen-share video sized to fit the preview region.
+ *  Hard cap at 45vh on mobile so the bottom call-controls bar stays
+ *  on-screen even when a presenter is sharing.
+ */
 function ScreenShareVideo({ track }: { track: Track | null }) {
   const ref = useRef<HTMLVideoElement | null>(null);
   useEffect(() => {
@@ -776,9 +790,9 @@ function ScreenShareVideo({ track }: { track: Track | null }) {
     return attachTrack(track, ref.current);
   }, [track]);
   if (!track) {
-    return <div className="aspect-video w-full bg-[hsl(232_55%_11%)] flex items-center justify-center text-xs text-[hsl(0_0%_55%)]">Waiting for screen…</div>;
+    return <div className="w-full max-h-[45vh] sm:max-h-[480px] aspect-video bg-[hsl(232_55%_11%)] flex items-center justify-center text-xs text-[hsl(0_0%_55%)]">Waiting for screen…</div>;
   }
-  return <video ref={ref} autoPlay playsInline muted className="w-full max-h-[480px] object-contain bg-black" />;
+  return <video ref={ref} autoPlay playsInline muted className="w-full max-h-[45vh] sm:max-h-[480px] object-contain bg-black" />;
 }
 
 /**

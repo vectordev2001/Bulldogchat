@@ -15,8 +15,10 @@
  * Required env:
  *   LIVEKIT_API_KEY, LIVEKIT_API_SECRET, LIVEKIT_WS_URL  (already required)
  *   LIVEKIT_HOST                                          (e.g. "wss://...livekit.cloud" without "wss://")
- *   TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN                 (for the trunk)
- *   TWILIO_FROM_NUMBER                                    (E.164 caller id)
+ *   TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN                 (for sipConfigured() smoke-check; not used as SIP creds)
+ *   TWILIO_FROM_NUMBER                                    (E.164 caller id; must be assigned to the trunk)
+ *   TWILIO_SIP_TERMINATION_URI                            (e.g. "bulldog-XXX.pstn.twilio.com" — your Elastic SIP trunk's termination URI)
+ *   TWILIO_SIP_USERNAME, TWILIO_SIP_PASSWORD              (credential list user/pass attached to the trunk on Twilio)
  *   LIVEKIT_SIP_TRUNK_ID                                  (optional — provisioned automatically if absent)
  */
 import { SipClient } from "livekit-server-sdk";
@@ -39,9 +41,10 @@ export function sipConfigured(): boolean {
     process.env.LIVEKIT_API_KEY &&
     process.env.LIVEKIT_API_SECRET &&
     (process.env.LIVEKIT_HOST || process.env.LIVEKIT_WS_URL) &&
-    process.env.TWILIO_ACCOUNT_SID &&
-    process.env.TWILIO_AUTH_TOKEN &&
-    process.env.TWILIO_FROM_NUMBER
+    process.env.TWILIO_FROM_NUMBER &&
+    process.env.TWILIO_SIP_TERMINATION_URI &&
+    process.env.TWILIO_SIP_USERNAME &&
+    process.env.TWILIO_SIP_PASSWORD
   );
 }
 
@@ -96,26 +99,21 @@ export async function ensureSipTrunk(): Promise<string | null> {
     // TWILIO_SIP_TERMINATION_URI to your Elastic SIP Trunk's termination
     // URI. The Account-SID-based `<sid>.pstn.twilio.com` form is NOT a
     // real Twilio endpoint and will fail at dial time.
-    const address =
-      process.env.TWILIO_SIP_TERMINATION_URI ||
-      // Sensible default that at least lets LiveKit accept the trunk
-      // creation request; will need TWILIO_SIP_TERMINATION_URI set for
-      // actual outbound calls to bridge.
-      `${process.env.TWILIO_ACCOUNT_SID}.pstn.twilio.com`;
+    const address = process.env.TWILIO_SIP_TERMINATION_URI!;
 
     // SDK signature: createSipOutboundTrunk(name, address, numbers, opts)
-    // — positional args, NOT a single object. We pass authUsername /
-    // authPassword in opts so LiveKit can present Twilio credentials.
+    // — positional args, NOT a single object. authUsername/authPassword
+    // are the SIP credentials Twilio expects (Credential List on the
+    // trunk), NOT the Twilio Account SID/Auth Token — those would be a
+    // 401 at SIP-handshake time.
     const created = await c.createSipOutboundTrunk(
       TRUNK_NAME,
       address,
       [process.env.TWILIO_FROM_NUMBER!],
       {
-        authUsername: process.env.TWILIO_ACCOUNT_SID!,
-        authPassword: process.env.TWILIO_AUTH_TOKEN!,
-        // Twilio Elastic SIP Trunking termination prefers TLS for
-        // outbound calls; AUTO lets LiveKit negotiate if the address
-        // doesn't support TLS.
+        authUsername: process.env.TWILIO_SIP_USERNAME!,
+        authPassword: process.env.TWILIO_SIP_PASSWORD!,
+        // AUTO lets LiveKit negotiate UDP/TCP/TLS with Twilio.
         transport: SIPTransport.SIP_TRANSPORT_AUTO,
       },
     );

@@ -24,6 +24,11 @@ export async function generateLivekitToken(opts: {
     canPublish: opts.canPublish ?? true,
     canSubscribe: true,
     canPublishData: true,
+    // Lets the client call room.localParticipant.setAttributes() — used
+    // for hand-raise (handRaised attribute propagates via
+    // ParticipantAttributesChanged). Without this, setAttributes is
+    // silently rejected server-side and nobody else sees the hand.
+    canUpdateOwnMetadata: true,
   });
   return at.toJwt();
 }
