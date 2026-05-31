@@ -267,7 +267,7 @@ export function registerWorkObjectRoutes(app: Express) {
   /* ─── resolve a bare ref (used by /object slash command) ─── */
   app.get("/api/work-objects/resolve/:ref", requireAuth, (req, res) => {
     const u = (req as AuthedRequest).user;
-    const ref = req.params.ref;
+    const ref = String(req.params.ref);
     const wo = storage.findWorkObjectByRefAcrossKinds(u.orgId, ref);
     if (!wo) return res.status(404).json({ message: `No work object with ref "${ref}"` });
     res.json(publicWorkObject(wo));

@@ -11,6 +11,7 @@ import { CreateChannelDialog } from "@/components/CreateChannelDialog";
 import { TextChannelView } from "@/components/TextChannelView";
 import { VoiceChannelView } from "@/components/VoiceChannelView";
 import { MemberList } from "@/components/MemberList";
+import { WorkObjectPanel } from "@/components/WorkObjectPanel";
 import { VectorLogo } from "@/components/VectorLogo";
 import type { ApiProject, ApiChannel, ApiMessage, ApiUser } from "@/types/api";
 
@@ -26,6 +27,8 @@ export default function Home() {
   // the header Users icon lets the user collapse/expand it explicitly so
   // mid-size screens can also see the roster on demand.
   const [membersOpen, setMembersOpen] = useState(true);
+  // Right-rail work objects panel — opt-in; toggled from channel header.
+  const [workObjectsOpen, setWorkObjectsOpen] = useState(false);
 
   // Self-call state
   // Default to muted on iOS so we never fire getUserMedia({audio:true})
@@ -316,15 +319,27 @@ export default function Home() {
             orgMembers={members}
             membersOpen={membersOpen}
             onToggleMembers={() => setMembersOpen((v) => !v)}
+            workObjectsOpen={workObjectsOpen}
+            onToggleWorkObjects={() => setWorkObjectsOpen((v) => !v)}
           />
         )}
       </main>
 
-      {/* Right rail: members on text channels. xl+ shows by default; on
-          smaller screens the header Users toggle reveals it explicitly. */}
-      {activeChannel?.type === "text" && membersOpen && (
-        <div className="hidden md:flex">
-          <MemberList members={members} meId={(user as ApiUser)?.id} />
+      {/* Right rail: work objects panel (top) + members list (bottom).
+          Both toggle independently from the channel header. */}
+      {activeChannel?.type === "text" && (workObjectsOpen || membersOpen) && (
+        <div className="hidden md:flex md:flex-col">
+          {workObjectsOpen && (
+            <WorkObjectPanel
+              channelId={activeChannel.id}
+              me={user as ApiUser}
+              orgMembers={members}
+              onClose={() => setWorkObjectsOpen(false)}
+            />
+          )}
+          {membersOpen && (
+            <MemberList members={members} meId={(user as ApiUser)?.id} />
+          )}
         </div>
       )}
     </div>

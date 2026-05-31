@@ -1,4 +1,4 @@
-import { Hash, Pin, Plus, Smile, Paperclip, Send, Users, Search, Loader2, MessageSquare, X, Reply, Phone, Video } from "lucide-react";
+import { Hash, Pin, Plus, Smile, Paperclip, Send, Users, Search, Loader2, MessageSquare, X, Reply, Phone, Video, ClipboardList } from "lucide-react";
 import { ChannelCallDialog } from "@/components/ChannelCallDialog";
 import { useCalls } from "@/lib/CallContext";
 import { Avatar } from "./Avatar";
@@ -19,6 +19,8 @@ interface Props {
   orgMembers: ApiUser[];
   membersOpen?: boolean;
   onToggleMembers?: () => void;
+  workObjectsOpen?: boolean;
+  onToggleWorkObjects?: () => void;
 }
 
 const ROLE_COLOR: Record<UserRole, string> = {
@@ -52,7 +54,7 @@ interface MentionMatch {
   startIdx: number;
 }
 
-export function TextChannelView({ channel, messages, loading, me, orgMembers, membersOpen, onToggleMembers }: Props) {
+export function TextChannelView({ channel, messages, loading, me, orgMembers, membersOpen, onToggleMembers, workObjectsOpen, onToggleWorkObjects }: Props) {
   const [draft, setDraft] = useState("");
   const [pendingAtts, setPendingAtts] = useState<ApiAttachment[]>([]);
   const [uploading, setUploading] = useState(false);
@@ -194,9 +196,41 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers, me
     }
   };
 
+  const handleSlashObject = async (rest: string): Promise<boolean> => {
+    // /object REF  -> link existing
+    const ref = rest.trim();
+    if (!ref) {
+      sendMutation.mutate({
+        content: "_Usage: `/object REF` to link a work object to this channel._",
+      });
+      return true;
+    }
+    try {
+      await apiRequest("POST", `/api/channels/${channel.id}/work-objects`, { ref });
+      queryClient.invalidateQueries({ queryKey: ["/api/channels", channel.id, "work-objects"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/work-objects"] });
+      sendMutation.mutate({ content: `🔗 Linked work object **${ref}** to this channel.` });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Unknown error";
+      sendMutation.mutate({ content: `_Could not link ${ref}: ${msg}_` });
+    }
+    return true;
+  };
+
   const submit = () => {
     const body = draft.trim();
     if ((!body && pendingAtts.length === 0) || sendMutation.isPending) return;
+
+    // Slash command interception
+    if (body.startsWith("/object")) {
+      const rest = body.slice("/object".length);
+      setDraft("");
+      setPendingAtts([]);
+      setMentionMatch(null);
+      void handleSlashObject(rest);
+      return;
+    }
+
     sendMutation.mutate({
       content: body || " ",
       attachmentIds: pendingAtts.length > 0 ? pendingAtts.map((a) => a.id) : undefined,
@@ -281,6 +315,14 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers, me
             data-testid="button-pinned"
           >
             <Pin className="w-4 h-4" />
+          </HeaderIcon>
+          <HeaderIcon
+            title={workObjectsOpen ? "Hide work objects" : "Show work objects"}
+            onClick={onToggleWorkObjects}
+            active={!!workObjectsOpen}
+            data-testid="button-work-objects-toggle"
+          >
+            <ClipboardList className="w-4 h-4" />
           </HeaderIcon>
           <HeaderIcon
             title={membersOpen ? "Hide members" : "Show members"}

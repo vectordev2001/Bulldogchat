@@ -3,6 +3,7 @@ import {
   organizations, users, projects, projectMembers, channels, channelMembers, messages,
   reactions, readReceipts, pushSubscriptions, sessions, invites, livekitRooms,
   attachments, messageMentions, recordings, expoPushTokens, directCalls,
+  workObjects, workObjectChannelLinks, workObjectActivity,
 } from "@shared/schema";
 import type {
   Organization, InsertOrganization,
@@ -18,6 +19,8 @@ import type {
   Recording, RecordingStatus,
   ExpoPushToken,
   DirectCall, DirectCallStatus,
+  WorkObject, WorkObjectKind, WorkObjectStatus,
+  WorkObjectChannelLink, WorkObjectActivity, WorkObjectActivityType,
 } from "@shared/schema";
 import { and, eq, desc, lt, asc, sql, inArray, isNull } from "drizzle-orm";
 
