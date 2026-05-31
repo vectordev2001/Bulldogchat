@@ -88,6 +88,13 @@ export interface LiveKitHookResult {
    * On non-iOS browsers this is a thin wrapper over setCameraEnabled.
    */
   toggleCamera: () => Promise<boolean>;
+  /**
+   * iOS-safe mic toggle. Same rules as toggleCamera — must run inside
+   * a user gesture so the audio MediaStream is acquired while iOS
+   * still considers the call "in-gesture". Returns the new muted state
+   * (true=muted, false=unmuted).
+   */
+  toggleMic: () => Promise<boolean>;
 }
 
 interface Args {
@@ -178,6 +185,10 @@ export function useLiveKitRoom(args: Args): LiveKitHookResult {
   // double-firing the camera path.
   const desiredVideoRef = useRef(videoOn);
   useEffect(() => { desiredVideoRef.current = videoOn; }, [videoOn]);
+  // Same idea for mic. We mirror micMuted so the imperative iOS path
+  // can read the latest desired state without stale closures.
+  const desiredMicMutedRef = useRef(micMuted);
+  useEffect(() => { desiredMicMutedRef.current = micMuted; }, [micMuted]);
 
   // Helper: re-derive the participant array from the current room state.
   // We keep a stable closure via useCallback so event handlers can be
@@ -301,41 +312,141 @@ export function useLiveKitRoom(args: Args): LiveKitHookResult {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roomKey, token, wsUrl]);
 
+  // --- Detect iOS once (used by both mic and camera paths) ---------------
+  const isIOS = detectIOS();
+
   // --- Mic reconciliation -------------------------------------------------
-  // We use LiveKit's high-level `setMicrophoneEnabled` API instead of
-  // manual createLocalAudioTrack + publishTrack. The high-level API
-  // properly initializes the iOS Safari audio session (which otherwise
-  // can crash the WebKit content process on iPhone PWAs when a raw
-  // getUserMedia is invoked mid-call). It also handles re-publish and
-  // cleanup atomically.
+  // Same iOS gesture problem as camera: setMicrophoneEnabled() invokes
+  // getUserMedia({audio:true}) in a microtask. By the time it runs, iOS
+  // has already torn down the gesture context. Result: audio track is
+  // returned but produces no frames, publish hangs forever, WebView
+  // locks up.
+  //
+  // On iOS we drive mic state imperatively via toggleMic(). Off-path
+  // (mute) is safe to do here — no permission, no getUserMedia.
   useEffect(() => {
+    if (isIOS && !micMuted) return; // unmute on iOS goes through toggleMic
+
     const room = roomRef.current;
     if (!room || status !== "connected") return;
 
     let cancelled = false;
     (async () => {
       try {
-        await room.localParticipant.setMicrophoneEnabled(!micMuted, {
+        if (micMuted) {
+          // Mute path: if a manually-published iOS track exists, fully
+          // unpublish it so we don't keep the mic LED on.
+          if (micTrackRef.current) {
+            try { await room.localParticipant.unpublishTrack(micTrackRef.current); } catch { /* ignore */ }
+            try { micTrackRef.current.stop(); } catch { /* ignore */ }
+            micTrackRef.current = null;
+          }
+          await room.localParticipant.setMicrophoneEnabled(false);
+          if (cancelled) return;
+          setMicPublished(false);
+          refreshParticipants();
+          return;
+        }
+
+        // Non-iOS unmute path.
+        await room.localParticipant.setMicrophoneEnabled(true, {
           echoCancellation: true,
           noiseSuppression: true,
           autoGainControl: true,
         });
         if (cancelled) return;
-        // Keep our internal ref in sync for the explicit-stop path on disconnect.
         const pub = room.localParticipant.getTrackPublication(Track.Source.Microphone);
         micTrackRef.current = (pub?.track as LocalAudioTrack | undefined) ?? null;
         setMicPublished(!!micTrackRef.current);
         refreshParticipants();
       } catch (err) {
-        // Never let an iOS permission rejection or AudioContext failure
-        // bubble up — surface via onTrackError so the banner explains it.
         if (!cancelled) onTrackError?.("mic", err);
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [micMuted, status, refreshParticipants, onTrackError]);
+  }, [micMuted, status, refreshParticipants, onTrackError, isIOS]);
+
+  // --- iOS-safe imperative mic toggle ------------------------------------
+  // MUST be called synchronously from a user-gesture handler on iOS.
+  // getUserMedia({audio:true}) runs inside the gesture window, the
+  // resulting MediaStreamTrack is wrapped in LocalAudioTrack and
+  // published manually — bypassing setMicrophoneEnabled's microtask
+  // race entirely. Returns the new muted state (true=muted).
+  const toggleMic = useCallback(async (): Promise<boolean> => {
+    const room = roomRef.current;
+    if (!room || status !== "connected") {
+      onTrackError?.("mic", new Error("Not connected to call yet — try again in a second."));
+      return desiredMicMutedRef.current;
+    }
+
+    // Muting (turn off): no gesture needed.
+    if (!desiredMicMutedRef.current) {
+      try {
+        if (micTrackRef.current) {
+          try { await room.localParticipant.unpublishTrack(micTrackRef.current); } catch { /* ignore */ }
+          try { micTrackRef.current.stop(); } catch { /* ignore */ }
+          micTrackRef.current = null;
+        }
+        await room.localParticipant.setMicrophoneEnabled(false);
+        setMicPublished(false);
+        refreshParticipants();
+      } catch (err) {
+        onTrackError?.("mic", err);
+      }
+      desiredMicMutedRef.current = true;
+      return true;
+    }
+
+    // Unmuting. On non-iOS, just flip the flag; effect handles it.
+    if (!isIOS) {
+      desiredMicMutedRef.current = false;
+      return false;
+    }
+
+    // iOS gesture-preserving path. NO awaits before getUserMedia.
+    let stream: MediaStream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+        video: false,
+      });
+    } catch (err) {
+      onTrackError?.("mic", err);
+      return true; // stay muted
+    }
+
+    const msTrack = stream.getAudioTracks()[0];
+    if (!msTrack) {
+      onTrackError?.("mic", new Error("No mic track returned by iOS"));
+      try { stream.getTracks().forEach((t) => t.stop()); } catch { /* ignore */ }
+      return true;
+    }
+
+    try {
+      const lkTrack = new LocalAudioTrack(msTrack);
+      await room.localParticipant.publishTrack(lkTrack, {
+        source: Track.Source.Microphone,
+        name: "microphone",
+        dtx: true,
+        red: true,
+      });
+      micTrackRef.current = lkTrack;
+      setMicPublished(true);
+      desiredMicMutedRef.current = false;
+      refreshParticipants();
+      return false;
+    } catch (err) {
+      try { msTrack.stop(); } catch { /* ignore */ }
+      onTrackError?.("mic", err);
+      return true;
+    }
+  }, [status, isIOS, refreshParticipants, onTrackError]);
 
   // --- Camera reconciliation ---------------------------------------------
   // Hard-won lessons on iOS Safari (PWA + browser):
@@ -352,8 +463,6 @@ export function useLiveKitRoom(args: Args): LiveKitHookResult {
   //     setCameraEnabled() correctly and keep the simpler path.
   //   * Off-path always uses setCameraEnabled(false) — no permission
   //     prompt, safe in any context.
-  const isIOS = detectIOS();
-
   useEffect(() => {
     // On iOS we drive camera state imperatively via toggleCamera(); the
     // reconciliation effect would race against it. Off-state still flows
@@ -537,6 +646,7 @@ export function useLiveKitRoom(args: Args): LiveKitHookResult {
     cameraPublished,
     screenPublished,
     toggleCamera,
+    toggleMic,
   };
 }
 

@@ -24,7 +24,16 @@ export default function Home() {
   const [createChannelOpen, setCreateChannelOpen] = useState(false);
 
   // Self-call state
-  const [myMicMuted, setMyMicMuted] = useState(false);
+  // Default to muted on iOS so we never fire getUserMedia({audio:true})
+  // outside a user-gesture context — doing so freezes the iOS WebView.
+  // On desktop/Android we keep the existing auto-unmute behavior.
+  const [myMicMuted, setMyMicMuted] = useState(() => {
+    if (typeof navigator === "undefined") return false;
+    const ua = navigator.userAgent;
+    const isIOS = /iPad|iPhone|iPod/.test(ua) ||
+      (ua.includes("Mac") && (navigator as any).maxTouchPoints > 1);
+    return isIOS; // muted on iOS, unmuted elsewhere
+  });
   const [myDeafened, setMyDeafened] = useState(false);
   const [myVideoOn, setMyVideoOn] = useState(false);
   const [myScreenSharing, setMyScreenSharing] = useState(false);

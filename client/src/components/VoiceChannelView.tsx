@@ -294,7 +294,11 @@ export function VoiceChannelView(props: Props) {
           <span className="font-mono font-bold tracking-wider text-white uppercase text-[11px]">Mic On — You can be heard</span>
           <button
             type="button"
-            onClick={onToggleMic}
+            onClick={() => {
+              void lk.toggleMic().then((nowMuted) => {
+                if (nowMuted !== myMicMuted) onToggleMic();
+              });
+            }}
             className="ml-2 px-2 py-0.5 rounded bg-white/15 hover:bg-white/25 text-white font-mono text-[10px] uppercase tracking-wider transition-colors"
             data-testid="button-quick-mute"
           >
@@ -411,7 +415,17 @@ export function VoiceChannelView(props: Props) {
         </div>
       )}
       <div className="shrink-0 px-6 py-3 border-t border-[hsl(232_40%_22%)] bg-[hsl(232_55%_11%)] flex items-center justify-center gap-2" data-testid="bar-call-controls">
-        <CallButton on={!myMicMuted} onClick={onToggleMic} title={myMicMuted ? "Unmute" : "Mute"}
+        <CallButton
+          on={!myMicMuted}
+          // iOS Safari mic gesture path: same pattern as camera. The
+          // hook's toggleMic() does getUserMedia synchronously inside
+          // this click handler when running on iOS.
+          onClick={() => {
+            void lk.toggleMic().then((nowMuted) => {
+              if (nowMuted !== myMicMuted) onToggleMic();
+            });
+          }}
+          title={myMicMuted ? "Unmute" : "Mute"}
           disabled={!!livekitInfo && lk.status !== "connected"}
           activeIcon={<Mic className="w-5 h-5" />} inactiveIcon={<MicOff className="w-5 h-5" />} testid="button-call-mic" />
         <CallButton
