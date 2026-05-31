@@ -346,6 +346,11 @@ export function useLiveKitRoom(args: Args): LiveKitHookResult {
     const room = roomRef.current;
     if (!room || status !== "connected") return;
 
+    // Idempotency guard: skip if mic state already matches the desired state.
+    const micPub = room.localParticipant.getTrackPublication(Track.Source.Microphone);
+    const micCurrentlyOn = !!micPub && !micPub.isMuted;
+    if (micMuted === !micCurrentlyOn) return;
+
     let cancelled = false;
     (async () => {
       try {
@@ -504,6 +509,13 @@ export function useLiveKitRoom(args: Args): LiveKitHookResult {
     const room = roomRef.current;
     if (!room || status !== "connected") return;
 
+    // Idempotency guard: don't republish if we're already in the desired
+    // state. Without this, an unstable onTrackError closure or a stray
+    // refreshParticipants() re-render can cause the effect to re-fire and
+    // publish the camera repeatedly, freezing the page.
+    const currentlyPublished = !!room.localParticipant.getTrackPublication(Track.Source.Camera);
+    if (videoOn === currentlyPublished) return;
+
     let cancelled = false;
     (async () => {
       const prior = cameraOpRef.current;
@@ -659,6 +671,11 @@ export function useLiveKitRoom(args: Args): LiveKitHookResult {
   useEffect(() => {
     const room = roomRef.current;
     if (!room || status !== "connected") return;
+
+    // Idempotency guard: skip if screen-share state already matches desired.
+    const ssPub = room.localParticipant.getTrackPublication(Track.Source.ScreenShare);
+    const ssCurrentlyOn = !!ssPub;
+    if (screenSharing === ssCurrentlyOn) return;
 
     let cancelled = false;
     (async () => {

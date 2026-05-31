@@ -1,13 +1,37 @@
 /* Bulldog Chat service worker — push + notification click */
 
-const SW_VERSION = "bulldog-chat-1.0.2";
+const SW_VERSION = "bulldog-chat-1.0.3";
 
 self.addEventListener("install", (event) => {
   self.skipWaiting();
 });
 
 self.addEventListener("activate", (event) => {
-  event.waitUntil(self.clients.claim());
+  // Aggressively nuke any caches the old SW (1.0.0/1.0.1) created. We are
+  // not a caching SW now (push-only), so there should be nothing legitimate
+  // in caches. Deleting them forces the iOS PWA "shell" out of stale-HTML
+  // hell where index.html points to a since-deleted hashed JS bundle.
+  event.waitUntil((async () => {
+    try {
+      const names = await caches.keys();
+      await Promise.all(names.map((n) => caches.delete(n)));
+    } catch (_) { /* ignore */ }
+    await self.clients.claim();
+    // Tell every controlled tab to hard-reload so it picks up the fresh
+    // index.html (and thus the current hashed JS bundles).
+    const clients = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+    for (const c of clients) {
+      try { c.postMessage({ type: "SW_UPDATED", version: SW_VERSION }); } catch (_) {}
+    }
+  })());
+});
+
+// If a page asks us to reload, do it. Used in tandem with the SW_UPDATED
+// postMessage on the client side.
+self.addEventListener("message", (event) => {
+  if (event.data && event.data.type === "SKIP_WAITING") {
+    self.skipWaiting();
+  }
 });
 
 self.addEventListener("push", (event) => {

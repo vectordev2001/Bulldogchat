@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Mic, MicOff, Video, VideoOff, MonitorUp, Hand, Settings, PhoneOff,
   Volume2, MoreHorizontal, ScreenShareOff, Signal, Users, Loader2, AlertTriangle, Sparkles,
@@ -122,6 +122,16 @@ export function VoiceChannelView(props: Props) {
 
   // --- Live LiveKit session ----------------------------------------------
   // The hook stays "idle" when token/wsUrl are null (preview mode).
+  // IMPORTANT: stabilize this callback. The hook holds it in effect deps;
+  // if we pass a fresh closure on every render the camera/mic/screen
+  // reconciliation effects re-run on every render, which can publish the
+  // track repeatedly and freeze the page. useCallback with [] keeps a
+  // single stable reference for the life of the component.
+  const onTrackError = useCallback((kind: "mic" | "camera" | "screen", err: unknown) => {
+    const msg = err instanceof Error ? err.message : String(err);
+    setError(`${kind === "mic" ? "Microphone" : kind === "camera" ? "Camera" : "Screen share"} error: ${msg}`);
+  }, []);
+
   const lk = useLiveKitRoom({
     token: livekitInfo?.token ?? null,
     wsUrl: livekitInfo?.wsUrl ?? null,
@@ -129,12 +139,7 @@ export function VoiceChannelView(props: Props) {
     micMuted: myMicMuted,
     videoOn: myVideoOn,
     screenSharing: myScreenSharing,
-    onTrackError: (kind, err) => {
-      // Surface device errors in the existing error banner so the user
-      // knows why their mic/camera/screen toggle didn't take effect.
-      const msg = err instanceof Error ? err.message : String(err);
-      setError(`${kind === "mic" ? "Microphone" : kind === "camera" ? "Camera" : "Screen share"} error: ${msg}`);
-    },
+    onTrackError,
   });
 
   // Build the display participant list. Real mode = derive from LiveKit
