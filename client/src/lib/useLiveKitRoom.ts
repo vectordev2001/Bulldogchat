@@ -376,8 +376,14 @@ export function useLiveKitRoom(args: Args): LiveKitHookResult {
   // race entirely. Returns the new muted state (true=muted).
   const toggleMic = useCallback(async (): Promise<boolean> => {
     const room = roomRef.current;
-    if (!room || status !== "connected") {
-      onTrackError?.("mic", new Error("Not connected to call yet — try again in a second."));
+    // Use roomRef + room.state instead of the React `status` state. The
+    // `status` closure can lag behind the actual room state because the
+    // useCallback only re-creates when its deps change — so a user who
+    // clicks the moment the room transitions to connected can see a
+    // stale "not connected" error. room.state is always live.
+    const roomConnected = !!room && (room as any).state === "connected";
+    if (!room || !roomConnected) {
+      onTrackError?.("mic", new Error("Call is still connecting — give it a second and tap again."));
       return desiredMicMutedRef.current;
     }
 
@@ -406,14 +412,15 @@ export function useLiveKitRoom(args: Args): LiveKitHookResult {
     }
 
     // iOS gesture-preserving path. NO awaits before getUserMedia.
+    // CRITICAL: pass plain `audio: true` on iOS. WebKit PWA freezes hard
+    // when given a constraints object (echoCancellation/noiseSuppression/
+    // autoGainControl) — same flake we already work around for camera.
+    // Apply the audio processing hints AFTER the track is published via
+    // LiveKit's setAudioFilter / publish options instead.
     let stream: MediaStream;
     try {
       stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
+        audio: true,
         video: false,
       });
     } catch (err) {
@@ -551,8 +558,12 @@ export function useLiveKitRoom(args: Args): LiveKitHookResult {
     const wantOn = !currentlyOn;
 
     const room = roomRef.current;
-    if (!room || status !== "connected") {
-      onTrackError?.("camera", new Error("Not connected to call yet — try again in a second."));
+    // See toggleMic comment: rely on the live room.state, not the React
+    // closure's `status` snapshot. Prevents the silent "nothing happens"
+    // failure when the user taps right as connection completes.
+    const roomConnected = !!room && (room as any).state === "connected";
+    if (!room || !roomConnected) {
+      onTrackError?.("camera", new Error("Call is still connecting — give it a second and tap again."));
       return currentlyOn;
     }
 
