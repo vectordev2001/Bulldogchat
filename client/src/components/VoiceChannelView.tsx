@@ -325,7 +325,7 @@ export function VoiceChannelView(props: Props) {
       )}
 
       <div className="flex-1 flex min-h-0">
-        <div className="flex-1 p-6 overflow-y-auto">
+        <div className="flex-1 p-6 overflow-y-auto pb-[calc(5.5rem+env(safe-area-inset-bottom))] sm:pb-6">
           <div className={[
             "grid gap-4 max-w-5xl mx-auto",
             callParticipants.length <= 2 ? "grid-cols-1 sm:grid-cols-2"
@@ -456,7 +456,7 @@ export function VoiceChannelView(props: Props) {
           forced iOS to scale the page out. We tighten padding/gap on
           mobile and hide disabled placeholder buttons (More / Settings)
           so the essentials fit at native scale. */}
-      <div className="sticky bottom-0 z-30 shrink-0 px-2 sm:px-6 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] border-t border-[hsl(232_40%_22%)] bg-[hsl(232_55%_11%)] flex items-center justify-center gap-1 sm:gap-2 flex-wrap" data-testid="bar-call-controls">
+      <div className="fixed sm:sticky left-0 right-0 bottom-0 z-40 shrink-0 px-2 sm:px-6 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] border-t border-[hsl(232_40%_22%)] bg-[hsl(232_55%_11%)] flex items-center justify-center gap-1 sm:gap-2 flex-wrap" data-testid="bar-call-controls">
         <CallButton
           on={!myMicMuted}
           // iOS Safari mic gesture path: same pattern as camera. The
