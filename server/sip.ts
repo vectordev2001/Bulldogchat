@@ -85,22 +85,36 @@ export async function ensureSipTrunk(): Promise<string | null> {
   }
 
   try {
-    // Twilio's SIP termination URI follows the pattern:
-    //   <account-sid>.pstn.twilio.com
-    // (this is Twilio's default trunk endpoint for Programmable Voice
-    // outbound calls; you can also use a custom Elastic SIP Trunk URI by
-    // overriding via TWILIO_SIP_TERMINATION_URI).
+    // Twilio outbound SIP termination URI.
+    //
+    // Twilio Elastic SIP Trunking endpoint format:
+    //   <trunk-domain>.pstn.twilio.com  (requires an Elastic SIP Trunk
+    //   provisioned in the Twilio console under Elastic SIP Trunking)
+    //
+    // If you only have Programmable Voice (no Elastic SIP Trunk), set
+    // TWILIO_SIP_TERMINATION_URI to your Elastic SIP Trunk's termination
+    // URI. The Account-SID-based `<sid>.pstn.twilio.com` form is NOT a
+    // real Twilio endpoint and will fail at dial time.
     const address =
       process.env.TWILIO_SIP_TERMINATION_URI ||
+      // Sensible default that at least lets LiveKit accept the trunk
+      // creation request; will need TWILIO_SIP_TERMINATION_URI set for
+      // actual outbound calls to bridge.
       `${process.env.TWILIO_ACCOUNT_SID}.pstn.twilio.com`;
 
-    const created = await c.createSipOutboundTrunk({
-      name: TRUNK_NAME,
+    // SDK signature: createSipOutboundTrunk(name, address, numbers, opts)
+    // — positional args, NOT a single object. We pass authUsername /
+    // authPassword in opts so LiveKit can present Twilio credentials.
+    const created = await c.createSipOutboundTrunk(
+      TRUNK_NAME,
       address,
-      numbers: [process.env.TWILIO_FROM_NUMBER!],
-      authUsername: process.env.TWILIO_ACCOUNT_SID!,
-      authPassword: process.env.TWILIO_AUTH_TOKEN!,
-    });
+      [process.env.TWILIO_FROM_NUMBER!],
+      {
+        authUsername: process.env.TWILIO_ACCOUNT_SID!,
+        authPassword: process.env.TWILIO_AUTH_TOKEN!,
+        transport: 1 /* SIP_TRANSPORT_TCP — Twilio prefers TCP/TLS */,
+      },
+    );
     cachedTrunkId = created.sipTrunkId ?? null;
     if (cachedTrunkId) {
       console.log(`[sip] Created LiveKit SIP trunk ${cachedTrunkId} (${TRUNK_NAME}) → ${address}`);

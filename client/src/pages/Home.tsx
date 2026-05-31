@@ -196,14 +196,16 @@ export default function Home() {
   }
 
   return (
-    // Use h-[100dvh] (dynamic viewport height) instead of min-h-screen so the
-    // app box matches the visible viewport on mobile — the URL bar and bottom
-    // chrome on iOS Safari change the viewport size, and 100vh ignores that.
-    // overflow-hidden on the root forces every scrolling region (message
-    // list, sidebar) to be the *inner* `flex-1 overflow-y-auto` panel,
-    // which keeps the composer toolbar pinned at the bottom regardless of
-    // window height.
-    <div className="h-[100dvh] flex bg-[hsl(232_60%_9%)] text-white relative overflow-hidden">
+    // Fill the parent (#root) which is already sized to 100dvh minus iOS
+    // safe-area-inset-top/bottom via body padding (see index.css). Using
+    // h-full — NOT h-[100dvh] — is critical on iPhone PWAs: h-[100dvh]
+    // forces the box to 100dvh INSIDE a parent that is already shorter,
+    // pushing the bottom call-controls bar off-screen below the home
+    // indicator. h-full matches the parent and keeps every pinned bar
+    // (composer toolbar, call controls) visible.
+    // overflow-hidden forces every scrolling region (message list, sidebar)
+    // to be the *inner* `flex-1 overflow-y-auto` panel.
+    <div className="h-full flex bg-[hsl(232_60%_9%)] text-white relative overflow-hidden">
       {/* Mobile sidebar overlay */}
       <AnimatePresence>
         {mobileNavOpen && (

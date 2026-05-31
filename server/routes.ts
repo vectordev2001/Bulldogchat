@@ -608,8 +608,12 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
         invited += 1;
       } else if (target.phone && sipConfigured()) {
         try {
-          await dialPhoneIntoRoom({ phone: target.phone, roomName, displayName: target.name });
-          dialed += 1;
+          const ident = await dialPhoneIntoRoom({ phone: target.phone, roomName, displayName: target.name });
+          if (ident) {
+            dialed += 1;
+          } else {
+            warnings.push(`dial ${target.name}: SIP trunk unavailable (check server log)`);
+          }
         } catch (err: any) {
           warnings.push(`dial ${target.name}: ${err?.message ?? "failed"}`);
         }
@@ -627,8 +631,12 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
       } else {
         for (const phone of phoneNumbers) {
           try {
-            await dialPhoneIntoRoom({ phone, roomName, displayName: phone });
-            dialed += 1;
+            const ident = await dialPhoneIntoRoom({ phone, roomName, displayName: phone });
+            if (ident) {
+              dialed += 1;
+            } else {
+              warnings.push(`dial ${phone}: SIP trunk unavailable (check server log)`);
+            }
           } catch (err: any) {
             warnings.push(`dial ${phone}: ${err?.message ?? "failed"}`);
           }
