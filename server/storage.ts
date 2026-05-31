@@ -21,9 +21,23 @@ import type {
 } from "@shared/schema";
 import { and, eq, desc, lt, asc, sql, inArray, isNull } from "drizzle-orm";
 
+// Anyone who hasn't pinged the server within this window is considered offline.
+// Auth middleware refreshes lastSeenAt on every authenticated request, and the
+// client polls /api/projects/:id/members + /api/org/members frequently while open,
+// so 3 minutes comfortably covers a couple of missed polls without false negatives.
+const PRESENCE_ONLINE_WINDOW_MS = 3 * 60 * 1000;
+
 export function sanitize(u: User): PublicUser {
   const { passwordHash: _ph, ...rest } = u;
-  return rest;
+  // Derive live status from lastSeenAt. The stored `status` column is only
+  // honored for the manual offline override (e.g. user marked themselves away);
+  // otherwise we ignore it and compute fresh from the heartbeat.
+  const lastSeenMs = rest.lastSeenAt ? new Date(rest.lastSeenAt).getTime() : 0;
+  const seenRecently = lastSeenMs > 0 && (Date.now() - lastSeenMs) < PRESENCE_ONLINE_WINDOW_MS;
+  // If the user explicitly set themselves offline, respect that.
+  // Anything else (online / null / legacy default) is recomputed from heartbeat.
+  const derivedStatus = rest.status === "offline" ? "offline" : (seenRecently ? "online" : "offline");
+  return { ...rest, status: derivedStatus };
 }
 
 export interface IStorage {
