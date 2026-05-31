@@ -60,6 +60,8 @@ export interface RoomParticipantState {
   screenTrack: Track | null;
   /** Remote microphone audio track to attach to a hidden <audio> element. Always null for the local participant (we never play our own mic). */
   audioTrack: Track | null;
+  /** True when this participant has raised their hand (driven by LiveKit participant attribute `handRaised`). */
+  handRaised: boolean;
 }
 
 export type ConnectionStatus =
@@ -95,6 +97,13 @@ export interface LiveKitHookResult {
    * (true=muted, false=unmuted).
    */
   toggleMic: () => Promise<boolean>;
+  /**
+   * Set the local participant's "hand raised" attribute on the LiveKit
+   * room. Propagates to every other participant via the
+   * ParticipantAttributesChanged event. Safe to call before connect — it
+   * no-ops until the room is connected.
+   */
+  setHandRaised: (raised: boolean) => void;
 }
 
 interface Args {
@@ -144,6 +153,11 @@ function snapshotParticipant(p: Participant, isLocal: boolean): RoomParticipantS
     }
   }
 
+  // LiveKit ships participant attributes as a plain Record<string,string>.
+  // We store the hand state as `"1"` / empty to keep it cheap to set.
+  const attrs = (p as { attributes?: Record<string, string> }).attributes ?? {};
+  const handRaised = attrs.handRaised === "1";
+
   return {
     userId: userIdFromIdentity(p.identity),
     identity: p.identity,
@@ -155,6 +169,7 @@ function snapshotParticipant(p: Participant, isLocal: boolean): RoomParticipantS
     videoTrack,
     screenTrack,
     audioTrack,
+    handRaised,
   };
 }
 
@@ -266,6 +281,7 @@ export function useLiveKitRoom(args: Args): LiveKitHookResult {
       .on(RoomEvent.TrackMuted, onUpdate)
       .on(RoomEvent.TrackUnmuted, onUpdate)
       .on(RoomEvent.ActiveSpeakersChanged, onSpeaking)
+      .on(RoomEvent.ParticipantAttributesChanged, onUpdate)
       .on(RoomEvent.ConnectionStateChanged, onState)
       .on(RoomEvent.Disconnected, () => {
         if (cancelled) return;
@@ -411,6 +427,11 @@ export function useLiveKitRoom(args: Args): LiveKitHookResult {
       return false;
     }
 
+    // Idempotency: another concurrent click already kicked off a publish.
+    // Skip the duplicate getUserMedia() — iOS will sometimes hand back a
+    // dead second stream if asked again inside the same gesture window.
+    if (!desiredMicMutedRef.current) return false;
+
     // iOS gesture-preserving path. NO awaits before getUserMedia.
     // CRITICAL: pass plain `audio: true` on iOS. WebKit PWA freezes hard
     // when given a constraints object (echoCancellation/noiseSuppression/
@@ -453,7 +474,11 @@ export function useLiveKitRoom(args: Args): LiveKitHookResult {
       onTrackError?.("mic", err);
       return true;
     }
-  }, [status, isIOS, refreshParticipants, onTrackError]);
+    // `status` intentionally omitted from deps — the body uses room.state
+    // (live, not a React closure) and including `status` causes the callback
+    // to be re-created on every status transition, which sometimes lands on
+    // a click handler bound to a stale function.
+  }, [isIOS, refreshParticipants, onTrackError]);
 
   // --- Camera reconciliation ---------------------------------------------
   // Hard-won lessons on iOS Safari (PWA + browser):
@@ -626,7 +651,9 @@ export function useLiveKitRoom(args: Args): LiveKitHookResult {
       onTrackError?.("camera", err);
       return false;
     }
-  }, [status, isIOS, refreshParticipants, onTrackError]);
+    // Same rationale as toggleMic: omit `status` from deps so we don't
+    // rebuild this callback every status transition.
+  }, [isIOS, refreshParticipants, onTrackError]);
 
   // --- Screen share reconciliation ---------------------------------------
   useEffect(() => {
@@ -651,6 +678,24 @@ export function useLiveKitRoom(args: Args): LiveKitHookResult {
     };
   }, [screenSharing, status, refreshParticipants, onTrackError]);
 
+  // --- Hand-raise --------------------------------------------------------
+  // Set as a LiveKit participant attribute so it propagates via
+  // ParticipantAttributesChanged. No-op until we're connected. We do NOT
+  // throw on pre-connect calls because the parent doesn't know our
+  // status — the next reconnect will sync state via the local UI flag.
+  const setHandRaised = useCallback((raised: boolean) => {
+    const room = roomRef.current;
+    if (!room) return;
+    try {
+      room.localParticipant.setAttributes({ handRaised: raised ? "1" : "" });
+      // Optimistic local refresh so the tile updates before the server
+      // echoes the attribute back to us.
+      refreshParticipants();
+    } catch {
+      /* swallow — non-fatal */
+    }
+  }, [refreshParticipants]);
+
   return {
     status,
     error,
@@ -660,6 +705,7 @@ export function useLiveKitRoom(args: Args): LiveKitHookResult {
     screenPublished,
     toggleCamera,
     toggleMic,
+    setHandRaised,
   };
 }
 

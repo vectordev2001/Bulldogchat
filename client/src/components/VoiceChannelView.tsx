@@ -1,8 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Mic, MicOff, Video, VideoOff, MonitorUp, Hand, Settings, PhoneOff,
   Volume2, MoreHorizontal, ScreenShareOff, Signal, Users, Loader2, AlertTriangle, Sparkles,
-  Circle, Square, Play, History,
+  Circle, Square, Play, History, UserPlus, Phone, X, Search,
 } from "lucide-react";
 import { Avatar } from "./Avatar";
 import { motion } from "framer-motion";
@@ -45,6 +45,8 @@ interface CallParticipant {
   title: string | null;
   // Real LiveKit state (null when in demo/preview mode):
   live: RoomParticipantState | null;
+  /** Hand raised, sourced from LiveKit attributes in real mode. */
+  handRaised?: boolean;
 }
 
 function formatDuration(secs: number): string {
@@ -66,6 +68,7 @@ export function VoiceChannelView(props: Props) {
   const [previewMessage, setPreviewMessage] = useState<string | null>(null);
   const [livekitInfo, setLivekitInfo] = useState<{ token: string; wsUrl: string; roomName: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [showInvite, setShowInvite] = useState(false);
 
   const canRecord = me.role === "admin" || me.role === "foreman";
   const [showPast, setShowPast] = useState(false);
@@ -150,14 +153,15 @@ export function VoiceChannelView(props: Props) {
           role: member?.role ?? "field",
           title: member?.title ?? null,
           live: p,
+          handRaised: p.handRaised,
         };
       });
     }
     // Demo mode: pick a deterministic subset of org members for the stage.
     const others = orgMembers.filter(u => u.id !== me.id).slice(0, 4);
     return [
-      { id: me.id, name: me.name, hue: me.hue, role: me.role, title: me.title, live: null },
-      ...others.map(u => ({ id: u.id, name: u.name, hue: u.hue, role: u.role, title: u.title, live: null })),
+      { id: me.id, name: me.name, hue: me.hue, role: me.role, title: me.title, live: null, handRaised: myHandRaised },
+      ...others.map(u => ({ id: u.id, name: u.name, hue: u.hue, role: u.role, title: u.title, live: null, handRaised: false })),
     ];
   })();
 
@@ -328,6 +332,11 @@ export function VoiceChannelView(props: Props) {
               const speaking = m.live
                 ? (m.live.isSpeaking && !m.live.micMuted)
                 : (speakingId === m.id && !muted);
+              // Hand-raise: real participants come from LiveKit attribute;
+              // for the local user in preview mode we fall back to the UI flag.
+              const handUp = m.live
+                ? m.live.handRaised
+                : (isMe ? myHandRaised : false);
               return (
                 <ParticipantTile
                   key={m.id || m.live?.identity}
@@ -336,7 +345,7 @@ export function VoiceChannelView(props: Props) {
                   muted={muted}
                   hasVideo={hasVideo}
                   speaking={speaking}
-                  isHandRaised={isMe && myHandRaised}
+                  isHandRaised={handUp}
                 />
               );
             })}
@@ -426,7 +435,6 @@ export function VoiceChannelView(props: Props) {
             });
           }}
           title={myMicMuted ? "Unmute" : "Mute"}
-          disabled={!!livekitInfo && lk.status !== "connected"}
           activeIcon={<Mic className="w-5 h-5" />} inactiveIcon={<MicOff className="w-5 h-5" />} testid="button-call-mic" />
         <CallButton
           on={myVideoOn}
@@ -444,19 +452,50 @@ export function VoiceChannelView(props: Props) {
             });
           }}
           title={myVideoOn ? "Stop video" : "Start video"}
-          disabled={!!livekitInfo && lk.status !== "connected"}
           activeIcon={<Video className="w-5 h-5" />} inactiveIcon={<VideoOff className="w-5 h-5" />} testid="button-call-video" />
         <CallButton on={myScreenSharing} onClick={onToggleScreen} title={myScreenSharing ? "Stop sharing" : "Share screen"}
-          disabled={!!livekitInfo && lk.status !== "connected"}
           activeIcon={<MonitorUp className="w-5 h-5" />} inactiveIcon={<ScreenShareOff className="w-5 h-5" />} testid="button-call-screen" />
-        <CallButton on={myHandRaised} onClick={onToggleHand} title={myHandRaised ? "Lower hand" : "Raise hand"}
+        <CallButton on={myHandRaised}
+          onClick={() => {
+            // Sync to LiveKit so other participants see the hand. We also
+            // flip the parent flag so the local UI stays consistent even
+            // before the attribute echoes back from the server.
+            const next = !myHandRaised;
+            lk.setHandRaised(next);
+            onToggleHand();
+          }}
+          title={myHandRaised ? "Lower hand" : "Raise hand"}
           activeIcon={<Hand className="w-5 h-5" />} inactiveIcon={<Hand className="w-5 h-5" />} testid="button-call-hand" />
-        <CallButton on={false} neutral title="More" activeIcon={<MoreHorizontal className="w-5 h-5" />} inactiveIcon={<MoreHorizontal className="w-5 h-5" />} testid="button-call-more" />
-        <CallButton on={false} neutral title="Settings" activeIcon={<Settings className="w-5 h-5" />} inactiveIcon={<Settings className="w-5 h-5" />} testid="button-call-settings" />
+        <button
+          type="button"
+          onClick={() => setShowInvite(true)}
+          title="Invite to call"
+          data-testid="button-call-invite"
+          className="h-11 px-3 rounded-full bg-[hsl(232_50%_18%)] hover:bg-[hsl(232_50%_24%)] text-white flex items-center gap-1.5 transition-colors"
+        >
+          <UserPlus className="w-4 h-4" />
+          <span className="text-xs font-semibold hidden sm:inline">Invite</span>
+        </button>
+        <CallButton on={false} neutral disabled title="More — coming soon" activeIcon={<MoreHorizontal className="w-5 h-5" />} inactiveIcon={<MoreHorizontal className="w-5 h-5" />} testid="button-call-more" />
+        <CallButton on={false} neutral disabled title="Settings — coming soon" activeIcon={<Settings className="w-5 h-5" />} inactiveIcon={<Settings className="w-5 h-5" />} testid="button-call-settings" />
         <div className="w-3" />
         <button
           type="button"
-          onClick={onLeave}
+          onClick={() => {
+            // Hard-leave: clear LiveKit info first so the hook's cleanup
+            // effect tears down the room (stops mic/cam, releases iOS audio
+            // session), then reset the local control flags so the next time
+            // we join we start from a clean state, then let the parent route
+            // us back to the default channel.
+            setLivekitInfo(null);
+            // If we were holding the hand up, drop it before we go so it
+            // doesn't carry over to the next room.
+            if (myHandRaised) onToggleHand();
+            if (!myMicMuted) onToggleMic();
+            if (myVideoOn) onToggleVideo();
+            if (myScreenSharing) onToggleScreen();
+            onLeave();
+          }}
           title="Leave call"
           data-testid="button-call-leave"
           className="h-11 px-5 rounded-full bg-vs-red hover:bg-[hsl(2_75%_60%)] text-white flex items-center gap-2 transition-colors shadow-lg shadow-red-900/30"
@@ -465,7 +504,229 @@ export function VoiceChannelView(props: Props) {
           <span className="text-sm font-semibold">Leave</span>
         </button>
       </div>
+
+      {showInvite && (
+        <InviteModal
+          channelId={channel.id}
+          channelName={channel.name}
+          me={me}
+          orgMembers={orgMembers}
+          inCallIds={callParticipants.map(p => p.id).filter(Boolean)}
+          onClose={() => setShowInvite(false)}
+        />
+      )}
     </section>
+  );
+}
+
+/**
+ * Invite modal — shows org members with online/offline status; for online
+ * members it sends a PWA push "ringing" notification, for offline members
+ * with a phone number it triggers a Twilio SIP dial-out that bridges them
+ * into the LiveKit room.
+ */
+function InviteModal({
+  channelId, channelName, me, orgMembers, inCallIds, onClose,
+}: {
+  channelId: number;
+  channelName: string;
+  me: ApiUser;
+  orgMembers: ApiUser[];
+  inCallIds: number[];
+  onClose: () => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [picked, setPicked] = useState<Set<number>>(new Set());
+  const [phoneNumbers, setPhoneNumbers] = useState<string[]>([]);
+  const [phoneInput, setPhoneInput] = useState("");
+
+  // Filter out the current user and people already in the call. We do
+  // NOT filter by online status here so admins can phone-bridge offline
+  // members in the same picker.
+  const candidates = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return orgMembers
+      .filter(u => u.id !== me.id && !inCallIds.includes(u.id))
+      .filter(u => !q || u.name.toLowerCase().includes(q) || (u.email ?? "").toLowerCase().includes(q))
+      .sort((a, b) => {
+        // Online users first so the most likely invites surface at top.
+        const ao = (a.status === "online" ? 0 : 1);
+        const bo = (b.status === "online" ? 0 : 1);
+        if (ao !== bo) return ao - bo;
+        return a.name.localeCompare(b.name);
+      });
+  }, [orgMembers, me.id, inCallIds, query]);
+
+  const inviteMutation = useMutation({
+    mutationFn: async () => apiRequest<{ invited: number; dialed: number; warnings?: string[] }>(
+      "POST",
+      `/api/channels/${channelId}/invite`,
+      {
+        userIds: Array.from(picked),
+        phoneNumbers: phoneNumbers,
+      },
+    ),
+    onSuccess: (res) => {
+      // Briefly show the count then close. We could surface warnings
+      // but for a field-crew app a green check is enough; admins can
+      // check the server log if a dial-out fails.
+      onClose();
+    },
+  });
+
+  function togglePick(id: number) {
+    setPicked(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function addPhone() {
+    const raw = phoneInput.trim();
+    if (!raw) return;
+    // Normalize: keep + and digits only. Twilio rejects formatted numbers.
+    const cleaned = raw.startsWith("+") ? "+" + raw.slice(1).replace(/\D/g, "") : "+1" + raw.replace(/\D/g, "");
+    if (cleaned.length < 9) return;
+    if (phoneNumbers.includes(cleaned)) { setPhoneInput(""); return; }
+    setPhoneNumbers(prev => [...prev, cleaned]);
+    setPhoneInput("");
+  }
+
+  const totalSelected = picked.size + phoneNumbers.length;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+      onClick={onClose}
+      data-testid="modal-invite-overlay"
+    >
+      <div
+        className="w-full max-w-lg max-h-[80vh] flex flex-col bg-[hsl(232_55%_13%)] border border-[hsl(232_40%_22%)] rounded-xl shadow-2xl overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+        data-testid="modal-invite"
+      >
+        <div className="px-5 py-4 border-b border-[hsl(232_40%_22%)] flex items-center justify-between">
+          <div>
+            <div className="text-base font-display text-white">Invite to {channelName}</div>
+            <div className="text-[11px] font-mono uppercase tracking-wider text-[hsl(0_0%_55%)]">Push to online users · Phone-bridge for offline</div>
+          </div>
+          <button type="button" onClick={onClose} className="w-8 h-8 rounded-md hover:bg-[hsl(232_45%_22%)] flex items-center justify-center text-[hsl(0_0%_70%)]" title="Close" data-testid="button-invite-close">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        <div className="px-5 py-3 border-b border-[hsl(232_40%_22%)] bg-[hsl(232_55%_11%)]">
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[hsl(0_0%_55%)]" />
+            <input
+              type="text"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search by name or email"
+              className="w-full h-9 pl-8 pr-3 rounded-md bg-[hsl(232_50%_18%)] border border-[hsl(232_40%_25%)] text-white text-sm placeholder:text-[hsl(0_0%_45%)] focus:outline-none focus:border-vs-blue"
+              data-testid="input-invite-search"
+            />
+          </div>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-2 py-2">
+          {candidates.length === 0 ? (
+            <div className="px-3 py-8 text-center text-xs text-[hsl(0_0%_55%)]" data-testid="text-invite-empty">
+              No one to invite— everyone is already on the line.
+            </div>
+          ) : (
+            candidates.map(u => {
+              const online = u.status === "online";
+              const checked = picked.has(u.id);
+              return (
+                <button
+                  key={u.id}
+                  type="button"
+                  onClick={() => togglePick(u.id)}
+                  className={`w-full flex items-center gap-3 px-3 py-2 rounded-md text-left hover:bg-[hsl(232_45%_18%)] ${checked ? "bg-[hsl(218_100%_68%/0.12)] ring-1 ring-[hsl(218_100%_68%/0.4)]" : ""}`}
+                  data-testid={`button-invite-pick-${u.id}`}
+                >
+                  <Avatar name={u.name} hue={u.hue} size={28} />
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm text-white truncate flex items-center gap-2">
+                      {u.name}
+                      <span className={`inline-block w-1.5 h-1.5 rounded-full ${online ? "bg-vs-green" : "bg-[hsl(0_0%_40%)]"}`} />
+                    </div>
+                    <div className="text-[11px] text-[hsl(0_0%_60%)] truncate flex items-center gap-2">
+                      {online ? <span className="text-vs-green">Online · will receive push</span> : (
+                        // PublicUser from the chat API doesn't include phone
+                        // — the server resolves the phone from auth at
+                        // invite time. Show a hint instead of the number.
+                        <span className="flex items-center gap-1"><Phone className="w-3 h-3" /> Offline · phone-bridge if available</span>
+                      )}
+                    </div>
+                  </div>
+                  <span className={`w-5 h-5 rounded border flex items-center justify-center ${checked ? "bg-vs-blue border-vs-blue" : "border-[hsl(232_40%_30%)]"}`}>
+                    {checked && <span className="text-[10px] text-white font-bold">✓</span>}
+                  </span>
+                </button>
+              );
+            })
+          )}
+        </div>
+
+        <div className="px-5 py-3 border-t border-[hsl(232_40%_22%)] bg-[hsl(232_55%_11%)]">
+          <div className="text-[11px] font-mono uppercase tracking-wider text-[hsl(0_0%_55%)] mb-1.5">Or dial a phone number</div>
+          <div className="flex items-center gap-2">
+            <input
+              type="tel"
+              value={phoneInput}
+              onChange={(e) => setPhoneInput(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addPhone(); } }}
+              placeholder="+1 555 123 4567"
+              className="flex-1 h-9 px-3 rounded-md bg-[hsl(232_50%_18%)] border border-[hsl(232_40%_25%)] text-white text-sm placeholder:text-[hsl(0_0%_45%)] focus:outline-none focus:border-vs-blue"
+              data-testid="input-invite-phone"
+            />
+            <button type="button" onClick={addPhone} className="h-9 px-3 rounded-md bg-[hsl(232_50%_18%)] hover:bg-[hsl(232_50%_24%)] text-white text-xs font-semibold" data-testid="button-invite-phone-add">
+              Add
+            </button>
+          </div>
+          {phoneNumbers.length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {phoneNumbers.map(p => (
+                <span key={p} className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-[hsl(218_100%_68%/0.15)] border border-[hsl(218_100%_68%/0.35)] text-vs-blue-light text-[11px] font-mono">
+                  {p}
+                  <button type="button" onClick={() => setPhoneNumbers(prev => prev.filter(x => x !== p))} className="hover:text-white" title="Remove">
+                    <X className="w-3 h-3" />
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="px-5 py-3 border-t border-[hsl(232_40%_22%)] flex items-center justify-between bg-[hsl(232_55%_13%)]">
+          <div className="text-xs text-[hsl(0_0%_70%)]">
+            {totalSelected === 0 ? "Nothing selected" : `${totalSelected} to invite`}
+          </div>
+          <div className="flex items-center gap-2">
+            <button type="button" onClick={onClose} className="h-9 px-4 rounded-md bg-[hsl(232_45%_18%)] hover:bg-[hsl(232_45%_24%)] text-white text-sm" data-testid="button-invite-cancel">Cancel</button>
+            <button
+              type="button"
+              onClick={() => inviteMutation.mutate()}
+              disabled={totalSelected === 0 || inviteMutation.isPending}
+              className="h-9 px-4 rounded-md bg-vs-blue hover:bg-vs-blue-light disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-semibold flex items-center gap-1.5"
+              data-testid="button-invite-send"
+            >
+              {inviteMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <UserPlus className="w-3.5 h-3.5" />}
+              Send invites
+            </button>
+          </div>
+        </div>
+        {inviteMutation.isError && (
+          <div className="px-5 pb-3 text-[11px] text-[hsl(2_85%_72%)]" data-testid="text-invite-error">
+            Invite failed — check server logs or try again.
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -652,7 +913,9 @@ function CallButton({
     <button
       type="button"
       onClick={onClick}
-      title={disabled ? `${title} (waiting for call to connect)` : title}
+      // If the title already explains the disabled reason (e.g. "— coming soon"),
+      // use it as-is; otherwise default to the call-connect hint.
+      title={disabled && !/(coming soon|—)/i.test(title) ? `${title} (waiting for call to connect)` : title}
       data-testid={testid}
       disabled={disabled}
       aria-disabled={disabled}

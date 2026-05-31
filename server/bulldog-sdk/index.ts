@@ -28,6 +28,8 @@ export interface BulldogUser {
   name: string;
   role: string;
   department: string | null;
+  /** E.164 phone number, optional — used for SIP dial-out invites. */
+  phone?: string | null;
 }
 
 declare module "express-serve-static-core" {
@@ -103,6 +105,7 @@ export function bulldogAuth(options: AuthOptions): RequestHandler {
         name?: string;
         role?: string;
         department?: string | null;
+        phone?: string | null;
       };
       if (!claims.sub || !claims.email || !claims.role) {
         if (options.optional) return next();
@@ -117,6 +120,7 @@ export function bulldogAuth(options: AuthOptions): RequestHandler {
         name: claims.name || claims.email,
         role: claims.role,
         department: claims.department ?? null,
+        phone: claims.phone ?? null,
       };
       next();
     } catch (err) {

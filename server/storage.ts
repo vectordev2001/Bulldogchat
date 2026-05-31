@@ -54,7 +54,7 @@ export interface IStorage {
   listUsersByOrg(orgId: number): User[];
   listUsersByIds(ids: number[]): User[];
   updateUserLastSeen(id: number): void;
-  updateUser(id: number, patch: Partial<Pick<User, "name" | "title" | "avatarUrl" | "role" | "status" | "hue">>): User | undefined;
+  updateUser(id: number, patch: Partial<Pick<User, "name" | "title" | "avatarUrl" | "role" | "status" | "hue" | "phone">>): User | undefined;
 
   /* Projects */
   listProjectsForUser(userId: number): Project[];

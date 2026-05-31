@@ -14,6 +14,7 @@ import { runMigrations } from "./migrate";
 import { runSeed } from "./seed";
 import { registerV2Routes, parseMentions } from "./routes-v2";
 import { bulldogSsoBridge } from "./bulldog-sso";
+import { dialPhoneIntoRoom, sipConfigured } from "./sip";
 
 const APP_VERSION = "1.0.0";
 
@@ -550,6 +551,92 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
       userId: u.id, userName: u.name, roomName, canPublish: true,
     });
     res.json({ token, ws_url: process.env.LIVEKIT_WS_URL, room_name: roomName });
+  });
+
+  // ── CHANNEL CALL INVITE ──
+  // Invite logged-in users (push notification) and/or external phone numbers
+  // (Twilio SIP dial-out via LiveKit) into a channel's voice room.
+  app.post("/api/channels/:id/invite", requireAuth, async (req, res) => {
+    const u = (req as AuthedRequest).user;
+    const channelId = Number(req.params.id);
+    const access = userCanAccessChannel(u.id, u.orgId, channelId);
+    if (!access) return res.status(404).json({ message: "Not found" });
+
+    const rawUserIds: unknown = req.body?.userIds;
+    const rawPhones: unknown = req.body?.phoneNumbers;
+    const userIds: number[] = Array.isArray(rawUserIds)
+      ? Array.from(new Set(rawUserIds.map((x) => Number(x)).filter((n) => Number.isFinite(n) && n > 0 && n !== u.id)))
+      : [];
+    const phoneNumbers: string[] = Array.isArray(rawPhones)
+      ? Array.from(new Set(rawPhones.map((x) => String(x).trim()).filter((s) => s.length > 0)))
+      : [];
+
+    if (userIds.length === 0 && phoneNumbers.length === 0) {
+      return res.status(400).json({ message: "userIds[] or phoneNumbers[] required" });
+    }
+
+    const roomName = `vector-${u.orgId}-channel-${channelId}`;
+    const channelName = access.channel?.name ?? "voice channel";
+    const warnings: string[] = [];
+    let invited = 0;
+    let dialed = 0;
+
+    const onlineThresholdMs = 2 * 60 * 1000;
+    const now = Date.now();
+
+    // Logged-in users: push if online, dial phone if offline + has phone
+    for (const id of userIds) {
+      const target = storage.getUser(id);
+      if (!target || target.orgId !== u.orgId) {
+        warnings.push(`user ${id} not found or out of org`);
+        continue;
+      }
+      if (target.deactivated) {
+        warnings.push(`user ${id} is deactivated`);
+        continue;
+      }
+      const lastSeen = target.lastSeenAt ? new Date(target.lastSeenAt).getTime() : 0;
+      const isOnline = target.status === "online" || (now - lastSeen) < onlineThresholdMs;
+
+      if (isOnline) {
+        void sendNotificationToUsers([id], {
+          title: `\ud83d\udcde ${u.name} is inviting you`,
+          body: channelName,
+          url: `/?channel=${channelId}`,
+          tag: `invite-${channelId}`,
+        });
+        invited += 1;
+      } else if (target.phone && sipConfigured()) {
+        try {
+          await dialPhoneIntoRoom({ phone: target.phone, roomName, displayName: target.name });
+          dialed += 1;
+        } catch (err: any) {
+          warnings.push(`dial ${target.name}: ${err?.message ?? "failed"}`);
+        }
+      } else if (target.phone && !sipConfigured()) {
+        warnings.push(`${target.name} is offline and SIP is not configured`);
+      } else {
+        warnings.push(`${target.name} is offline and has no phone on file`);
+      }
+    }
+
+    // Raw phone numbers: dial directly
+    if (phoneNumbers.length > 0) {
+      if (!sipConfigured()) {
+        warnings.push("SIP not configured — phone dial-out skipped");
+      } else {
+        for (const phone of phoneNumbers) {
+          try {
+            await dialPhoneIntoRoom({ phone, roomName, displayName: phone });
+            dialed += 1;
+          } catch (err: any) {
+            warnings.push(`dial ${phone}: ${err?.message ?? "failed"}`);
+          }
+        }
+      }
+    }
+
+    res.json({ invited, dialed, warnings });
   });
 
   // ── DIRECT (1:1) CALLS ──

@@ -30,6 +30,10 @@ export const users = sqliteTable("users", {
   role: text("role", { enum: userRoles }).notNull().default("field"),
   status: text("status").notNull().default("online"),
   deactivated: integer("deactivated", { mode: "boolean" }).notNull().default(false),
+  // E.164 phone number for offline call-bridging via Twilio SIP. Synced
+  // from bulldog-auth during the SSO bridge so we don't have to round-
+  // trip on every invite.
+  phone: text("phone"),
   createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
   lastSeenAt: integer("last_seen_at", { mode: "timestamp" }),
 });

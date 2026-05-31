@@ -272,6 +272,19 @@ export function runMigrations() {
     console.warn("[migrate] FTS5 setup skipped:", e);
   }
 
+  // v5: phone column on users — for Twilio SIP dial-out invites. Synced
+  // from bulldog-auth during the SSO bridge.
+  try {
+    const cols = rawDb.prepare(`PRAGMA table_info(users)`).all() as Array<{ name: string }>;
+    const have = new Set(cols.map(c => c.name));
+    if (!have.has("phone")) {
+      rawDb.exec(`ALTER TABLE users ADD COLUMN phone TEXT;`);
+      console.log("[migrate] Added users.phone column");
+    }
+  } catch (e) {
+    console.warn("[migrate] users.phone add skipped:", e);
+  }
+
   // Admin email rebrand: if prod has the old email, migrate it.
   try {
     const oldRow = rawDb.prepare(`SELECT id FROM users WHERE email = ?`).get("admin@vectorservicesus.com") as { id: number } | undefined;

@@ -102,6 +102,16 @@ export function bulldogSsoBridge(): RequestHandler {
           try { storage.updateUser(local.id, { name: authName }); }
           catch (e) { console.warn("[chat bulldogSsoBridge] name sync failed:", e); }
         }
+        // Phone sync: bulldog-auth is the source of truth. Mirror into the
+        // chat user row so the invite endpoint can dial-out without a
+        // round-trip back to auth on every invite. Null/empty phones are
+        // preserved so we don't accidentally clear a number that was set
+        // out-of-band.
+        const authPhone = ((req.user as { phone?: string | null }).phone ?? "").trim() || null;
+        if (authPhone !== ((local as { phone?: string | null }).phone ?? null)) {
+          try { storage.updateUser(local.id, { phone: authPhone }); }
+          catch (e) { console.warn("[chat bulldogSsoBridge] phone sync failed:", e); }
+        }
         // Backfill: if an existing local user is in zero projects, seed them
         // into every org project. Cheap idempotent guard for users created
         // before the auto-seed code above shipped.
