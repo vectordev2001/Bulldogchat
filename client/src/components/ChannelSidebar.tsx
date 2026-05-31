@@ -1,4 +1,4 @@
-import { Hash, Volume2, ChevronDown, Plus, Mic, MicOff, Headphones, Settings, Search, Shield, ShieldCheck, Globe, Building2, Users, Lock } from "lucide-react";
+import { Hash, Volume2, ChevronDown, Plus, Mic, MicOff, Headphones, Settings, Search, Shield, ShieldCheck, Globe, Building2, Users, Lock, ClipboardList } from "lucide-react";
 import { useLocation } from "wouter";
 import { useState, useMemo } from "react";
 import { Avatar } from "./Avatar";
@@ -16,11 +16,12 @@ interface Props {
   onToggleMic: () => void;
   onToggleDeafen: () => void;
   onCreateChannel?: () => void;
+  onOpenWorkObjects?: () => void;
 }
 
 export function ChannelSidebar({
   project, channels, projectMembers, activeChannelId, onSelectChannel,
-  me, myMicMuted, myDeafened, onToggleMic, onToggleDeafen, onCreateChannel,
+  me, myMicMuted, myDeafened, onToggleMic, onToggleDeafen, onCreateChannel, onOpenWorkObjects,
 }: Props) {
   // Any signed-in user can create a channel. Visibility is controlled by
   // the scope they pick in the dialog (global / entity / team / private).
@@ -99,6 +100,24 @@ export function ChannelSidebar({
             />
           ))}
         </Section>
+
+        {/* Org-wide Work Objects launcher — separate from channels so it reads
+            as a workspace tool, not another room. */}
+        {onOpenWorkObjects && (
+          <div className="pt-1">
+            <div className="h-px bg-[hsl(232_40%_22%)] mx-1.5 mb-2" />
+            <button
+              type="button"
+              onClick={onOpenWorkObjects}
+              data-testid="button-open-work-objects"
+              className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-sm text-[hsl(0_0%_75%)] hover:bg-[hsl(232_45%_25%)] hover:text-white transition-colors"
+            >
+              <ClipboardList className="w-4 h-4 shrink-0 text-vs-red" />
+              <span className="truncate font-medium">Work Objects</span>
+              <span className="ml-auto text-[10px] font-mono text-[hsl(0_0%_45%)]">org</span>
+            </button>
+          </div>
+        )}
       </div>
 
       {/* User card */}

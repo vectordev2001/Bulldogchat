@@ -12,6 +12,7 @@ import { TextChannelView } from "@/components/TextChannelView";
 import { VoiceChannelView } from "@/components/VoiceChannelView";
 import { MemberList } from "@/components/MemberList";
 import { WorkObjectPanel } from "@/components/WorkObjectPanel";
+import { WorkObjectsListDialog } from "@/components/WorkObjectsListDialog";
 import { VectorLogo } from "@/components/VectorLogo";
 import type { ApiProject, ApiChannel, ApiMessage, ApiUser } from "@/types/api";
 
@@ -29,6 +30,8 @@ export default function Home() {
   const [membersOpen, setMembersOpen] = useState(true);
   // Right-rail work objects panel — opt-in; toggled from channel header.
   const [workObjectsOpen, setWorkObjectsOpen] = useState(false);
+  // Org-wide Work Objects list modal — launched from sidebar.
+  const [workObjectsListOpen, setWorkObjectsListOpen] = useState(false);
 
   // Self-call state
   // Default to muted on iOS so we never fire getUserMedia({audio:true})
@@ -244,6 +247,15 @@ export default function Home() {
             onToggleMic={() => setMyMicMuted((v) => !v)}
             onToggleDeafen={() => setMyDeafened((v) => !v)}
             onCreateChannel={() => setCreateChannelOpen(true)}
+            onOpenWorkObjects={() => setWorkObjectsListOpen(true)}
+          />
+        )}
+        {user && (
+          <WorkObjectsListDialog
+            open={workObjectsListOpen}
+            onClose={() => setWorkObjectsListOpen(false)}
+            me={user as ApiUser}
+            orgMembers={members}
           />
         )}
         {activeProject && user && (
