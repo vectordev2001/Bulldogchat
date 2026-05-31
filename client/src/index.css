@@ -163,9 +163,16 @@
     font-feature-settings: "ss01", "ss02", "cv11";
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
-    /* Honour safe-area-inset so notch/home-indicator don't overlap UI. */
+    /* box-sizing: border-box is already set by Tailwind Preflight on *.
+       Safe-area handling: we ONLY pad the top here (for the notch). The
+       bottom inset is owned by the page's bottom-most component (e.g. the
+       call control bar pads itself by env(safe-area-inset-bottom)) so
+       inner scrolling regions can reach all the way to the home
+       indicator zone without leaving a dead bar of body padding that
+       eats the viewport. Doubling top+bottom safe-area on the body was
+       why the bottom call bar disappeared on iPhone PWA — body became
+       taller than html, and html overflow:hidden clipped the bar. */
     padding-top: env(safe-area-inset-top);
-    padding-bottom: env(safe-area-inset-bottom);
     padding-left: env(safe-area-inset-left);
     padding-right: env(safe-area-inset-right);
     overscroll-behavior: none;

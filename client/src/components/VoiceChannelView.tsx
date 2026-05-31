@@ -443,13 +443,20 @@ export function VoiceChannelView(props: Props) {
         </div>
       )}
       {/* Bottom control bar.
-          iPhone budget (~360px usable after PWA insets): with full padding
-          + gap + 7 h-11 buttons + an Invite pill, the row was ~550px wide,
-          forcing iOS Safari to zoom the whole page out to fit. We tighten
-          padding/gap on mobile and hide the disabled placeholder buttons
-          (More / Settings) so the essentials (mic / cam / screen-if-supported
-          / hand / invite / leave) fit at native scale. */}
-      <div className="shrink-0 px-2 sm:px-6 py-3 border-t border-[hsl(232_40%_22%)] bg-[hsl(232_55%_11%)] flex items-center justify-center gap-1 sm:gap-2 flex-wrap" data-testid="bar-call-controls">
+          iPhone PWA: we use `sticky bottom-0` so the bar is glued to the
+          viewport bottom regardless of how flex sizing in the parent
+          chain resolves. Even if a sibling overflows the section, this
+          bar still paints in view. `z-30` keeps it above the participant
+          grid / screen-share preview. We also explicitly pad the bottom
+          by env(safe-area-inset-bottom) so the home indicator on iPhones
+          doesn't sit on top of the buttons.
+
+          iPhone width budget (~360px usable): with full padding + gap +
+          7 h-11 buttons + an Invite pill, the row was ~550px wide, which
+          forced iOS to scale the page out. We tighten padding/gap on
+          mobile and hide disabled placeholder buttons (More / Settings)
+          so the essentials fit at native scale. */}
+      <div className="sticky bottom-0 z-30 shrink-0 px-2 sm:px-6 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] border-t border-[hsl(232_40%_22%)] bg-[hsl(232_55%_11%)] flex items-center justify-center gap-1 sm:gap-2 flex-wrap" data-testid="bar-call-controls">
         <CallButton
           on={!myMicMuted}
           // iOS Safari mic gesture path: same pattern as camera. The
