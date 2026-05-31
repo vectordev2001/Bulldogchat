@@ -20,6 +20,7 @@
  *   LIVEKIT_SIP_TRUNK_ID                                  (optional — provisioned automatically if absent)
  */
 import { SipClient } from "livekit-server-sdk";
+import { SIPTransport } from "@livekit/protocol";
 
 let cachedClient: SipClient | null = null;
 let cachedTrunkId: string | null = null;
@@ -112,7 +113,10 @@ export async function ensureSipTrunk(): Promise<string | null> {
       {
         authUsername: process.env.TWILIO_ACCOUNT_SID!,
         authPassword: process.env.TWILIO_AUTH_TOKEN!,
-        transport: 1 /* SIP_TRANSPORT_TCP — Twilio prefers TCP/TLS */,
+        // Twilio Elastic SIP Trunking termination prefers TLS for
+        // outbound calls; AUTO lets LiveKit negotiate if the address
+        // doesn't support TLS.
+        transport: SIPTransport.SIP_TRANSPORT_AUTO,
       },
     );
     cachedTrunkId = created.sipTrunkId ?? null;
