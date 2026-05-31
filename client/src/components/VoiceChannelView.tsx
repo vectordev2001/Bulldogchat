@@ -142,22 +142,30 @@ export function VoiceChannelView(props: Props) {
   // deterministic subset of org members for the stage so users still
   // see a populated UI when LK isn't configured.
   const callParticipants: CallParticipant[] = (() => {
-    if (livekitInfo && lk.participants.length > 0) {
-      // Real mode: LiveKit is the source of truth for who's in the call.
-      return lk.participants.map((p): CallParticipant => {
-        const member = orgMembers.find(u => u.id === p.userId);
-        return {
-          id: p.userId || (p.isLocal ? me.id : 0),
-          name: member?.name ?? p.name,
-          hue: member?.hue ?? 210,
-          role: member?.role ?? "field",
-          title: member?.title ?? null,
-          live: p,
-          handRaised: p.handRaised,
-        };
-      });
+    // Real mode (livekitInfo present): LiveKit is the ONLY source of truth
+    // for who is in the call. While the room is still connecting and the
+    // participant list hasn't populated yet, show just the local user so
+    // we don't briefly render ghost org members from the demo fallback.
+    if (livekitInfo) {
+      if (lk.participants.length > 0) {
+        return lk.participants.map((p): CallParticipant => {
+          const member = orgMembers.find(u => u.id === p.userId);
+          return {
+            id: p.userId || (p.isLocal ? me.id : 0),
+            name: member?.name ?? p.name,
+            hue: member?.hue ?? 210,
+            role: member?.role ?? "field",
+            title: member?.title ?? null,
+            live: p,
+            handRaised: p.handRaised,
+          };
+        });
+      }
+      // LK connecting: show only me so we don't flash ghosts.
+      return [{ id: me.id, name: me.name, hue: me.hue, role: me.role, title: me.title, live: null, handRaised: myHandRaised }];
     }
-    // Demo mode: pick a deterministic subset of org members for the stage.
+    // Demo mode (no LK creds): show a deterministic subset of org members
+    // so the stage is populated for screenshots / admin previews.
     const others = orgMembers.filter(u => u.id !== me.id).slice(0, 4);
     return [
       { id: me.id, name: me.name, hue: me.hue, role: me.role, title: me.title, live: null, handRaised: myHandRaised },
