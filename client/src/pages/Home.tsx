@@ -22,6 +22,10 @@ export default function Home() {
   const [channelByProject, setChannelByProject] = useState<Record<number, number>>({});
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [createChannelOpen, setCreateChannelOpen] = useState(false);
+  // Right-rail members list. On large screens (xl+) it's shown by default;
+  // the header Users icon lets the user collapse/expand it explicitly so
+  // mid-size screens can also see the roster on demand.
+  const [membersOpen, setMembersOpen] = useState(true);
 
   // Self-call state
   // Default to muted on iOS so we never fire getUserMedia({audio:true})
@@ -48,6 +52,14 @@ export default function Home() {
   const membersQ = useQuery<ApiUser[]>({
     queryKey: ["/api/org/members"],
     enabled: !!user,
+    // Refetch every 30s so the roster's online/offline state stays
+    // accurate. Presence is server-derived from lastSeenAt, so polling
+    // is how the client picks up that someone went idle.
+    refetchInterval: 30_000,
+    refetchIntervalInBackground: false,
+    // Also refetch when the user comes back to the tab — common case
+    // where someone left for an hour and the roster looks stale.
+    refetchOnWindowFocus: true,
   });
 
   // Pick a default project once data is loaded
@@ -184,7 +196,14 @@ export default function Home() {
   }
 
   return (
-    <div className="min-h-screen flex bg-[hsl(232_60%_9%)] text-white relative">
+    // Use h-[100dvh] (dynamic viewport height) instead of min-h-screen so the
+    // app box matches the visible viewport on mobile — the URL bar and bottom
+    // chrome on iOS Safari change the viewport size, and 100vh ignores that.
+    // overflow-hidden on the root forces every scrolling region (message
+    // list, sidebar) to be the *inner* `flex-1 overflow-y-auto` panel,
+    // which keeps the composer toolbar pinned at the bottom regardless of
+    // window height.
+    <div className="h-[100dvh] flex bg-[hsl(232_60%_9%)] text-white relative overflow-hidden">
       {/* Mobile sidebar overlay */}
       <AnimatePresence>
         {mobileNavOpen && (
@@ -288,13 +307,16 @@ export default function Home() {
             loading={messagesQ.isLoading}
             me={user as ApiUser}
             orgMembers={members}
+            membersOpen={membersOpen}
+            onToggleMembers={() => setMembersOpen((v) => !v)}
           />
         )}
       </main>
 
-      {/* Right rail: members (desktop only, on text channels) */}
-      {activeChannel?.type === "text" && (
-        <div className="hidden xl:flex">
+      {/* Right rail: members on text channels. xl+ shows by default; on
+          smaller screens the header Users toggle reveals it explicitly. */}
+      {activeChannel?.type === "text" && membersOpen && (
+        <div className="hidden md:flex">
           <MemberList members={members} meId={(user as ApiUser)?.id} />
         </div>
       )}

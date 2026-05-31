@@ -1,4 +1,4 @@
-import { Hash, Pin, Plus, Smile, Paperclip, Send, Bell, Users, Search, Inbox, HelpCircle, Loader2, MessageSquare, X, Reply, Phone, Video } from "lucide-react";
+import { Hash, Pin, Plus, Smile, Paperclip, Send, Users, Search, Loader2, MessageSquare, X, Reply, Phone, Video } from "lucide-react";
 import { ChannelCallDialog } from "@/components/ChannelCallDialog";
 import { useCalls } from "@/lib/CallContext";
 import { Avatar } from "./Avatar";
@@ -17,6 +17,8 @@ interface Props {
   loading: boolean;
   me: ApiUser;
   orgMembers: ApiUser[];
+  membersOpen?: boolean;
+  onToggleMembers?: () => void;
 }
 
 const ROLE_COLOR: Record<UserRole, string> = {
@@ -50,7 +52,7 @@ interface MentionMatch {
   startIdx: number;
 }
 
-export function TextChannelView({ channel, messages, loading, me, orgMembers }: Props) {
+export function TextChannelView({ channel, messages, loading, me, orgMembers, membersOpen, onToggleMembers }: Props) {
   const [draft, setDraft] = useState("");
   const [pendingAtts, setPendingAtts] = useState<ApiAttachment[]>([]);
   const [uploading, setUploading] = useState(false);
@@ -66,6 +68,21 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers }: 
   const scrollRef = useRef<HTMLDivElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const pinnedBannerRef = useRef<HTMLDivElement>(null);
+
+  const scrollToPinned = useCallback(() => {
+    // Pinned banner sits at the top of the message area; flash + scroll the
+    // message list to top so the banner is in view and the user notices it.
+    if (scrollRef.current) scrollRef.current.scrollTop = 0;
+    const el = pinnedBannerRef.current;
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth", block: "start" });
+      el.classList.add("ring-2", "ring-vs-red");
+      window.setTimeout(() => {
+        el.classList.remove("ring-2", "ring-vs-red");
+      }, 1200);
+    }
+  }, []);
 
   const sendMutation = useMutation({
     mutationFn: async (payload: { content: string; attachmentIds?: string[] }) =>
@@ -215,7 +232,11 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers }: 
 
   return (
     <section
-      className="flex-1 flex flex-col min-w-0 bg-background relative"
+      // min-h-0 is required so the inner `flex-1 overflow-y-auto` message
+      // list can shrink and scroll instead of pushing the composer below
+      // the viewport. Without it, flex children default to min-height:auto
+      // which overflows the parent.
+      className="flex-1 flex flex-col min-w-0 min-h-0 bg-background relative"
       onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
       onDragLeave={() => setDragOver(false)}
       onDrop={onDrop}
@@ -253,11 +274,22 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers }: 
             <Video className="w-4 h-4" />
           </button>
           <span className="w-px h-5 bg-[hsl(232_40%_22%)] mx-1" />
-          <HeaderIcon title="Notifications"><Bell className="w-4 h-4" /></HeaderIcon>
-          <HeaderIcon title="Pinned"><Pin className="w-4 h-4" /></HeaderIcon>
-          <HeaderIcon title="Members"><Users className="w-4 h-4" /></HeaderIcon>
-          <HeaderIcon title="Inbox"><Inbox className="w-4 h-4" /></HeaderIcon>
-          <HeaderIcon title="Help"><HelpCircle className="w-4 h-4" /></HeaderIcon>
+          <HeaderIcon
+            title={pinned ? "Jump to pinned message" : "No pinned message"}
+            onClick={pinned ? scrollToPinned : undefined}
+            disabled={!pinned}
+            data-testid="button-pinned"
+          >
+            <Pin className="w-4 h-4" />
+          </HeaderIcon>
+          <HeaderIcon
+            title={membersOpen ? "Hide members" : "Show members"}
+            onClick={onToggleMembers}
+            active={!!membersOpen}
+            data-testid="button-members-toggle"
+          >
+            <Users className="w-4 h-4" />
+          </HeaderIcon>
           <button
             type="button"
             onClick={() => setSearchOpen(true)}
@@ -273,7 +305,7 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers }: 
       </header>
 
       {pinned && (
-        <div className="px-4 py-2 bg-[hsl(2_70%_55%/0.08)] border-b border-[hsl(2_70%_55%/0.25)] flex items-start gap-2 text-xs">
+        <div ref={pinnedBannerRef} className="px-4 py-2 bg-[hsl(2_70%_55%/0.08)] border-b border-[hsl(2_70%_55%/0.25)] flex items-start gap-2 text-xs transition-shadow rounded-sm">
           <Pin className="w-3.5 h-3.5 text-vs-red mt-0.5 shrink-0" />
           <div className="text-[hsl(0_0%_82%)] leading-snug">
             <span className="text-vs-red font-semibold">Pinned · {pinned.authorName}: </span>
@@ -480,12 +512,33 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers }: 
   );
 }
 
-function HeaderIcon({ title, children }: { title: string; children: React.ReactNode }) {
+function HeaderIcon({
+  title,
+  children,
+  onClick,
+  active,
+  disabled,
+  "data-testid": dataTestId,
+}: {
+  title: string;
+  children: React.ReactNode;
+  onClick?: () => void;
+  active?: boolean;
+  disabled?: boolean;
+  "data-testid"?: string;
+}) {
   return (
     <button
       type="button"
       title={title}
-      className="w-8 h-8 flex items-center justify-center rounded-md hover:bg-[hsl(232_45%_30%)] hover:text-white transition-colors"
+      onClick={onClick}
+      disabled={disabled}
+      data-testid={dataTestId}
+      className={`w-8 h-8 flex items-center justify-center rounded-md transition-colors ${
+        active
+          ? "bg-[hsl(232_45%_30%)] text-white"
+          : "hover:bg-[hsl(232_45%_30%)] hover:text-white"
+      } ${disabled ? "opacity-40 cursor-not-allowed" : ""}`}
     >
       {children}
     </button>

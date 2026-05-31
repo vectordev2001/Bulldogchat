@@ -536,54 +536,55 @@ export function useLiveKitRoom(args: Args): LiveKitHookResult {
   }, [videoOn, status, refreshParticipants, onTrackError, isIOS]);
 
   // --- iOS-safe imperative camera toggle ---------------------------------
-  // Call this directly from the button's onClick. Because getUserMedia
-  // is invoked synchronously inside the gesture handler, iOS Safari
-  // returns a working MediaStreamTrack instead of a dead one.
+  // Returns the new desired "on" state so the parent can sync its prop.
+  //
+  // On non-iOS: this is a no-op that just returns the inverted prop. The
+  // reconciliation effect above does all the work via setCameraEnabled().
+  // We deliberately do NOT touch desiredVideoRef here — the prop is the
+  // single source of truth and the effect mirrors it into the ref.
+  //
+  // On iOS: getUserMedia is invoked synchronously inside the click gesture
+  // and the resulting MediaStreamTrack is wrapped in LocalVideoTrack and
+  // published manually — bypassing the microtask race that lock up WebKit.
   const toggleCamera = useCallback(async (): Promise<boolean> => {
+    const currentlyOn = desiredVideoRef.current;
+    const wantOn = !currentlyOn;
+
     const room = roomRef.current;
     if (!room || status !== "connected") {
-      // Surface a friendly error and keep desired state where it was.
       onTrackError?.("camera", new Error("Not connected to call yet — try again in a second."));
-      return desiredVideoRef.current;
+      return currentlyOn;
     }
 
-    // Off path: no gesture needed.
-    if (desiredVideoRef.current) {
-      try {
-        if (cameraTrackRef.current) {
-          try { await room.localParticipant.unpublishTrack(cameraTrackRef.current); } catch { /* ignore */ }
-          try { cameraTrackRef.current.stop(); } catch { /* ignore */ }
-          cameraTrackRef.current = null;
-        }
-        await room.localParticipant.setCameraEnabled(false);
-        setCameraPublished(false);
-        refreshParticipants();
-      } catch (err) {
-        onTrackError?.("camera", err);
-      }
-      desiredVideoRef.current = false;
+    // Turning OFF: easy on every platform.
+    if (!wantOn) {
+      // Optimistically tell the parent we're off. The reconciliation effect
+      // will catch up via the prop change and run setCameraEnabled(false).
       return false;
     }
 
-    // On path. On iOS, getUserMedia MUST run synchronously here.
+    // Turning ON.
+    // Non-iOS: do nothing here. Return true so the parent flips its prop
+    // and the reconciliation effect publishes via setCameraEnabled(true).
+    // This is the path that previously got tangled with desiredVideoRef
+    // drift — keep it simple.
     if (!isIOS) {
-      // Non-iOS: just flip the desired flag; the reconciliation effect picks it up.
-      desiredVideoRef.current = true;
       return true;
     }
 
-    // iOS gesture-preserving path. NO awaits before getUserMedia.
+    // iOS gesture-preserving path. The hard requirement: getUserMedia must
+    // be called from inside the user-gesture click handler, BEFORE any
+    // await. The caller invokes us inside onClick, so we're inside that
+    // gesture window now.
     let stream: MediaStream;
     try {
       stream = await navigator.mediaDevices.getUserMedia({
-        // No resolution/frameRate/facingMode constraints on iOS — they
-        // are unreliable in PWA WebKit. Plain `true` lets iOS pick its
-        // best front camera at its preferred preset.
+        // No constraints on iOS — PWA WebKit is flaky with them. Plain
+        // `true` lets iOS pick its best front camera.
         video: true,
         audio: false,
       });
     } catch (err) {
-      // Permission denied, no camera, etc. Don't flip the flag.
       onTrackError?.("camera", err);
       return false;
     }
@@ -603,12 +604,13 @@ export function useLiveKitRoom(args: Args): LiveKitHookResult {
       });
       cameraTrackRef.current = lkTrack;
       setCameraPublished(true);
+      // Mirror into the ref so the reconciliation effect's iOS guard
+      // (`if (isIOS && videoOn) return;`) keeps the parent prop from
+      // double-publishing once it flips to true.
       desiredVideoRef.current = true;
       refreshParticipants();
       return true;
     } catch (err) {
-      // Publish failed — release the underlying MediaStream so we don't
-      // hold the camera open invisibly.
       try { msTrack.stop(); } catch { /* ignore */ }
       onTrackError?.("camera", err);
       return false;
