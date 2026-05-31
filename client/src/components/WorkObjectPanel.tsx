@@ -3,6 +3,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { ClipboardList, ChevronDown, ChevronRight, X, Plus, Loader2, MapPin, Briefcase, FileEdit, AlertTriangle } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { ApiUser } from "@/types/api";
+import { CreateWorkObjectDialog } from "./CreateWorkObjectDialog";
 
 type WorkObjectKind = "job_site" | "work_project" | "change_order" | "safety_incident";
 
@@ -72,6 +73,7 @@ export function WorkObjectPanel({ channelId, me, orgMembers, onClose }: Props) {
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const [linkInput, setLinkInput] = useState("");
   const [linkError, setLinkError] = useState<string | null>(null);
+  const [createOpen, setCreateOpen] = useState(false);
 
   const canLink = me.role === "admin" || me.role === "foreman";
 
@@ -128,18 +130,39 @@ export function WorkObjectPanel({ channelId, me, orgMembers, onClose }: Props) {
           <ClipboardList className="w-4 h-4" />
           Work Objects
         </div>
-        {onClose && (
-          <button
-            type="button"
-            onClick={onClose}
-            className="p-1 rounded hover-elevate text-[hsl(0_0%_60%)] hover:text-white"
-            title="Hide work objects"
-            data-testid="button-close-work-objects"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        )}
+        <div className="flex items-center gap-1">
+          {canLink && (
+            <button
+              type="button"
+              onClick={() => setCreateOpen(true)}
+              className="p-1 rounded hover-elevate text-[hsl(0_0%_60%)] hover:text-white"
+              title="New work object"
+              data-testid="button-new-work-object"
+            >
+              <Plus className="w-4 h-4" />
+            </button>
+          )}
+          {onClose && (
+            <button
+              type="button"
+              onClick={onClose}
+              className="p-1 rounded hover-elevate text-[hsl(0_0%_60%)] hover:text-white"
+              title="Hide work objects"
+              data-testid="button-close-work-objects"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
+        </div>
       </header>
+
+      <CreateWorkObjectDialog
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        channelId={channelId}
+        me={me}
+        orgMembers={orgMembers}
+      />
 
       <div className="flex-1 overflow-y-auto px-2 py-2 space-y-1">
         {listQ.isLoading && (
@@ -153,8 +176,18 @@ export function WorkObjectPanel({ channelId, me, orgMembers, onClose }: Props) {
           </div>
         )}
         {!listQ.isLoading && (listQ.data?.length ?? 0) === 0 && (
-          <div className="px-2 py-4 text-xs text-[hsl(0_0%_55%)] leading-relaxed">
-            No work objects linked yet. {canLink ? "Link one below using its ref." : "Ask an admin or foreman to link one."}
+          <div className="px-2 py-4 text-xs text-[hsl(0_0%_55%)] leading-relaxed space-y-2">
+            <div>No work objects linked yet.</div>
+            {canLink && (
+              <button
+                type="button"
+                onClick={() => setCreateOpen(true)}
+                className="w-full flex items-center justify-center gap-1.5 rounded border border-[hsl(232_40%_22%)] bg-[hsl(232_60%_10%)] px-2 py-2 text-xs text-white hover-elevate"
+                data-testid="button-empty-new-work-object"
+              >
+                <Plus className="w-3.5 h-3.5" /> New work object
+              </button>
+            )}
           </div>
         )}
 
