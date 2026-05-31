@@ -442,7 +442,14 @@ export function VoiceChannelView(props: Props) {
           )}
         </div>
       )}
-      <div className="shrink-0 px-6 py-3 border-t border-[hsl(232_40%_22%)] bg-[hsl(232_55%_11%)] flex items-center justify-center gap-2" data-testid="bar-call-controls">
+      {/* Bottom control bar.
+          iPhone budget (~360px usable after PWA insets): with full padding
+          + gap + 7 h-11 buttons + an Invite pill, the row was ~550px wide,
+          forcing iOS Safari to zoom the whole page out to fit. We tighten
+          padding/gap on mobile and hide the disabled placeholder buttons
+          (More / Settings) so the essentials (mic / cam / screen-if-supported
+          / hand / invite / leave) fit at native scale. */}
+      <div className="shrink-0 px-2 sm:px-6 py-3 border-t border-[hsl(232_40%_22%)] bg-[hsl(232_55%_11%)] flex items-center justify-center gap-1 sm:gap-2 flex-wrap" data-testid="bar-call-controls">
         <CallButton
           on={!myMicMuted}
           // iOS Safari mic gesture path: same pattern as camera. The
@@ -495,14 +502,17 @@ export function VoiceChannelView(props: Props) {
           onClick={() => setShowInvite(true)}
           title="Invite to call"
           data-testid="button-call-invite"
-          className="h-11 px-3 rounded-full bg-[hsl(232_50%_18%)] hover:bg-[hsl(232_50%_24%)] text-white flex items-center gap-1.5 transition-colors"
+          className="h-11 px-2 sm:px-3 rounded-full bg-[hsl(232_50%_18%)] hover:bg-[hsl(232_50%_24%)] text-white flex items-center gap-1.5 transition-colors"
         >
           <UserPlus className="w-4 h-4" />
           <span className="text-xs font-semibold hidden sm:inline">Invite</span>
         </button>
-        <CallButton on={false} neutral disabled title="More — coming soon" activeIcon={<MoreHorizontal className="w-5 h-5" />} inactiveIcon={<MoreHorizontal className="w-5 h-5" />} testid="button-call-more" />
-        <CallButton on={false} neutral disabled title="Settings — coming soon" activeIcon={<Settings className="w-5 h-5" />} inactiveIcon={<Settings className="w-5 h-5" />} testid="button-call-settings" />
-        <div className="w-3" />
+        {/* Disabled placeholder buttons (More, Settings) live on desktop only.
+            They were eating the iPhone width budget and forcing the page to
+            scale down. */}
+        <CallButton on={false} neutral disabled title="More — coming soon" activeIcon={<MoreHorizontal className="w-5 h-5" />} inactiveIcon={<MoreHorizontal className="w-5 h-5" />} testid="button-call-more" className="hidden sm:flex" />
+        <CallButton on={false} neutral disabled title="Settings — coming soon" activeIcon={<Settings className="w-5 h-5" />} inactiveIcon={<Settings className="w-5 h-5" />} testid="button-call-settings" className="hidden sm:flex" />
+        <div className="hidden sm:block w-3" />
         <button
           type="button"
           onClick={() => {
@@ -925,7 +935,7 @@ function ParticipantTile({
 }
 
 function CallButton({
-  on, onClick, title, activeIcon, inactiveIcon, neutral, testid, disabled,
+  on, onClick, title, activeIcon, inactiveIcon, neutral, testid, disabled, className,
 }: {
   on: boolean;
   onClick?: () => void;
@@ -935,6 +945,8 @@ function CallButton({
   neutral?: boolean;
   testid?: string;
   disabled?: boolean;
+  /** Extra utility classes (e.g. `hidden sm:flex` to hide on mobile). */
+  className?: string;
 }) {
   return (
     <button
@@ -955,6 +967,7 @@ function CallButton({
             : on
               ? "bg-[hsl(232_45%_27%)] hover:bg-[hsl(232_45%_32%)] text-white"
               : "bg-[hsl(2_70%_55%/0.2)] hover:bg-[hsl(2_70%_55%/0.3)] text-[hsl(2_85%_72%)] ring-1 ring-[hsl(2_70%_55%/0.4)]",
+        className ?? "",
       ].join(" ")}
     >
       {on || neutral ? activeIcon : inactiveIcon}

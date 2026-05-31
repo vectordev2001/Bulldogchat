@@ -608,7 +608,7 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
         invited += 1;
       } else if (target.phone && sipConfigured()) {
         try {
-          const ident = await dialPhoneIntoRoom({ phone: target.phone, roomName, displayName: target.name });
+          const ident = await dialPhoneIntoRoom({ phone: target.phone, roomName, displayName: target.name, channelLabel: channelName });
           if (ident) {
             dialed += 1;
           } else {
@@ -631,7 +631,7 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
       } else {
         for (const phone of phoneNumbers) {
           try {
-            const ident = await dialPhoneIntoRoom({ phone, roomName, displayName: phone });
+            const ident = await dialPhoneIntoRoom({ phone, roomName, displayName: phone, channelLabel: channelName });
             if (ident) {
               dialed += 1;
             } else {

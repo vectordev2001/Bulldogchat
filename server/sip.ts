@@ -129,14 +129,26 @@ export async function ensureSipTrunk(): Promise<string | null> {
 }
 
 /**
- * Dial `phone` (E.164) into the LiveKit `roomName` as a SIP participant
- * named `displayName`. Returns the participant identity on success, or
- * null if dial-out is unavailable or fails.
+ * Dial `phone` (E.164) into the LiveKit `roomName` as a SIP participant.
+ *
+ * `displayName` is shown inside the LiveKit room (participant tile label).
+ * `callerName` is sent as the SIP From display name. SIP-aware endpoints
+ * (softphones, some PBXes/landlines) show this above or instead of the
+ * raw caller-ID number. Most US mobile carriers DO NOT honor SIP
+ * From-display — they only show CNAM, which requires Twilio CNAM
+ * registration and STIR/SHAKEN attestation. We still set the From display
+ * so callers identify us anywhere it IS surfaced (and on the SIP leg
+ * itself), and we set a sensible default of `Vector · {Channel}`.
+ *
+ * Returns the participant identity on success, or null on failure.
  */
 export async function dialPhoneIntoRoom(opts: {
   phone: string;
   roomName: string;
   displayName: string;
+  /** Optional human label — typically the channel name. Combined with the
+   *  Vector brand to form the SIP From display, e.g. "Vector · Daily Standup". */
+  channelLabel?: string;
 }): Promise<string | null> {
   if (!sipConfigured()) {
     console.warn("[sip] dialPhoneIntoRoom skipped — SIP not configured");
@@ -148,6 +160,10 @@ export async function dialPhoneIntoRoom(opts: {
     return null;
   }
   const identity = `sip_${opts.phone.replace(/\D/g, "")}_${Date.now()}`;
+  // SIP display names should stay under ~64 chars for broad compatibility.
+  const callerDisplay = (opts.channelLabel
+    ? `Vector · ${opts.channelLabel}`
+    : "Vector").slice(0, 64);
   try {
     await client().createSipParticipant(
       trunkId,
@@ -156,12 +172,16 @@ export async function dialPhoneIntoRoom(opts: {
       {
         participantIdentity: identity,
         participantName: opts.displayName || opts.phone,
+        // SIP From display name — surfaced on softphones / landlines /
+        // SIP-aware endpoints. Ignored by most US mobile carriers (which
+        // gate on CNAM, not SIP display).
+        displayName: callerDisplay,
         // Play a short ring/announce to the called party before bridging.
         // Keeping it brief so we don't drag out connect time.
         playDialtone: true,
       },
     );
-    console.log(`[sip] Dialed ${opts.phone} → room ${opts.roomName} as ${identity}`);
+    console.log(`[sip] Dialed ${opts.phone} → room ${opts.roomName} as ${identity} (From: "${callerDisplay}")`);
     return identity;
   } catch (e) {
     console.error(`[sip] createSipParticipant failed for ${opts.phone} → ${opts.roomName}:`, e);
