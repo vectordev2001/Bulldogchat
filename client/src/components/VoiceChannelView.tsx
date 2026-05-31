@@ -230,7 +230,7 @@ export function VoiceChannelView(props: Props) {
   const lkFailed = livekitInfo && lk.status === "failed";
 
   return (
-    <section className="flex-1 flex flex-col min-w-0 bg-[hsl(232_65%_8%)] relative">
+    <section className="flex-1 flex flex-col min-w-0 min-h-0 bg-[hsl(232_65%_8%)] relative">
       {/* Header */}
       <header className="h-14 px-4 max-md:pl-14 flex items-center gap-3 border-b border-[hsl(232_40%_22%)] shrink-0 bg-[hsl(232_60%_12%)]/60 backdrop-blur-sm">
         <Volume2 className="w-5 h-5 text-vs-red shrink-0" />

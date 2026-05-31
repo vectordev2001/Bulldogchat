@@ -258,7 +258,12 @@ export default function Home() {
       </div>
 
       {/* Main column */}
-      <main className="flex-1 min-w-0 flex flex-col">
+      {/* min-h-0 is critical: in a nested flex column, the default
+          min-height: auto on flex children lets inner content (participant
+          grid, screen-share preview, connection banners) push the entire
+          column taller than the viewport. On iPhone PWAs that hides the
+          shrink-0 bottom call-controls bar below the fold. */}
+      <main className="flex-1 min-w-0 min-h-0 flex flex-col">
         {/* Mobile top bar */}
         <div className="md:hidden h-12 shrink-0 flex items-center justify-between px-3 bg-[hsl(232_55%_14%)] border-b border-black/40 sticky top-0 z-30">
           <button
