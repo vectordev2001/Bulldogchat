@@ -25,6 +25,7 @@
 import type { Express, Request, Response } from "express";
 import { storage, sanitize } from "./storage";
 import { requireAuth, requireRole, AuthedRequest } from "./auth";
+import { broadcastWorkObjectEvent } from "./system-messages";
 import {
   workObjectCreateSchema,
   workObjectUpdateSchema,
@@ -184,15 +185,31 @@ export function registerWorkObjectRoutes(app: Express) {
     const updates: Partial<Pick<WorkObject, "title" | "status" | "description" | "ownerUserId" | "parentId" | "attributes" | "closedAt">> = {};
     const activityEvents: Array<{ type: any; payload: any }> = [];
 
+    // Track changes that should produce a system message (separate from raw activity events).
+    const systemEvents: Array<{ kind: "work_object.title_changed" | "work_object.status_changed" | "work_object.owner_changed"; content: string; fields: Record<string, { from?: unknown; to?: unknown }> }> = [];
+
     if (patch.title !== undefined && patch.title !== wo.title) {
       updates.title = patch.title;
       activityEvents.push({ type: "updated", payload: { field: "title", from: wo.title, to: patch.title } });
+      systemEvents.push({
+        kind: "work_object.title_changed",
+        content: `✏️ Title: **${wo.ref}** renamed to “${patch.title}”`,
+        fields: { title: { from: wo.title, to: patch.title } },
+      });
     }
     if (patch.status !== undefined && patch.status !== wo.status) {
       updates.status = patch.status;
       activityEvents.push({ type: "status_changed", payload: { from: wo.status, to: patch.status } });
       if (patch.status === "closed" && !wo.closedAt) updates.closedAt = new Date();
       if (patch.status !== "closed" && wo.closedAt) updates.closedAt = null;
+      // Status changes that aren't going through close/reopen (which have their own branches below).
+      if (patch.status !== "closed") {
+        systemEvents.push({
+          kind: "work_object.status_changed",
+          content: `📋 Status: **${wo.ref}** → **${patch.status}**`,
+          fields: { status: { from: wo.status, to: patch.status } },
+        });
+      }
     }
     if (patch.description !== undefined && patch.description !== wo.description) {
       updates.description = patch.description ?? null;
@@ -201,6 +218,14 @@ export function registerWorkObjectRoutes(app: Express) {
     if (patch.ownerUserId !== undefined && patch.ownerUserId !== wo.ownerUserId) {
       updates.ownerUserId = patch.ownerUserId ?? null;
       activityEvents.push({ type: "owner_changed", payload: { from: wo.ownerUserId, to: patch.ownerUserId } });
+      const newOwnerName = patch.ownerUserId != null
+        ? (storage.getUser(patch.ownerUserId)?.name ?? `user #${patch.ownerUserId}`)
+        : "unassigned";
+      systemEvents.push({
+        kind: "work_object.owner_changed",
+        content: `👤 Owner: **${wo.ref}** → **${newOwnerName}**`,
+        fields: { ownerUserId: { from: wo.ownerUserId, to: patch.ownerUserId } },
+      });
     }
     if (patch.parentId !== undefined && patch.parentId !== wo.parentId) {
       if (patch.parentId != null) {
@@ -228,6 +253,17 @@ export function registerWorkObjectRoutes(app: Express) {
         payload: JSON.stringify(ev.payload),
       });
     }
+    // Fan system-message banners out to every linked channel.
+    for (const sev of systemEvents) {
+      broadcastWorkObjectEvent({
+        workObjectId: wo.id,
+        actorUserId: u.id,
+        orgId: u.orgId,
+        kind: sev.kind,
+        content: sev.content,
+        fields: sev.fields,
+      });
+    }
     res.json(publicWorkObject(updated));
   });
 
@@ -245,6 +281,14 @@ export function registerWorkObjectRoutes(app: Express) {
       actorUserId: u.id,
       payload: JSON.stringify({ from: wo.status }),
     });
+    broadcastWorkObjectEvent({
+      workObjectId: wo.id,
+      actorUserId: u.id,
+      orgId: u.orgId,
+      kind: "work_object.closed",
+      content: `🔒 Closed **${wo.ref}**`,
+      fields: { status: { from: wo.status, to: "closed" } },
+    });
     res.json(publicWorkObject(updated ?? wo));
   });
 
@@ -260,6 +304,14 @@ export function registerWorkObjectRoutes(app: Express) {
       type: "reopened",
       actorUserId: u.id,
       payload: null,
+    });
+    broadcastWorkObjectEvent({
+      workObjectId: wo.id,
+      actorUserId: u.id,
+      orgId: u.orgId,
+      kind: "work_object.reopened",
+      content: `🔓 Reopened **${wo.ref}**`,
+      fields: { status: { from: "closed", to: "active" } },
     });
     res.json(publicWorkObject(updated ?? wo));
   });
@@ -325,6 +377,14 @@ export function registerWorkObjectRoutes(app: Express) {
       actorUserId: u.id,
       payload: JSON.stringify({ channelId, channelName: channel.name }),
     });
+    broadcastWorkObjectEvent({
+      workObjectId: wo.id,
+      actorUserId: u.id,
+      orgId: u.orgId,
+      kind: "work_object.linked",
+      content: `🔗 Linked **${wo.ref}** — ${wo.title}`,
+      onlyChannelId: channelId,
+    });
     res.json(publicWorkObject(wo));
   });
 
@@ -344,6 +404,14 @@ export function registerWorkObjectRoutes(app: Express) {
       type: "unlinked",
       actorUserId: u.id,
       payload: JSON.stringify({ channelId, channelName: channel.name }),
+    });
+    broadcastWorkObjectEvent({
+      workObjectId: woId,
+      actorUserId: u.id,
+      orgId: u.orgId,
+      kind: "work_object.unlinked",
+      content: `⛓️‍💥 Unlinked **${wo.ref}** from this channel`,
+      onlyChannelId: channelId,
     });
     res.json({ ok: true });
   });

@@ -336,6 +336,20 @@ export function runMigrations() {
   CREATE INDEX IF NOT EXISTS woa_obj_idx ON work_object_activity(work_object_id, created_at);
   `);
 
+  // v7: messages.meta JSON column for system messages (work-object events,
+  // call summaries, channel-creation banners, etc). Null for normal user
+  // messages — the frontend treats meta.system=true as a render switch.
+  try {
+    const cols = rawDb.prepare(`PRAGMA table_info(messages)`).all() as Array<{ name: string }>;
+    const have = new Set(cols.map(c => c.name));
+    if (!have.has("meta")) {
+      rawDb.exec(`ALTER TABLE messages ADD COLUMN meta TEXT;`);
+      console.log("[migrate] Added messages.meta column");
+    }
+  } catch (e) {
+    console.warn("[migrate] messages.meta add skipped:", e);
+  }
+
   // Admin email rebrand: if prod has the old email, migrate it.
   try {
     const oldRow = rawDb.prepare(`SELECT id FROM users WHERE email = ?`).get("admin@vectorservicesus.com") as { id: number } | undefined;

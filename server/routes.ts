@@ -57,7 +57,17 @@ function buildWireMessage(messageId: number): WireMessage | null {
       createdAt: a.createdAt,
     };
   });
-  return { ...msg, ...author, reactions: Array.from(grouped.values()), attachmentsList } as any;
+  return { ...msg, meta: parseMessageMeta((msg as any).meta), ...author, reactions: Array.from(grouped.values()), attachmentsList } as any;
+}
+
+// Messages can carry a JSON `meta` blob (system-message kind, work-object
+// refs, field diffs, etc.). The column is stored as TEXT; we parse on the
+// way out and tolerate corruption silently — a bad meta string just means
+// the message renders as a normal user message.
+function parseMessageMeta(raw: unknown): unknown {
+  if (raw == null) return null;
+  if (typeof raw !== "string") return raw;
+  try { return JSON.parse(raw); } catch { return null; }
 }
 
 // Make sure the requesting user belongs to the project (either project member or admin within org)
@@ -334,6 +344,7 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     const replyCounts = storage.threadReplyCounts(ids);
     const wire = msgs.map(m => ({
       ...m,
+      meta: parseMessageMeta((m as any).meta),
       ...authorFor(m.userId),
       reactions: Array.from(grouped.get(m.id)?.values() ?? []),
       attachmentsList: attsByMsg.get(m.id) ?? [],

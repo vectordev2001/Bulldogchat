@@ -1,10 +1,10 @@
-import { Hash, Pin, Plus, Smile, Paperclip, Send, Users, Search, Loader2, MessageSquare, X, Reply, Phone, Video, ClipboardList } from "lucide-react";
+import { Hash, Pin, Plus, Smile, Paperclip, Send, Users, Search, Loader2, MessageSquare, X, Reply, Phone, Video, ClipboardList, MapPin, FileText, AlertTriangle, Link2, Unlink, Lock, Unlock, UserCog, PenLine, CheckCircle2 } from "lucide-react";
 import { ChannelCallDialog } from "@/components/ChannelCallDialog";
 import { useCalls } from "@/lib/CallContext";
 import { Avatar } from "./Avatar";
 import { useState, useRef, useEffect, KeyboardEvent, useCallback, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import type { ApiChannel, ApiMessage, ApiUser, UserRole, ApiAttachment } from "@/types/api";
+import type { ApiChannel, ApiMessage, ApiUser, UserRole, ApiAttachment, ApiSystemMessageMeta } from "@/types/api";
 import { useMutation } from "@tanstack/react-query";
 import { apiRequest, apiUpload, queryClient } from "@/lib/queryClient";
 import { ThreadPanel } from "./ThreadPanel";
@@ -602,7 +602,60 @@ function ChannelIntro({ channel }: { channel: ApiChannel }) {
   );
 }
 
+function SystemMessageRow({ meta, content, createdAt }: { meta: ApiSystemMessageMeta; content: string; createdAt: string }) {
+  // Map system-message kind → lucide icon. Falls back to the work-object kind
+  // icon if the event itself doesn't have a strong shape.
+  const KindIcon =
+    meta.kind === "work_object.linked"          ? Link2 :
+    meta.kind === "work_object.unlinked"        ? Unlink :
+    meta.kind === "work_object.status_changed"  ? CheckCircle2 :
+    meta.kind === "work_object.owner_changed"   ? UserCog :
+    meta.kind === "work_object.title_changed"   ? PenLine :
+    meta.kind === "work_object.closed"          ? Lock :
+    meta.kind === "work_object.reopened"        ? Unlock :
+    /* work_object.created */                     ClipboardList;
+
+  const WoIcon =
+    meta.woKind === "job_site"        ? MapPin :
+    meta.woKind === "work_project"    ? ClipboardList :
+    meta.woKind === "change_order"    ? FileText :
+    /* safety_incident */               AlertTriangle;
+
+  // Render content with **bold** markdown stripped to spans. Keep it light
+  // — system messages are short and don't need full markdown.
+  const segments = content.split(/(\*\*[^*]+\*\*)/g).filter(Boolean);
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 4 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+      className="flex items-center justify-center gap-2 my-1 py-1 px-3 mx-12 border-l-2 border-[hsl(232_40%_22%)] text-[11px] text-[hsl(0_0%_55%)] italic text-center"
+      data-testid={`system-message-${meta.kind}`}
+      title={fmtTime(createdAt)}
+    >
+      <KindIcon className="w-3 h-3 shrink-0 opacity-70" />
+      <span className="inline-flex items-center gap-1 not-italic">
+        <WoIcon className="w-2.5 h-2.5 opacity-50" />
+      </span>
+      <span className="truncate">
+        {segments.map((seg, i) => {
+          if (seg.startsWith("**") && seg.endsWith("**")) {
+            return <span key={i} className="font-mono not-italic text-[hsl(0_0%_75%)]">{seg.slice(2, -2)}</span>;
+          }
+          return <span key={i}>{seg}</span>;
+        })}
+      </span>
+      <span className="text-[10px] opacity-60 not-italic shrink-0">· {fmtTime(createdAt).split("at ")[1] ?? ""}</span>
+    </motion.div>
+  );
+}
+
 function MessageRow({ msg, grouped, isMe, meId, onOpenThread }: { msg: ApiMessage; grouped: boolean; isMe: boolean; meId: number; onOpenThread: () => void }) {
+  // System messages (work-object events) render as compact centered banners.
+  if (msg.meta && msg.meta.system) {
+    return <SystemMessageRow meta={msg.meta} content={msg.content} createdAt={msg.createdAt} />;
+  }
   const roleClass = ROLE_COLOR[msg.authorRole] ?? "text-white";
 
   return (

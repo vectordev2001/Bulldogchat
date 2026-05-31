@@ -82,7 +82,7 @@ export interface IStorage {
   /* Messages */
   listMessages(channelId: number, opts?: { before?: number; limit?: number }): Message[];
   getMessage(id: number): Message | undefined;
-  createMessage(input: { channelId: number; userId: number; content: string; attachments?: string | null; replyToMessageId?: number | null }): Message;
+  createMessage(input: { channelId: number; userId: number; content: string; attachments?: string | null; replyToMessageId?: number | null; meta?: string | null }): Message;
   updateMessage(id: number, content: string): Message | undefined;
   deleteMessage(id: number): void;
   pinMessage(id: number, pinned: boolean): Message | undefined;
@@ -328,15 +328,16 @@ class DatabaseStorage implements IStorage {
     return rows.reverse();
   }
   getMessage(id: number) { return db.select().from(messages).where(eq(messages.id, id)).get(); }
-  createMessage(input: { channelId: number; userId: number; content: string; attachments?: string | null; replyToMessageId?: number | null }) {
+  createMessage(input: { channelId: number; userId: number; content: string; attachments?: string | null; replyToMessageId?: number | null; meta?: string | null }) {
     return db.insert(messages).values({
       channelId: input.channelId,
       userId: input.userId,
       content: input.content,
       attachments: input.attachments ?? null,
       replyToMessageId: input.replyToMessageId ?? null,
+      meta: input.meta ?? null,
       createdAt: new Date(),
-    }).returning().get();
+    } as any).returning().get();
   }
   updateMessage(id: number, content: string) {
     return db.update(messages).set({ content, editedAt: new Date() }).where(eq(messages.id, id)).returning().get();

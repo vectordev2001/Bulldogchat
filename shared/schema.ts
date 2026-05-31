@@ -135,7 +135,32 @@ export const messages = sqliteTable("messages", {
   isPinned: integer("is_pinned", { mode: "boolean" }).notNull().default(false),
   createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
   editedAt: integer("edited_at", { mode: "timestamp" }),
+  // JSON: { system: true, kind: 'work_object.created' | ..., workObjectId, ref, fields? }
+  // Null for normal user messages.
+  meta: text("meta"),
 });
+
+// Shape of meta for system messages emitted by work-object events.
+export const systemMessageKinds = [
+  "work_object.created",
+  "work_object.linked",
+  "work_object.unlinked",
+  "work_object.status_changed",
+  "work_object.owner_changed",
+  "work_object.title_changed",
+  "work_object.closed",
+  "work_object.reopened",
+] as const;
+export type SystemMessageKind = typeof systemMessageKinds[number];
+export interface SystemMessageMeta {
+  system: true;
+  kind: SystemMessageKind;
+  workObjectId: number;
+  ref: string;
+  woKind: WorkObjectKind;
+  woTitle: string;
+  fields?: Record<string, { from?: unknown; to?: unknown }>;
+}
 export const insertMessageSchema = createInsertSchema(messages).omit({
   id: true, createdAt: true, editedAt: true, isPinned: true, userId: true,
 }).extend({

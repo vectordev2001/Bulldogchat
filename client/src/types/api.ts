@@ -85,6 +85,28 @@ export interface ApiMessage {
   mentions?: ApiMention[];
   replyCount?: number;
   lastReplyAt?: string | null;
+  // System-message metadata. Null/undefined for normal user messages.
+  meta?: ApiSystemMessageMeta | null;
+}
+
+export type SystemMessageKind =
+  | "work_object.created"
+  | "work_object.linked"
+  | "work_object.unlinked"
+  | "work_object.status_changed"
+  | "work_object.owner_changed"
+  | "work_object.title_changed"
+  | "work_object.closed"
+  | "work_object.reopened";
+
+export interface ApiSystemMessageMeta {
+  system: true;
+  kind: SystemMessageKind;
+  workObjectId: number;
+  ref: string;
+  woKind: "job_site" | "work_project" | "change_order" | "safety_incident";
+  woTitle: string;
+  fields?: Record<string, { from?: unknown; to?: unknown }>;
 }
 
 export interface ApiRecording {
