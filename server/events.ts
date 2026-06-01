@@ -93,6 +93,19 @@ export function emitCallEnded(payload: CallEventPayload & { reason: "declined" |
   emitToUser(payload.calleeId, "call:ended", payload);
 }
 
+/**
+ * Presence broadcast. Fired when a user changes their status (online/away/busy/
+ * offline) so every connected client in the org can update the dot color
+ * next to their name in the member list and at the top bar. Org-scoped on
+ * purpose — presence is not sensitive but it's also not interesting to
+ * users outside the org.
+ */
+export function emitPresenceChange(orgId: number, payload: { userId: number; presence: "online" | "away" | "busy" | "offline" }) {
+  for (const sub of subscribers) {
+    if (sub.orgId === orgId) send(sub, "presence:change", payload);
+  }
+}
+
 // Periodic heartbeat to keep connections alive
 setInterval(() => {
   for (const sub of subscribers) {

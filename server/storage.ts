@@ -57,7 +57,7 @@ export interface IStorage {
   listUsersByOrg(orgId: number): User[];
   listUsersByIds(ids: number[]): User[];
   updateUserLastSeen(id: number): void;
-  updateUser(id: number, patch: Partial<Pick<User, "name" | "title" | "avatarUrl" | "role" | "status" | "hue" | "phone">>): User | undefined;
+  updateUser(id: number, patch: Partial<Pick<User, "name" | "title" | "avatarUrl" | "role" | "status" | "presence" | "hue" | "phone">>): User | undefined;
 
   /* Projects */
   listProjectsForUser(userId: number): Project[];
@@ -210,8 +210,15 @@ class DatabaseStorage implements IStorage {
   getUser(id: number) { return db.select().from(users).where(eq(users.id, id)).get(); }
   getUserByEmail(email: string) { return db.select().from(users).where(eq(users.email, email.toLowerCase())).get(); }
   createUser(input: InsertUser) {
+    // Phase 1.9: every Bulldog chat user is shown as "Bulldog - <name>" so
+    // it's visually obvious which suite a user belongs to when we federate
+    // with Slack/Teams later. Apply the prefix here so all create paths
+    // (signup, invite accept, SSO provisioning, seed) get it for free.
+    const baseName = (input.name ?? "").trim() || input.email.toLowerCase();
+    const prefixed = baseName.startsWith("Bulldog - ") ? baseName : `Bulldog - ${baseName}`;
     return db.insert(users).values({
       ...input,
+      name: prefixed,
       email: input.email.toLowerCase(),
       createdAt: new Date(),
     }).returning().get();

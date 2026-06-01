@@ -98,9 +98,15 @@ export function bulldogSsoBridge(): RequestHandler {
         // bridge so renames propagate quickly; updateUser is a no-op when
         // the value hasn't changed at the DB level for our purposes.
         const authName = (req.user.name || "").trim();
-        if (authName && authName !== local.name) {
-          try { storage.updateUser(local.id, { name: authName }); }
-          catch (e) { console.warn("[chat bulldogSsoBridge] name sync failed:", e); }
+        if (authName) {
+          // Phase 1.9: chat-side users carry a "Bulldog - " prefix so the
+          // suite of origin is obvious. Re-apply on sync so a rename in
+          // bulldog-auth still lands as "Bulldog - <new name>" in chat.
+          const prefixed = authName.startsWith("Bulldog - ") ? authName : `Bulldog - ${authName}`;
+          if (prefixed !== local.name) {
+            try { storage.updateUser(local.id, { name: prefixed }); }
+            catch (e) { console.warn("[chat bulldogSsoBridge] name sync failed:", e); }
+          }
         }
         // Phone sync: bulldog-auth is the source of truth. Mirror into the
         // chat user row so the invite endpoint can dial-out without a

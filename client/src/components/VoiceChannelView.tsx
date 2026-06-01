@@ -186,6 +186,47 @@ export function VoiceChannelView(props: Props) {
     return () => clearInterval(id);
   }, [channel.id]);
 
+  // Auto dial-absent: once the call has been live for ~30s, automatically
+  // phone-bridge any channel member who is offline (or hasn't joined yet),
+  // has a phone number, and isn't in DND. We fire this exactly once per
+  // call session (per channel.id mount) so re-renders don't re-ring.
+  // Admin/foreman only — server enforces the role check; on 403 we just
+  // silently skip without spamming the UI.
+  const dialAbsentFiredRef = useRef(false);
+  const [dialAbsentToast, setDialAbsentToast] = useState<string | null>(null);
+  useEffect(() => {
+    dialAbsentFiredRef.current = false;
+    setDialAbsentToast(null);
+  }, [channel.id]);
+  useEffect(() => {
+    if (previewMode !== false) return; // only auto-dial in real LK mode
+    if (lk.status !== "connected") return; // wait until we're truly in the room
+    if (dialAbsentFiredRef.current) return;
+    if (me.role !== "admin" && me.role !== "foreman") return; // gated client-side too
+    const timer = setTimeout(async () => {
+      dialAbsentFiredRef.current = true;
+      try {
+        const res = await apiRequest<{ dialed: number; skipped: number; warnings?: string[] }>(
+          "POST",
+          `/api/channels/${channel.id}/dial-absent`,
+        );
+        if (res.dialed > 0) {
+          setDialAbsentToast(
+            `Ringing ${res.dialed} absent ${res.dialed === 1 ? "member" : "members"} by phone…`,
+          );
+          setTimeout(() => setDialAbsentToast(null), 5000);
+        }
+      } catch (e: any) {
+        // 403 (not admin) or 503 (no Twilio): fail quietly. Admins can
+        // still hit the Invite modal to phone-bridge manually.
+        if (e?.status && e.status !== 403 && e.status !== 503) {
+          console.warn("[dial-absent] failed:", e);
+        }
+      }
+    }, 30_000);
+    return () => clearTimeout(timer);
+  }, [previewMode, lk.status, channel.id, me.role]);
+
   // Mock speaking simulation — only in preview/demo mode. In real mode
   // LiveKit drives `isSpeaking` directly through ActiveSpeakersChanged.
   const [speakingId, setSpeakingId] = useState<number | null>(null);
@@ -293,6 +334,15 @@ export function VoiceChannelView(props: Props) {
         <div className="px-4 py-2 bg-[hsl(2_70%_55%/0.12)] border-b border-[hsl(2_70%_55%/0.4)] flex items-center gap-2 text-xs">
           <AlertTriangle className="w-3.5 h-3.5 text-vs-red" />
           <span className="text-[hsl(2_85%_75%)]">{error ?? lk.error}</span>
+        </div>
+      )}
+      {dialAbsentToast && (
+        <div
+          className="px-4 py-2 bg-[hsl(218_100%_68%/0.12)] border-b border-[hsl(218_100%_68%/0.35)] flex items-center gap-2 text-xs"
+          data-testid="banner-dial-absent"
+        >
+          <Phone className="w-3.5 h-3.5 text-vs-blue-light" />
+          <span className="text-[hsl(218_100%_82%)]">{dialAbsentToast}</span>
         </div>
       )}
 

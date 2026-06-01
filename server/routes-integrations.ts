@@ -144,7 +144,13 @@ export function registerIntegrationRoutes(app: Express) {
     const existingChannels = storage.listChannelsForWorkObject(job.id);
     let channel = existingChannels.find(c => c.projectId === projectId) ?? null;
     if (!channel) {
-      const channelName = sanitizeChannelName(`contract-${refSafe}`);
+      // Channel name: prefer the human-readable contract title so Josh can
+      // tell what contract a channel belongs to at a glance. Fall back to
+      // the ref if the title slugifies to empty.
+      const titleSlug = sanitizeChannelName(contractTitle);
+      const channelName = titleSlug && titleSlug !== "contract-meeting"
+        ? titleSlug
+        : sanitizeChannelName(`contract-${refSafe}`);
       const allInProject = storage.listChannelsByProject(projectId);
       channel = storage.createChannel({
         projectId,

@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Menu, X, Loader2 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "@/lib/auth";
-import { queryClient } from "@/lib/queryClient";
+import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useSSE } from "@/hooks/use-sse";
 import { ProjectRail } from "@/components/ProjectRail";
 import { ChannelSidebar } from "@/components/ChannelSidebar";
@@ -66,12 +66,55 @@ export default function Home() {
     refetchOnWindowFocus: true,
   });
 
-  // Pick a default project once data is loaded
+  // Deep-link: ?channel=<id> — fired by contracts "Create chat meeting" button.
+  // Run once on mount; resolve the channel, jump to its project, select it, then
+  // strip the param so a refresh doesn't keep re-applying it.
+  const [deepLinkPending, setDeepLinkPending] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    return new URL(window.location.href).searchParams.has("channel");
+  });
   useEffect(() => {
+    if (!deepLinkPending) return;
+    const url = new URL(window.location.href);
+    const raw = url.searchParams.get("channel");
+    const channelId = raw ? Number(raw) : NaN;
+    if (!Number.isFinite(channelId)) {
+      setDeepLinkPending(false);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const ch = await apiRequest<{ id: number; projectId: number }>(
+          "GET",
+          `/api/channels/${channelId}`,
+        );
+        if (cancelled || !ch?.projectId) return;
+        setActiveProjectId(ch.projectId);
+        setChannelByProject((prev) => ({ ...prev, [ch.projectId]: ch.id }));
+      } catch {
+        /* fall through to default project */
+      } finally {
+        if (!cancelled) {
+          url.searchParams.delete("channel");
+          window.history.replaceState({}, "", url.pathname + (url.search ? url.search : "") + url.hash);
+          setDeepLinkPending(false);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [deepLinkPending]);
+
+  // Pick a default project once data is loaded.
+  // Skip while a deep-link is still resolving so we don't briefly land on #general.
+  useEffect(() => {
+    if (deepLinkPending) return;
     if (!activeProjectId && projectsQ.data && projectsQ.data.length > 0) {
       setActiveProjectId(projectsQ.data[0].id);
     }
-  }, [projectsQ.data, activeProjectId]);
+  }, [projectsQ.data, activeProjectId, deepLinkPending]);
 
   const channelsQ = useQuery<ApiChannel[]>({
     queryKey: ["/api/projects", activeProjectId, "channels"],

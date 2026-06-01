@@ -1,6 +1,6 @@
-import { Plus, Settings, LogOut, Bell, BellRing } from "lucide-react";
+import { Plus, Settings, LogOut, Bell, BellRing, Check, Circle } from "lucide-react";
 import { VectorLogo } from "./VectorLogo";
-import type { ApiProject } from "@/types/api";
+import type { ApiProject, UserPresence } from "@/types/api";
 import { useAuth } from "@/lib/auth";
 import { useState } from "react";
 import {
@@ -10,6 +10,24 @@ import {
 import { InviteDialog } from "./InviteDialog";
 import { NotificationsButton } from "./NotificationsButton";
 import { AppSwitcher } from "@/lib/AppSwitcher";
+import { usePresence } from "@/hooks/use-presence";
+import { PRESENCE_COLOR } from "./Avatar";
+
+const PRESENCE_OPTIONS: Array<{
+  value: UserPresence;
+  label: string;
+  hint: string;
+}> = [
+  { value: "online", label: "Online", hint: "Ready to chat" },
+  { value: "busy", label: "Busy", hint: "Do not disturb — push notifications off" },
+  { value: "offline", label: "Appear offline", hint: "Hide your activity" },
+];
+const PRESENCE_LABEL: Record<UserPresence, string> = {
+  online: "Online",
+  away: "Away",
+  busy: "Busy",
+  offline: "Offline",
+};
 
 interface Props {
   projects: ApiProject[];
@@ -21,6 +39,7 @@ interface Props {
 
 export function ProjectRail({ projects, activeId, onSelect, unreadByProjectId, sseStatus }: Props) {
   const { user, logout } = useAuth();
+  const { presence, manualPresence, setManualPresence } = usePresence();
   const [inviteOpen, setInviteOpen] = useState(false);
 
   const isAdmin = user?.role === "admin";
@@ -79,18 +98,58 @@ export function ProjectRail({ projects, activeId, onSelect, unreadByProjectId, s
         <DropdownMenuTrigger asChild>
           <button
             type="button"
-            className="w-12 h-12 rounded-2xl flex items-center justify-center hover:bg-[hsl(232_45%_27%)] transition-all text-[hsl(0_0%_70%)]"
-            title="Settings"
+            className="relative w-12 h-12 rounded-2xl flex items-center justify-center hover:bg-[hsl(232_45%_27%)] transition-all text-[hsl(0_0%_70%)]"
+            title={`Status: ${PRESENCE_LABEL[presence]} — click to change`}
             data-testid="button-app-settings"
+            aria-label={`Status: ${PRESENCE_LABEL[presence]}`}
           >
             <Settings className="w-5 h-5" />
+            {/* Presence dot — colored per Phase 1.9 state. Replaces the old
+                static green dot the user reported as inert. */}
+            <span
+              className="absolute top-1 right-1 w-3 h-3 rounded-full ring-2 ring-[hsl(232_60%_9%)]"
+              style={{ background: PRESENCE_COLOR[presence] ?? PRESENCE_COLOR.online }}
+              data-testid="status-presence-dot"
+            />
           </button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent side="right" align="end" className="w-56 vs-navy-panel border-[hsl(232_40%_25%)] text-white">
+        <DropdownMenuContent side="right" align="end" className="w-60 vs-navy-panel border-[hsl(232_40%_25%)] text-white">
           <DropdownMenuLabel className="text-[hsl(0_0%_70%)]">
             <div className="font-semibold text-white truncate">{user?.name}</div>
             <div className="text-[10px] font-mono uppercase tracking-wider text-vs-blue-light">{user?.role}</div>
           </DropdownMenuLabel>
+          <DropdownMenuSeparator className="bg-[hsl(232_40%_25%)]" />
+          <DropdownMenuLabel className="text-[10px] font-mono uppercase tracking-wider text-[hsl(0_0%_55%)] pt-2 pb-1">
+            Status
+          </DropdownMenuLabel>
+          {PRESENCE_OPTIONS.map((opt) => {
+            // Show check next to the user's *manual* pick — 'away' is
+            // automatic so it never shows as a selectable option.
+            const selected = manualPresence === opt.value;
+            return (
+              <DropdownMenuItem
+                key={opt.value}
+                onClick={() => setManualPresence(opt.value)}
+                className="text-sm cursor-pointer focus:bg-[hsl(232_45%_30%)] focus:text-white flex items-center gap-2"
+                data-testid={`menu-presence-${opt.value}`}
+              >
+                <Circle
+                  className="w-2.5 h-2.5 shrink-0"
+                  style={{ color: PRESENCE_COLOR[opt.value], fill: PRESENCE_COLOR[opt.value] }}
+                />
+                <div className="flex-1 min-w-0">
+                  <div className="truncate">{opt.label}</div>
+                  <div className="text-[10px] text-[hsl(0_0%_60%)] truncate">{opt.hint}</div>
+                </div>
+                {selected && <Check className="w-3.5 h-3.5 text-vs-blue-light shrink-0" />}
+              </DropdownMenuItem>
+            );
+          })}
+          {presence === "away" && (
+            <div className="px-2 py-1 text-[10px] text-[hsl(45_90%_65%)] font-mono uppercase tracking-wider">
+              Currently away (auto)
+            </div>
+          )}
           <DropdownMenuSeparator className="bg-[hsl(232_40%_25%)]" />
           <DropdownMenuItem className="text-sm cursor-pointer focus:bg-[hsl(232_45%_30%)] focus:text-white" data-testid="menu-profile">
             Profile

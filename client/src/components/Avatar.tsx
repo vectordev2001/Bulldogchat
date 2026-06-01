@@ -6,6 +6,9 @@ interface AvatarMember {
   initials?: string;
   hue: number;
   status?: string;
+  // Phase 1.9 presence state. When present, takes priority over `status`
+  // for picking the bottom-right dot color.
+  presence?: "online" | "away" | "busy" | "offline";
 }
 
 interface Props {
@@ -16,12 +19,19 @@ interface Props {
   className?: string;
 }
 
-const STATUS_COLOR: Record<string, string> = {
-  online: "hsl(145 60% 48%)",
-  idle: "hsl(35 100% 60%)",
+// Bottom-right dot colors. Phase 1.9 introduces explicit presence states;
+// legacy `status` values (idle/dnd) are kept as aliases so older rows still
+// render correctly until v11/v12 backfills land everywhere.
+export const PRESENCE_COLOR: Record<string, string> = {
+  online: "hsl(145 60% 48%)",   // green
+  away: "hsl(45 100% 55%)",     // yellow
+  busy: "hsl(2 70% 55%)",       // red
+  offline: "hsl(232 10% 45%)",  // grey
+  // legacy aliases
+  idle: "hsl(45 100% 55%)",
   dnd: "hsl(2 70% 55%)",
-  offline: "hsl(232 10% 45%)",
 };
+const STATUS_COLOR = PRESENCE_COLOR;
 
 const RING_COLOR: Record<string, string> = {
   none: "transparent",
@@ -81,7 +91,7 @@ export function Avatar({ member, size = 36, showStatus = false, ring = "none", c
         </text>
       </svg>
 
-      {showStatus && member.status && (
+      {showStatus && (member.presence || member.status) && (
         <span
           className="absolute"
           style={{
@@ -90,7 +100,10 @@ export function Avatar({ member, size = 36, showStatus = false, ring = "none", c
             width: Math.max(10, size * 0.3),
             height: Math.max(10, size * 0.3),
             borderRadius: "50%",
-            background: STATUS_COLOR[member.status] ?? STATUS_COLOR.online,
+            background:
+              (member.presence && PRESENCE_COLOR[member.presence]) ??
+              (member.status && STATUS_COLOR[member.status]) ??
+              PRESENCE_COLOR.online,
             boxShadow: "0 0 0 2px hsl(232 50% 20%)",
           }}
         />

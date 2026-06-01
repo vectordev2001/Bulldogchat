@@ -38,6 +38,21 @@ export interface PushPayload {
 export async function sendNotificationToUsers(userIds: number[], payload: PushPayload) {
   if (userIds.length === 0) return;
 
+  // Phase 1.9 DND gating: respect recipient presence. Users in "busy" (red
+  // dot) explicitly asked not to be pinged — skip both web push and Expo.
+  // "offline" still receives so the message is waiting when they come
+  // back; "away" also still receives because that's just an idle hint.
+  try {
+    const targets = storage.listUsersByIds(userIds);
+    const allowed = new Set(
+      targets.filter(u => (u.presence ?? "online") !== "busy").map(u => u.id),
+    );
+    userIds = userIds.filter(id => allowed.has(id));
+    if (userIds.length === 0) return;
+  } catch (e) {
+    console.warn("[push] presence gate failed, sending anyway:", e);
+  }
+
   // Always try Expo in parallel (it's a no-op if no tokens / not configured)
   const expoPromise = sendExpoNotificationToUsers(userIds, payload).catch(err => {
     console.warn("[push] expo send err:", err);

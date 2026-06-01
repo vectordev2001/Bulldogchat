@@ -50,6 +50,17 @@ export function useSSE(enabled: boolean, handlers: Handlers): SSEStatus {
       try { handlersRef.current.onReactionChange?.(JSON.parse(e.data)); } catch {}
     });
 
+    // Presence broadcasts (Phase 1.9). Re-emit as a window CustomEvent so any
+    // component can subscribe without threading a handler prop through the
+    // SSE plumbing. PresenceProvider listens for this and patches the cached
+    // /api/org/members list so the dot updates everywhere live.
+    es.addEventListener("presence:change", (e: MessageEvent) => {
+      try {
+        const detail = JSON.parse(e.data);
+        window.dispatchEvent(new CustomEvent("sse:presence:change", { detail }));
+      } catch {}
+    });
+
     return () => {
       es?.close();
       setStatus("closed");

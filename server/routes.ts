@@ -7,8 +7,8 @@ import {
   insertProjectSchema, insertChannelSchema, insertInviteSchema, channelCreateSchema,
 } from "@shared/schema";
 import { hashPassword, verifyPassword, signJwt, requireAuth, requireRole, setAuthCookie, clearAuthCookie, AuthedRequest, AUTH_COOKIE } from "./auth";
-import { addSubscriber, removeSubscriber, emitMessageNew, emitMessageDelete, emitMessageUpdate, emitReactionChange, emitCallIncoming, emitCallAccepted, emitCallEnded, type CallEventPayload, WireMessage } from "./events";
-import { generateLivekitToken, livekitConfigured } from "./livekit";
+import { addSubscriber, removeSubscriber, emitMessageNew, emitMessageDelete, emitMessageUpdate, emitReactionChange, emitCallIncoming, emitCallAccepted, emitCallEnded, emitPresenceChange, type CallEventPayload, WireMessage } from "./events";
+import { generateLivekitToken, livekitConfigured, listRoomParticipantIdentities } from "./livekit";
 import { setupWebPush, pushConfigured, getPublicVapidKey, sendNotificationToUsers } from "./push";
 import { runMigrations } from "./migrate";
 import { runSeed } from "./seed";
@@ -177,6 +177,26 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     const u = (req as AuthedRequest).user;
     const list = storage.listUsersByOrg(u.orgId).map(sanitize);
     res.json(list);
+  });
+
+  // ── PRESENCE (Phase 1.9) ──
+  // Client posts here when the user picks a status from the top-bar popover,
+  // when the idle detector flips to 'away', or on page-hide to 'offline'.
+  // Server persists and fans out via SSE so the dot updates everywhere.
+  app.post("/api/presence", requireAuth, (req, res) => {
+    const u = (req as AuthedRequest).user;
+    const raw = String((req.body ?? {}).presence ?? "").toLowerCase();
+    const allowed = ["online", "away", "busy", "offline"] as const;
+    type Presence = typeof allowed[number];
+    if (!(allowed as readonly string[]).includes(raw)) {
+      return res.status(400).json({ message: "presence must be online|away|busy|offline" });
+    }
+    const presence = raw as Presence;
+    storage.updateUser(u.id, { presence });
+    // Also bump lastSeenAt so the legacy idle indicator stays consistent.
+    storage.updateUserLastSeen(u.id);
+    emitPresenceChange(u.orgId, { userId: u.id, presence });
+    res.json({ ok: true, presence });
   });
 
   // ── PROJECTS ──
@@ -433,6 +453,16 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     if (targetId === u.id) return res.status(400).json({ message: "Use a different admin to remove yourself" });
     storage.removeProjectMember(projectId, targetId);
     res.json({ ok: true });
+  });
+
+  // ── SINGLE CHANNEL (for deep-link) ──
+  app.get("/api/channels/:id", requireAuth, (req, res) => {
+    const u = (req as AuthedRequest).user;
+    const channelId = Number(req.params.id);
+    if (!Number.isFinite(channelId)) return res.status(400).json({ message: "bad id" });
+    const access = userCanAccessChannel(u.id, u.orgId, channelId);
+    if (!access) return res.status(404).json({ message: "Not found" });
+    return res.json({ ...access.channel, projectId: access.project!.id });
   });
 
   // ── MESSAGES ──
@@ -797,6 +827,116 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     }
 
     res.json({ invited, dialed, warnings });
+  });
+
+  // ── DIAL ABSENT (Phase 1.9) ──
+  // Fired from the channel call UI ~30s into an active call. Looks at every
+  // user with access to this channel, figures out who's NOT in the LiveKit
+  // room, and rings the phone of anyone who's marked offline or has been
+  // idle. Admin/foreman only — keeps random field users from auto-dialing
+  // the whole crew by accident.
+  app.post("/api/channels/:id/dial-absent", requireAuth, requireRole(["admin", "foreman"]), async (req, res) => {
+    const u = (req as AuthedRequest).user;
+    const channelId = Number(req.params.id);
+    const access = userCanAccessChannel(u.id, u.orgId, channelId);
+    if (!access) return res.status(404).json({ message: "Not found" });
+    if (!sipConfigured()) {
+      return res.status(503).json({ message: "SIP not configured — cannot dial phones" });
+    }
+    if (!livekitConfigured()) {
+      return res.status(503).json({ message: "LiveKit not configured" });
+    }
+
+    const roomName = `vector-${u.orgId}-channel-${channelId}`;
+    const channelName = access.channel?.name ?? "channel";
+
+    // Who's already in the room? Identities are `u_<id>` for users and
+    // `sip_<digits>_<ts>` for phones. We only care about user identities
+    // here — a phone we previously dialed shouldn't be re-dialed.
+    const present = await listRoomParticipantIdentities(roomName);
+    const presentUserIds = new Set<number>();
+    for (const ident of present) {
+      const m = /^u_(\d+)$/.exec(ident);
+      if (m) presentUserIds.add(Number(m[1]));
+    }
+
+    // "Channel members" — anyone with access to this channel. For global
+    // channels (the common case) that's every active user in the project.
+    const projectId = access.project!.id;
+    const candidates = storage.listProjectMembers(projectId)
+      .filter(target =>
+        !target.deactivated &&
+        target.id !== u.id &&
+        !presentUserIds.has(target.id) &&
+        !!target.phone &&
+        storage.userCanSeeChannel(access.channel!, target));
+
+    // Of those, who's actually "absent" — i.e. their phone is the right way
+    // to reach them? Treat presence=offline OR a stale lastSeen as absent.
+    // Don't bug users in Busy (DND) by default.
+    const STALE_MS = 2 * 60 * 1000;
+    const now = Date.now();
+    const dialed: Array<{ userId: number; name: string; phone: string }> = [];
+    const skipped: Array<{ userId: number; name: string; reason: string }> = [];
+    const warnings: string[] = [];
+
+    for (const t of candidates) {
+      const presence = (t as { presence?: "online" | "away" | "busy" | "offline" }).presence ?? "online";
+      if (presence === "busy") { skipped.push({ userId: t.id, name: t.name, reason: "busy/DND" }); continue; }
+      const lastSeen = t.lastSeenAt ? new Date(t.lastSeenAt).getTime() : 0;
+      const stale = !lastSeen || (now - lastSeen) > STALE_MS;
+      const absent = presence === "offline" || stale;
+      if (!absent) { skipped.push({ userId: t.id, name: t.name, reason: "appears online" }); continue; }
+      try {
+        const ident = await dialPhoneIntoRoom({
+          phone: t.phone!, roomName, displayName: t.name, channelLabel: channelName,
+        });
+        if (ident) {
+          dialed.push({ userId: t.id, name: t.name, phone: t.phone! });
+        } else {
+          warnings.push(`dial ${t.name}: SIP trunk unavailable`);
+        }
+      } catch (err) {
+        const msg = (err as { message?: string })?.message ?? "failed";
+        warnings.push(`dial ${t.name}: ${msg}`);
+      }
+    }
+
+    res.json({ dialed, skipped, warnings, presentUserCount: presentUserIds.size });
+  });
+
+  // ── DIAL ARBITRARY NUMBER (Phase 1.9) ──
+  // "Dial in" input on the call dialog. Accepts a single E.164 number and
+  // bridges it into the channel's LiveKit room. Admin/foreman only.
+  app.post("/api/channels/:id/dial-number", requireAuth, requireRole(["admin", "foreman"]), async (req, res) => {
+    const u = (req as AuthedRequest).user;
+    const channelId = Number(req.params.id);
+    const access = userCanAccessChannel(u.id, u.orgId, channelId);
+    if (!access) return res.status(404).json({ message: "Not found" });
+    if (!sipConfigured()) {
+      return res.status(503).json({ message: "SIP not configured — cannot dial phones" });
+    }
+    const raw = String(req.body?.phone ?? "").trim();
+    // Loose E.164 check — "+" then 8-15 digits. We don't strictly enforce
+    // country because Twilio will reject anything truly bogus anyway, but
+    // we do want to reject obvious garbage early.
+    if (!/^\+\d{8,15}$/.test(raw)) {
+      return res.status(400).json({ message: "phone must be E.164 (e.g. +12065551234)" });
+    }
+    const roomName = `vector-${u.orgId}-channel-${channelId}`;
+    const channelName = access.channel?.name ?? "channel";
+    try {
+      const ident = await dialPhoneIntoRoom({
+        phone: raw, roomName, displayName: raw, channelLabel: channelName,
+      });
+      if (!ident) {
+        return res.status(502).json({ message: "SIP trunk unavailable" });
+      }
+      res.json({ ok: true, phone: raw, identity: ident });
+    } catch (err) {
+      const msg = (err as { message?: string })?.message ?? "failed";
+      res.status(500).json({ message: `dial failed: ${msg}` });
+    }
   });
 
   // ── DIRECT (1:1) CALLS ──

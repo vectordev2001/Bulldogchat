@@ -600,4 +600,34 @@ export function runMigrations() {
   } catch (e) {
     console.warn("[migrate] v10 demo seed skipped:", e);
   }
+
+  // v11: Retroactive "Bulldog - " prefix on existing user.name. Phase 1.9 ships
+  // the prefix at create time (storage.createUser), but pre-existing rows still
+  // show as bare "Josh Bieler" / "Cade Bieler" etc. One-shot UPDATE that skips
+  // rows already prefixed so it's idempotent across redeploys.
+  try {
+    const info = rawDb.prepare(
+      "UPDATE users SET name = 'Bulldog - ' || name WHERE name NOT LIKE 'Bulldog - %'",
+    ).run();
+    if (info.changes && info.changes > 0) {
+      console.log(`[migrate] v11 prefixed ${info.changes} existing user.name rows with "Bulldog - "`);
+    }
+  } catch (e) {
+    console.warn("[migrate] v11 user name prefix skipped:", e);
+  }
+
+  // v12: Presence column on users. Phase 1.9 adds an explicit presence state
+  // (online/away/busy/offline) separate from the legacy "status" string so we
+  // can drive the top-bar status dot and DND push gating. Default 'online' for
+  // existing rows.
+  try {
+    const cols = rawDb.prepare("PRAGMA table_info(users)").all() as Array<{ name: string }>;
+    const hasPresence = cols.some(c => c.name === "presence");
+    if (!hasPresence) {
+      rawDb.exec("ALTER TABLE users ADD COLUMN presence TEXT NOT NULL DEFAULT 'online'");
+      console.log("[migrate] v12 added users.presence column (default 'online')");
+    }
+  } catch (e) {
+    console.warn("[migrate] v12 presence column skipped:", e);
+  }
 }

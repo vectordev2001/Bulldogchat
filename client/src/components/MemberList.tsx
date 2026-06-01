@@ -84,7 +84,16 @@ function MemberRow({ member, meId, dimmed }: { member: ApiUser; meId?: number; d
       ].join(" ")}
       data-testid={`member-${member.id}`}
     >
-      <Avatar member={{ name: member.name, hue: member.hue, status: member.status }} size={32} showStatus />
+      <Avatar
+        member={{
+          name: member.name,
+          hue: member.hue,
+          status: member.status,
+          presence: (member as { presence?: "online" | "away" | "busy" | "offline" }).presence,
+        }}
+        size={32}
+        showStatus
+      />
       <div className="min-w-0 flex-1">
         <div className={`text-sm font-semibold truncate ${ROLE_TINT[member.role]}`}>
           {member.name}{isMe ? " (you)" : ""}

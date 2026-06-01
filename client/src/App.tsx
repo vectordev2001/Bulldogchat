@@ -11,6 +11,7 @@ import Signup from "@/pages/Signup";
 import AcceptInvite from "@/pages/AcceptInvite";
 import AdminPanel from "@/pages/AdminPanel";
 import { AuthProvider, useAuth } from "@/lib/auth";
+import { PresenceProvider } from "@/hooks/use-presence";
 import { CallProvider } from "@/lib/CallContext";
 import { CallOverlays } from "@/components/CallOverlays";
 import { IosInstallBanner } from "@/components/IosInstallBanner";
@@ -71,6 +72,7 @@ function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
+        <PresenceProvider>
         <CallProvider>
           <TooltipProvider>
             <Toaster />
@@ -81,6 +83,7 @@ function App() {
             <CallOverlays />
           </TooltipProvider>
         </CallProvider>
+        </PresenceProvider>
       </AuthProvider>
     </QueryClientProvider>
   );

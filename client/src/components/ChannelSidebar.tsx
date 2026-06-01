@@ -190,26 +190,10 @@ export function ChannelSidebar({
       </div>
 
       <div className="flex-1 overflow-y-auto px-2 py-3 space-y-4">
-        {/* Company-global channels. Rendered above Jobs so #general /
-            #announcements are always immediately reachable. */}
-        <Section label="Channels" open={textOpen} onToggle={() => setTextOpen(!textOpen)} onAdd={canCreateChannel ? onCreateChannel : undefined}>
-          {textOpen && filteredGlobalChannels.map((c) => (
-            <ChannelRow
-              key={c.id}
-              channel={c}
-              active={c.id === activeChannelId}
-              onClick={() => onSelectChannel(c.id)}
-              onContextMenu={isAdmin ? (x, y) => setCtxMenu({ channel: c, x, y }) : undefined}
-            />
-          ))}
-          {textOpen && filteredGlobalChannels.length === 0 && (
-            <div className="px-2 py-1.5 text-[11px] text-[hsl(0_0%_55%)]">No matching channels.</div>
-          )}
-        </Section>
-
-        {/* Jobs section. Each Job is collapsible; channels nest under it.
-            Empty Jobs still render so the user knows the job exists and
-            can open it from the right rail. */}
+        {/* Jobs section first — Josh wants active work front-and-center.
+            Each Job is collapsible; channels nest under it. Empty Jobs
+            still render so the user knows the job exists and can open it
+            from the right rail. */}
         <Section
           label={`Jobs · ${visibleJobs.length}`}
           open={jobsOpen}
@@ -238,6 +222,23 @@ export function ChannelSidebar({
               />
             );
           })}
+        </Section>
+
+        {/* Company-global channels (#general, #announcements). Rendered
+            below Jobs so they don't push the active job off-screen. */}
+        <Section label="Channels" open={textOpen} onToggle={() => setTextOpen(!textOpen)} onAdd={canCreateChannel ? onCreateChannel : undefined}>
+          {textOpen && filteredGlobalChannels.map((c) => (
+            <ChannelRow
+              key={c.id}
+              channel={c}
+              active={c.id === activeChannelId}
+              onClick={() => onSelectChannel(c.id)}
+              onContextMenu={isAdmin ? (x, y) => setCtxMenu({ channel: c, x, y }) : undefined}
+            />
+          ))}
+          {textOpen && filteredGlobalChannels.length === 0 && (
+            <div className="px-2 py-1.5 text-[11px] text-[hsl(0_0%_55%)]">No matching channels.</div>
+          )}
         </Section>
 
         {/* Company-scoped Jobs launcher — opens the dialog filtered to the

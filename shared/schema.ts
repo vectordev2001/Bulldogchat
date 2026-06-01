@@ -29,6 +29,11 @@ export const users = sqliteTable("users", {
   hue: integer("hue").notNull().default(220),
   role: text("role", { enum: userRoles }).notNull().default("field"),
   status: text("status").notNull().default("online"),
+  // Phase 1.9 presence state for the top-bar status dot. Distinct from
+  // `status` (legacy free-form string). Drives DND push gating.
+  presence: text("presence", { enum: ["online", "away", "busy", "offline"] as const })
+    .notNull()
+    .default("online"),
   deactivated: integer("deactivated", { mode: "boolean" }).notNull().default(false),
   // E.164 phone number for offline call-bridging via Twilio SIP. Synced
   // from bulldog-auth during the SSO bridge so we don't have to round-

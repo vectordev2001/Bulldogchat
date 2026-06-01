@@ -1,6 +1,7 @@
 // Frontend type shapes mirroring the backend wire format from server/routes.ts
 
 export type UserRole = "admin" | "foreman" | "office" | "field" | "safety";
+export type UserPresence = "online" | "away" | "busy" | "offline";
 
 export interface ApiUser {
   id: number;
@@ -12,6 +13,8 @@ export interface ApiUser {
   hue: number;
   role: UserRole;
   status: string;
+  presence?: UserPresence;
+  phone?: string | null;
   createdAt: string;
   lastSeenAt: string | null;
 }
