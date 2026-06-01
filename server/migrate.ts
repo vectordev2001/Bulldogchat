@@ -541,4 +541,53 @@ export function runMigrations() {
   } catch (e) {
     console.warn("[migrate] v9 channel dedupe skipped:", e);
   }
+
+  // v10: Seed demo jobs + nested channels for VFD so the Company → Job →
+  // Channel hierarchy is visible. Only runs if VFD has zero jobs (so it
+  // never clobbers real customer data). Idempotent.
+  try {
+    const orgs = rawDb.prepare(`SELECT id FROM organizations ORDER BY id`).all() as Array<{ id: number }>;
+    for (const org of orgs) {
+      const vfd = rawDb.prepare(`SELECT id FROM projects WHERE org_id = ? AND slug = 'vfd'`).get(org.id) as { id: number } | undefined;
+      if (!vfd) continue;
+
+      const existingJobCount = (rawDb.prepare(`SELECT COUNT(*) as n FROM work_objects WHERE project_id = ?`).get(vfd.id) as { n: number }).n;
+      if (existingJobCount > 0) continue; // already has jobs — don't seed demo data
+
+      // Pick an admin user as creator. Falls back to first user in org.
+      const admin = rawDb.prepare(`SELECT id FROM users WHERE org_id = ? AND role = 'admin' ORDER BY id LIMIT 1`).get(org.id) as { id: number } | undefined
+        ?? rawDb.prepare(`SELECT id FROM users WHERE org_id = ? ORDER BY id LIMIT 1`).get(org.id) as { id: number } | undefined;
+      if (!admin) continue;
+
+      const now = Date.now();
+      const demoJobs = [
+        { ref: "LAKEWOOD-SUB-01", title: "Lakewood Substation Rebuild", kind: "job_site", channels: ["site-updates", "safety-tailgate"] },
+        { ref: "I405-FIBER-02",   title: "I-405 Fiber Pull",            kind: "job_site", channels: ["crew-coord", "locates"] },
+        { ref: "BOE-HYDROVAC-03", title: "Boeing Field Hydrovac",       kind: "job_site", channels: ["day-of", "equipment"] },
+      ];
+
+      const insertJob = rawDb.prepare(`
+        INSERT INTO work_objects (org_id, project_id, kind, ref, title, status, attributes, created_by_user_id, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?)
+      `);
+      // Channel position offset: put nested channels after the existing 10 globals.
+      let posCounter = 100;
+      const insertChannel = rawDb.prepare(`
+        INSERT INTO channels (project_id, work_object_id, name, type, topic, position, scope, created_at)
+        VALUES (?, ?, ?, 'text', ?, ?, 'global', ?)
+      `);
+
+      for (const j of demoJobs) {
+        const jobRes = insertJob.run(org.id, vfd.id, j.kind, j.ref, j.title, "{}", admin.id, now, now);
+        const jobId = Number(jobRes.lastInsertRowid);
+        for (const chName of j.channels) {
+          insertChannel.run(vfd.id, jobId, chName, `${j.title} — ${chName}`, posCounter++, now);
+        }
+        console.log(`[migrate] v10 seeded demo job ${j.ref} (id=${jobId}) with ${j.channels.length} nested channels`);
+      }
+      console.log(`[migrate] v10 demo data seeded for VFD (project ${vfd.id})`);
+    }
+  } catch (e) {
+    console.warn("[migrate] v10 demo seed skipped:", e);
+  }
 }
