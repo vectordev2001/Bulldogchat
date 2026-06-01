@@ -196,12 +196,12 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers, me
     }
   };
 
-  const handleSlashObject = async (rest: string): Promise<boolean> => {
-    // /object REF  -> link existing
+  const handleSlashJob = async (rest: string): Promise<boolean> => {
+    // /job REF (or legacy /object REF)  -> link existing job
     const ref = rest.trim();
     if (!ref) {
       sendMutation.mutate({
-        content: "_Usage: `/object REF` to link a work object to this channel._",
+        content: "_Usage: `/job REF` to link a job to this channel._",
       });
       return true;
     }
@@ -209,7 +209,7 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers, me
       await apiRequest("POST", `/api/channels/${channel.id}/work-objects`, { ref });
       queryClient.invalidateQueries({ queryKey: ["/api/channels", channel.id, "work-objects"] });
       queryClient.invalidateQueries({ queryKey: ["/api/work-objects"] });
-      sendMutation.mutate({ content: `🔗 Linked work object **${ref}** to this channel.` });
+      sendMutation.mutate({ content: `🔗 Linked job **${ref}** to this channel.` });
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Unknown error";
       sendMutation.mutate({ content: `_Could not link ${ref}: ${msg}_` });
@@ -221,13 +221,15 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers, me
     const body = draft.trim();
     if ((!body && pendingAtts.length === 0) || sendMutation.isPending) return;
 
-    // Slash command interception
-    if (body.startsWith("/object")) {
-      const rest = body.slice("/object".length);
+    // Slash command interception: /job is primary; /object kept as silent alias
+    // for one release so existing muscle memory still works.
+    const jobCmdMatch = /^\/(job|object)(?=\s|$)/.exec(body);
+    if (jobCmdMatch) {
+      const rest = body.slice(jobCmdMatch[0].length);
       setDraft("");
       setPendingAtts([]);
       setMentionMatch(null);
-      void handleSlashObject(rest);
+      void handleSlashJob(rest);
       return;
     }
 
@@ -317,7 +319,7 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers, me
             <Pin className="w-4 h-4" />
           </HeaderIcon>
           <HeaderIcon
-            title={workObjectsOpen ? "Hide work objects" : "Show work objects"}
+            title={workObjectsOpen ? "Hide jobs" : "Show jobs"}
             onClick={onToggleWorkObjects}
             active={!!workObjectsOpen}
             data-testid="button-work-objects-toggle"

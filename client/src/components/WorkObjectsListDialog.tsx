@@ -1,6 +1,7 @@
-/* Org-wide Work Objects list view.
+/* Org-wide Jobs list view (internal data model still: work_object).
+ * Renamed in UI as part of Phase 1.7.
  *
- * Launches from the sidebar "Work Objects" button. Shows every work_object in
+ * Launches from the sidebar "All Jobs" button. Shows every job in
  * the user's org, filterable by kind (job_site, work_project, change_order,
  * safety_incident) and status (active / closed / by-kind statuses).
  *
@@ -88,7 +89,7 @@ export function WorkObjectsListDialog({ open, onClose, me, orgMembers }: Props) 
 
   const canCreate = me.role === "admin" || me.role === "foreman";
 
-  // Fetch all work objects in the user's org. includeClosed=1 when needed.
+  // Fetch all jobs in the user's org. includeClosed=1 when needed.
   // Backend already filters by org via the auth context, so we just paginate
   // generously and filter client-side for snappy UX.
   const listQ = useQuery<WorkObject[]>({
@@ -156,7 +157,7 @@ export function WorkObjectsListDialog({ open, onClose, me, orgMembers }: Props) 
                 <ClipboardList className="w-4 h-4 text-vs-red" />
               </div>
               <div>
-                <h2 className="text-base font-display text-white">Work Objects</h2>
+                <h2 className="text-base font-display text-white">Jobs</h2>
                 <p className="text-[11px] text-[hsl(0_0%_60%)]">All sites, projects, change orders & safety incidents in your org.</p>
               </div>
             </div>
@@ -222,12 +223,15 @@ export function WorkObjectsListDialog({ open, onClose, me, orgMembers }: Props) 
             {listQ.isLoading ? (
               <div className="flex items-center justify-center py-12 text-[hsl(0_0%_60%)]">
                 <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                <span className="text-sm">Loading work objects...</span>
+                <span className="text-sm">Loading jobs...</span>
               </div>
             ) : filtered.length === 0 ? (
               <div className="text-center py-12 text-[hsl(0_0%_55%)]">
                 <ClipboardList className="w-8 h-8 mx-auto mb-2 opacity-40" />
-                <p className="text-sm">No work objects match those filters.</p>
+                <p className="text-sm font-medium text-[hsl(0_0%_75%)]">No jobs match those filters.</p>
+                <p className="text-xs mt-2 max-w-sm mx-auto leading-relaxed">
+                  Jobs are the real-world things your crews work on — sites, projects, change orders, safety incidents. Create one to start tracking it across channels.
+                </p>
                 {canCreate && (
                   <button
                     type="button"

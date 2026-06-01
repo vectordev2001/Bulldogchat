@@ -87,7 +87,7 @@ function loadOwned(req: Request, res: Response, id: number): WorkObject | null {
   const u = (req as AuthedRequest).user;
   const wo = storage.getWorkObject(id);
   if (!wo || wo.orgId !== u.orgId) {
-    res.status(404).json({ message: "Work object not found" });
+    res.status(404).json({ message: "Job not found" });
     return null;
   }
   return wo;
@@ -133,7 +133,7 @@ export function registerWorkObjectRoutes(app: Express) {
     if (input.parentId != null) {
       const parent = storage.getWorkObject(input.parentId);
       if (!parent || parent.orgId !== u.orgId) {
-        return res.status(400).json({ message: "parentId references an unknown work object" });
+        return res.status(400).json({ message: "parentId references an unknown job" });
       }
     }
 
@@ -231,7 +231,7 @@ export function registerWorkObjectRoutes(app: Express) {
       if (patch.parentId != null) {
         const parent = storage.getWorkObject(patch.parentId);
         if (!parent || parent.orgId !== u.orgId) {
-          return res.status(400).json({ message: "parentId references an unknown work object" });
+          return res.status(400).json({ message: "parentId references an unknown job" });
         }
       }
       updates.parentId = patch.parentId ?? null;
@@ -321,7 +321,7 @@ export function registerWorkObjectRoutes(app: Express) {
     const u = (req as AuthedRequest).user;
     const ref = String(req.params.ref);
     const wo = storage.findWorkObjectByRefAcrossKinds(u.orgId, ref);
-    if (!wo) return res.status(404).json({ message: `No work object with ref "${ref}"` });
+    if (!wo) return res.status(404).json({ message: `No job with ref "${ref}"` });
     res.json(publicWorkObject(wo));
   });
 
@@ -363,7 +363,7 @@ export function registerWorkObjectRoutes(app: Express) {
     } else {
       return res.status(400).json({ message: "Provide workObjectId or ref" });
     }
-    if (!wo || wo.orgId !== u.orgId) return res.status(404).json({ message: "Work object not found" });
+    if (!wo || wo.orgId !== u.orgId) return res.status(404).json({ message: "Job not found" });
 
     storage.linkWorkObjectToChannel({
       workObjectId: wo.id,
@@ -397,7 +397,7 @@ export function registerWorkObjectRoutes(app: Express) {
     const project = storage.getProject(channel.projectId);
     if (!project || project.orgId !== u.orgId) return res.status(404).json({ message: "Channel not found" });
     const wo = storage.getWorkObject(woId);
-    if (!wo || wo.orgId !== u.orgId) return res.status(404).json({ message: "Work object not found" });
+    if (!wo || wo.orgId !== u.orgId) return res.status(404).json({ message: "Job not found" });
     storage.unlinkWorkObjectFromChannel(woId, channelId);
     storage.appendWorkObjectActivity({
       workObjectId: woId,

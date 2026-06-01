@@ -120,7 +120,7 @@ export function CreateWorkObjectDialog({ open, onClose, channelId, me, orgMember
       onClose();
     },
     onError: (err: Error) => {
-      setError(err.message || "Could not create work object");
+      setError(err.message || "Could not create job");
     },
   });
 
@@ -145,7 +145,7 @@ export function CreateWorkObjectDialog({ open, onClose, channelId, me, orgMember
     <Dialog open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
       <DialogContent className="max-w-lg" data-testid="dialog-create-work-object">
         <DialogHeader>
-          <DialogTitle>New work object</DialogTitle>
+          <DialogTitle>New job</DialogTitle>
           <DialogDescription>
             {channelId
               ? "This will also be linked to the current channel."

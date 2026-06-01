@@ -94,7 +94,7 @@ export function WorkObjectPanel({ channelId, me, orgMembers, onClose }: Props) {
       queryClient.invalidateQueries({ queryKey: ["/api/work-objects"] });
     },
     onError: (err: Error) => {
-      setLinkError(err.message || "Could not link work object");
+      setLinkError(err.message || "Could not link job");
     },
   });
 
@@ -121,7 +121,7 @@ export function WorkObjectPanel({ channelId, me, orgMembers, onClose }: Props) {
       <header className="px-3 py-3 border-b border-[hsl(232_40%_22%)] flex items-center justify-between">
         <div className="flex items-center gap-2 text-[hsl(0_0%_85%)] text-sm font-semibold uppercase tracking-wide">
           <ClipboardList className="w-4 h-4" />
-          Work Objects
+          Jobs in this channel
         </div>
         <div className="flex items-center gap-1">
           {canLink && (
@@ -129,7 +129,7 @@ export function WorkObjectPanel({ channelId, me, orgMembers, onClose }: Props) {
               type="button"
               onClick={() => setCreateOpen(true)}
               className="p-1 rounded hover-elevate text-[hsl(0_0%_60%)] hover:text-white"
-              title="New work object"
+              title="New job"
               data-testid="button-new-work-object"
             >
               <Plus className="w-4 h-4" />
@@ -140,7 +140,7 @@ export function WorkObjectPanel({ channelId, me, orgMembers, onClose }: Props) {
               type="button"
               onClick={onClose}
               className="p-1 rounded hover-elevate text-[hsl(0_0%_60%)] hover:text-white"
-              title="Hide work objects"
+              title="Hide jobs"
               data-testid="button-close-work-objects"
             >
               <X className="w-4 h-4" />
@@ -165,12 +165,15 @@ export function WorkObjectPanel({ channelId, me, orgMembers, onClose }: Props) {
         )}
         {listQ.isError && (
           <div className="px-2 py-2 text-xs text-[hsl(2_85%_72%)]">
-            Failed to load work objects
+            Failed to load jobs
           </div>
         )}
         {!listQ.isLoading && (listQ.data?.length ?? 0) === 0 && (
           <div className="px-2 py-4 text-xs text-[hsl(0_0%_55%)] leading-relaxed space-y-2">
-            <div>No work objects linked yet.</div>
+            <div className="text-[hsl(0_0%_75%)] font-medium">No jobs linked yet.</div>
+            <div>
+              A job is the real-world thing this channel is about — a site, a project, a change order, or a safety incident. Link one so everyone knows what work the conversation tracks.
+            </div>
             {canLink && (
               <button
                 type="button"
@@ -178,9 +181,12 @@ export function WorkObjectPanel({ channelId, me, orgMembers, onClose }: Props) {
                 className="w-full flex items-center justify-center gap-1.5 rounded border border-[hsl(232_40%_22%)] bg-[hsl(232_60%_10%)] px-2 py-2 text-xs text-white hover-elevate"
                 data-testid="button-empty-new-work-object"
               >
-                <Plus className="w-3.5 h-3.5" /> New work object
+                <Plus className="w-3.5 h-3.5" /> New job
               </button>
             )}
+            <div className="text-[10px] text-[hsl(0_0%_45%)] leading-tight pt-1">
+              Tip: type <span className="font-mono text-[hsl(0_0%_65%)]">/job REF</span> in chat to link an existing job.
+            </div>
           </div>
         )}
 
@@ -255,7 +261,7 @@ export function WorkObjectPanel({ channelId, me, orgMembers, onClose }: Props) {
               type="submit"
               disabled={!linkInput.trim() || linkMutation.isPending}
               className="p-1.5 rounded bg-vs-red/20 border border-vs-red/40 text-vs-red hover:bg-vs-red/30 disabled:opacity-40 disabled:cursor-not-allowed"
-              title="Link work object"
+              title="Link job"
               data-testid="button-link-work-object"
             >
               {linkMutation.isPending ? (
@@ -269,7 +275,7 @@ export function WorkObjectPanel({ channelId, me, orgMembers, onClose }: Props) {
             <div className="text-[11px] text-[hsl(2_85%_72%)] px-1">{linkError}</div>
           )}
           <div className="text-[10px] text-[hsl(0_0%_45%)] px-1 leading-tight">
-            Tip: in chat, use <span className="font-mono text-[hsl(0_0%_65%)]">/object REF</span> to link.
+            Tip: in chat, use <span className="font-mono text-[hsl(0_0%_65%)]">/job REF</span> to link.
           </div>
         </form>
       )}

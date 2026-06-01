@@ -124,7 +124,7 @@ export function WorkObjectDetailDrawer({ open, workObjectId, onClose, me, orgMem
       queryClient.invalidateQueries({ queryKey: ["/api/work-objects"] });
       setEditMode(false);
       setEdits({});
-      toast({ title: "Saved", description: "Work object updated." });
+      toast({ title: "Saved", description: "Job updated." });
     },
     onError: (err: unknown) => {
       toast({
@@ -140,7 +140,7 @@ export function WorkObjectDetailDrawer({ open, workObjectId, onClose, me, orgMem
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/work-objects", workObjectId] });
       queryClient.invalidateQueries({ queryKey: ["/api/work-objects"] });
-      toast({ title: "Closed", description: "Work object closed." });
+      toast({ title: "Closed", description: "Job closed." });
     },
   });
 
@@ -149,7 +149,7 @@ export function WorkObjectDetailDrawer({ open, workObjectId, onClose, me, orgMem
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/work-objects", workObjectId] });
       queryClient.invalidateQueries({ queryKey: ["/api/work-objects"] });
-      toast({ title: "Reopened", description: "Work object reopened." });
+      toast({ title: "Reopened", description: "Job reopened." });
     },
   });
 
@@ -565,7 +565,7 @@ function Footer({
   if (!canEdit) {
     return (
       <div className="px-5 py-3 border-t border-[hsl(232_40%_22%)] text-[11px] text-[hsl(0_0%_50%)]">
-        Read-only · only admins and foremen can edit work objects.
+        Read-only · only admins and foremen can edit jobs.
       </div>
     );
   }

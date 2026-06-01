@@ -101,7 +101,7 @@ export function ChannelSidebar({
           ))}
         </Section>
 
-        {/* Org-wide Work Objects launcher — separate from channels so it reads
+        {/* Org-wide Jobs launcher — separate from channels so it reads
             as a workspace tool, not another room. */}
         {onOpenWorkObjects && (
           <div className="pt-1">
@@ -110,10 +110,11 @@ export function ChannelSidebar({
               type="button"
               onClick={onOpenWorkObjects}
               data-testid="button-open-work-objects"
+              title="Every job in your org — sites, projects, change orders, safety incidents."
               className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-sm text-[hsl(0_0%_75%)] hover:bg-[hsl(232_45%_25%)] hover:text-white transition-colors"
             >
               <ClipboardList className="w-4 h-4 shrink-0 text-vs-red" />
-              <span className="truncate font-medium">Work Objects</span>
+              <span className="truncate font-medium">All Jobs</span>
               <span className="ml-auto text-[10px] font-mono text-[hsl(0_0%_45%)]">org</span>
             </button>
           </div>
