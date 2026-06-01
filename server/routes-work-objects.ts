@@ -73,6 +73,8 @@ function publicWorkObject(wo: WorkObject) {
     description: wo.description,
     parentId: wo.parentId,
     ownerUserId: wo.ownerUserId,
+    // Phase 1.8: which company (chat-side project) owns this job.
+    projectId: wo.projectId ?? null,
     attributes,
     createdByUserId: wo.createdByUserId,
     createdAt: wo.createdAt,
@@ -95,10 +97,13 @@ function loadOwned(req: Request, res: Response, id: number): WorkObject | null {
 
 export function registerWorkObjectRoutes(app: Express) {
   /* ─── list ─── */
+  // Phase 1.8: callers should pass ?projectId=<company> so the sidebar and
+  // right-rail only show jobs for the active company. Omitting projectId
+  // returns every job across all companies in the org (admin-style views).
   app.get("/api/work-objects", requireAuth, (req, res) => {
     const u = (req as AuthedRequest).user;
-    const { kind, status, includeClosed, limit } = req.query;
-    const opts: { kind?: WorkObjectKind; status?: WorkObjectStatus; includeClosed?: boolean; limit?: number } = {};
+    const { kind, status, includeClosed, limit, projectId } = req.query;
+    const opts: { kind?: WorkObjectKind; status?: WorkObjectStatus; includeClosed?: boolean; limit?: number; projectId?: number } = {};
     if (typeof kind === "string" && (workObjectKinds as readonly string[]).includes(kind)) {
       opts.kind = kind as WorkObjectKind;
     }
@@ -107,6 +112,14 @@ export function registerWorkObjectRoutes(app: Express) {
     if (typeof limit === "string") {
       const n = Number(limit);
       if (Number.isFinite(n) && n > 0 && n <= 500) opts.limit = Math.floor(n);
+    }
+    if (typeof projectId === "string") {
+      const pid = Number(projectId);
+      if (Number.isFinite(pid) && pid > 0) {
+        // Defence-in-depth: the requested company must belong to caller's org.
+        const proj = storage.getProject(pid);
+        if (proj && proj.orgId === u.orgId) opts.projectId = pid;
+      }
     }
     const rows = storage.listWorkObjectsByOrg(u.orgId, opts).map(publicWorkObject);
     res.json(rows);
@@ -137,8 +150,25 @@ export function registerWorkObjectRoutes(app: Express) {
       }
     }
 
+    // Phase 1.8: the active company comes from ?projectId=<id> query string
+    // (matches our existing ?projectId pattern for list). The client always
+    // sends it from the company switcher. Fall back to body for symmetry.
+    let projectId: number | null = null;
+    const pidRaw = req.query.projectId ?? (req.body as Record<string, unknown> | undefined)?.projectId;
+    if (pidRaw !== undefined && pidRaw !== null && pidRaw !== "") {
+      const pid = Number(pidRaw);
+      if (!Number.isFinite(pid) || pid <= 0) return res.status(400).json({ message: "Invalid projectId" });
+      const proj = storage.getProject(pid);
+      if (!proj || proj.orgId !== u.orgId) return res.status(400).json({ message: "Company not found" });
+      if (!storage.isProjectMember(pid, u.id) && u.role !== "admin") {
+        return res.status(403).json({ message: "Not a member of this company" });
+      }
+      projectId = pid;
+    }
+
     const created = storage.createWorkObject({
       orgId: u.orgId,
+      projectId,
       kind: input.kind,
       ref: input.ref,
       title: input.title,
@@ -168,7 +198,7 @@ export function registerWorkObjectRoutes(app: Express) {
     res.json({
       ...publicWorkObject(wo),
       activity,
-      channels: channels.map(c => ({ id: c.id, name: c.name, projectId: c.projectId, type: c.type })),
+      channels: channels.map(c => ({ id: c.id, name: c.name, projectId: c.projectId, workObjectId: c.workObjectId, type: c.type })),
     });
   });
 

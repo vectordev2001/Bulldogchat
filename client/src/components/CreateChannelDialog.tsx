@@ -3,7 +3,15 @@ import { useQuery } from "@tanstack/react-query";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { ApiChannel, ApiUser, ChannelScope, ChannelType, UserRole } from "@/types/api";
-import { Loader2, Hash, Volume2, Globe, Building2, Users, Lock } from "lucide-react";
+import { Loader2, Hash, Volume2, Globe, Building2, Users, Lock, Briefcase } from "lucide-react";
+
+interface ApiJob {
+  id: number;
+  name: string;
+  kind: string;
+  status: string;
+  projectId?: number | null;
+}
 
 interface Props {
   open: boolean;
@@ -36,6 +44,7 @@ export function CreateChannelDialog({ open, onClose, projectId, me, onCreated }:
   const [entityId, setEntityId] = useState("");
   const [teamRole, setTeamRole] = useState<UserRole>("field");
   const [memberIds, setMemberIds] = useState<Set<number>>(new Set());
+  const [workObjectId, setWorkObjectId] = useState<string>("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -49,6 +58,7 @@ export function CreateChannelDialog({ open, onClose, projectId, me, onCreated }:
       setEntityId("");
       setTeamRole("field");
       setMemberIds(new Set());
+      setWorkObjectId("");
       setError(null);
       setLoading(false);
     }
@@ -58,6 +68,20 @@ export function CreateChannelDialog({ open, onClose, projectId, me, onCreated }:
     queryKey: ["/api/org/members"],
     enabled: open,
   });
+
+  // Jobs in the active company — used to optionally nest the channel under a job.
+  // We query through apiRequest so the query string is consistent with the rest
+  // of the app and the deploy-time proxy rewrite still works.
+  const jobsQ = useQuery<ApiJob[]>({
+    queryKey: ["/api/work-objects", { projectId }],
+    queryFn: () => apiRequest<ApiJob[]>("GET", `/api/work-objects?projectId=${projectId}`),
+    enabled: open,
+  });
+
+  // Only show open jobs as nesting targets — closed/archived jobs would just clutter the picker.
+  const openJobs = useMemo(() => {
+    return (jobsQ.data ?? []).filter(j => j.status !== "closed" && j.status !== "archived");
+  }, [jobsQ.data]);
 
   // Distinct entity tags inferred from user titles. Lets admins pick from
   // what already exists in the org rather than typing free-form strings.
@@ -95,6 +119,7 @@ export function CreateChannelDialog({ open, onClose, projectId, me, onCreated }:
       // channels these are the only members; for other scopes they layer
       // on top of the visibility rule.
       if (memberIds.size > 0) body.memberIds = Array.from(memberIds);
+      if (workObjectId) body.workObjectId = Number(workObjectId);
       const created = await apiRequest<ApiChannel>("POST", `/api/projects/${projectId}/channels`, body);
       await queryClient.invalidateQueries({ queryKey: ["/api/projects", projectId, "channels"] });
       onCreated?.(created);
@@ -154,6 +179,33 @@ export function CreateChannelDialog({ open, onClose, projectId, me, onCreated }:
             data-testid="input-channel-topic"
             maxLength={500}
           />
+
+          {/* Optional job nesting. Leaving this blank keeps the channel as a
+              company-wide channel; picking a job nests it under that job in
+              the sidebar. */}
+          <div className="space-y-1.5">
+            <label className="flex items-center gap-2 text-xs text-[hsl(0_0%_55%)]">
+              <Briefcase className="h-3.5 w-3.5" />
+              Nest under job (optional)
+            </label>
+            <select
+              value={workObjectId}
+              onChange={(e) => setWorkObjectId(e.target.value)}
+              className="w-full rounded-md border border-[hsl(0_0%_18%)] bg-[hsl(0_0%_8%)] px-3 py-2 text-sm"
+              data-testid="select-work-object"
+              disabled={jobsQ.isLoading}
+            >
+              <option value="">— Company-wide (no job)</option>
+              {openJobs.map(j => (
+                <option key={j.id} value={String(j.id)}>
+                  {j.name} · {j.kind.replace(/_/g, " ")}
+                </option>
+              ))}
+            </select>
+            {openJobs.length === 0 && !jobsQ.isLoading && (
+              <div className="text-[11px] text-[hsl(0_0%_55%)]">No open jobs in this company yet.</div>
+            )}
+          </div>
 
           {/* Scope picker */}
           <div className="space-y-2">

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { ClipboardList, ChevronRight, X, Plus, Loader2, MapPin, Briefcase, FileEdit, AlertTriangle } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -70,12 +70,20 @@ function statusPill(status: string): string {
   return STATUS_TONE[status] ?? "bg-[hsl(0_0%_30%)]/30 text-[hsl(0_0%_70%)]";
 }
 
+type KindFilter = "all" | WorkObjectKind;
+type StatusFilter = "open" | "all";
+
 export function WorkObjectPanel({ channelId, me, orgMembers, onClose }: Props) {
   const [linkInput, setLinkInput] = useState("");
   const [linkError, setLinkError] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   // Detail drawer launches over this panel; null = closed.
   const [detailId, setDetailId] = useState<number | null>(null);
+  // Phase 1.8: filter controls. "open" status hides closed/resolved/rejected
+  // jobs by default — most users only care about active work. "all" shows
+  // everything. Kind filter is a single chip selection.
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("open");
+  const [kindFilter, setKindFilter] = useState<KindFilter>("all");
 
   const canLink = me.role === "admin" || me.role === "foreman";
 
@@ -83,6 +91,21 @@ export function WorkObjectPanel({ channelId, me, orgMembers, onClose }: Props) {
     queryKey: ["/api/channels", channelId, "work-objects"],
     queryFn: () => apiRequest<WorkObject[]>("GET", `/api/channels/${channelId}/work-objects`),
   });
+
+  // Client-side filter. We don't push these to the server because the
+  // channel-scoped list is usually tiny (a handful of jobs at most) and
+  // refetching for every chip toggle would feel laggy.
+  const filtered = useMemo(() => {
+    const rows = listQ.data ?? [];
+    return rows.filter((wo) => {
+      if (kindFilter !== "all" && wo.kind !== kindFilter) return false;
+      if (statusFilter === "open") {
+        // Treat anything terminal as closed for the panel's purposes.
+        if (wo.status === "closed" || wo.status === "resolved" || wo.status === "rejected") return false;
+      }
+      return true;
+    });
+  }, [listQ.data, kindFilter, statusFilter]);
 
   const linkMutation = useMutation({
     mutationFn: async (ref: string) =>
@@ -157,6 +180,31 @@ export function WorkObjectPanel({ channelId, me, orgMembers, onClose }: Props) {
         orgMembers={orgMembers}
       />
 
+      {/* Filters. Kept compact — this rail is only 240px wide so we wrap
+          the kind chips and let the status toggle sit on its own row. */}
+      <div className="px-2 py-2 border-b border-[hsl(232_40%_22%)] space-y-1.5">
+        <div className="flex flex-wrap items-center gap-1" data-testid="filter-panel-kind">
+          <PanelChip label="All" active={kindFilter === "all"} onClick={() => setKindFilter("all")} testid="filter-panel-kind-all" />
+          {(Object.entries(KIND_META) as [WorkObjectKind, typeof KIND_META[WorkObjectKind]][]).map(([k, meta]) => (
+            <PanelChip
+              key={k}
+              label={meta.label}
+              Icon={meta.icon}
+              active={kindFilter === k}
+              onClick={() => setKindFilter(k)}
+              testid={`filter-panel-kind-${k}`}
+            />
+          ))}
+        </div>
+        <div className="flex items-center gap-1" data-testid="filter-panel-status">
+          <PanelChip label="Open" active={statusFilter === "open"} onClick={() => setStatusFilter("open")} testid="filter-panel-status-open" />
+          <PanelChip label="All statuses" active={statusFilter === "all"} onClick={() => setStatusFilter("all")} testid="filter-panel-status-all" />
+          <span className="ml-auto text-[10px] text-[hsl(0_0%_45%)] font-mono" data-testid="text-filter-count">
+            {filtered.length}/{listQ.data?.length ?? 0}
+          </span>
+        </div>
+      </div>
+
       <div className="flex-1 overflow-y-auto px-2 py-2 space-y-1">
         {listQ.isLoading && (
           <div className="flex items-center justify-center py-6 text-[hsl(0_0%_60%)]">
@@ -166,6 +214,16 @@ export function WorkObjectPanel({ channelId, me, orgMembers, onClose }: Props) {
         {listQ.isError && (
           <div className="px-2 py-2 text-xs text-[hsl(2_85%_72%)]">
             Failed to load jobs
+          </div>
+        )}
+        {!listQ.isLoading && (listQ.data?.length ?? 0) > 0 && filtered.length === 0 && (
+          <div className="px-2 py-3 text-xs text-[hsl(0_0%_55%)] leading-relaxed" data-testid="text-empty-filtered">
+            No jobs match those filters. <button
+              type="button"
+              onClick={() => { setKindFilter("all"); setStatusFilter("open"); }}
+              className="underline text-[hsl(0_0%_75%)] hover:text-white"
+              data-testid="button-reset-filters"
+            >Reset</button>.
           </div>
         )}
         {!listQ.isLoading && (listQ.data?.length ?? 0) === 0 && (
@@ -190,7 +248,7 @@ export function WorkObjectPanel({ channelId, me, orgMembers, onClose }: Props) {
           </div>
         )}
 
-        {(listQ.data ?? []).map((wo) => {
+        {filtered.map((wo) => {
           const meta = KIND_META[wo.kind];
           const Icon = meta.icon;
           return (
@@ -288,6 +346,30 @@ export function WorkObjectPanel({ channelId, me, orgMembers, onClose }: Props) {
         orgMembers={orgMembers}
       />
     </aside>
+  );
+}
+
+// Compact filter chip for the narrow right-rail panel. Mirrors the FilterPill
+// in WorkObjectsListDialog but sized for 240px and uses the same red-active /
+// muted-inactive treatment so the two views feel consistent.
+function PanelChip({
+  label, Icon, active, onClick, testid,
+}: { label: string; Icon?: typeof MapPin; active: boolean; onClick: () => void; testid?: string }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      data-testid={testid}
+      className={[
+        "inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold transition-colors",
+        active
+          ? "bg-vs-red text-white"
+          : "text-[hsl(0_0%_70%)] hover:text-white hover:bg-[hsl(232_45%_22%)]",
+      ].join(" ")}
+    >
+      {Icon && <Icon className="w-2.5 h-2.5" />}
+      {label}
+    </button>
   );
 }
 

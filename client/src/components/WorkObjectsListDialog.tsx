@@ -41,6 +41,10 @@ interface Props {
   onClose: () => void;
   me: ApiUser;
   orgMembers: ApiUser[];
+  // Active company — if set, the list filters to jobs in this company. When
+  // null/undefined we fall back to showing jobs across all companies the user
+  // has access to (legacy behavior).
+  activeProjectId?: number | null;
 }
 
 const KIND_META: Record<WorkObjectKind, { label: string; plural: string; icon: typeof MapPin; tone: string }> = {
@@ -79,7 +83,7 @@ const STATUS_TONE: Record<string, string> = {
 type KindFilter = "all" | WorkObjectKind;
 type StatusFilter = "open" | "closed" | "all";
 
-export function WorkObjectsListDialog({ open, onClose, me, orgMembers }: Props) {
+export function WorkObjectsListDialog({ open, onClose, me, orgMembers, activeProjectId }: Props) {
   const [kindFilter, setKindFilter] = useState<KindFilter>("all");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("open");
   const [search, setSearch] = useState("");
@@ -93,11 +97,12 @@ export function WorkObjectsListDialog({ open, onClose, me, orgMembers }: Props) 
   // Backend already filters by org via the auth context, so we just paginate
   // generously and filter client-side for snappy UX.
   const listQ = useQuery<WorkObject[]>({
-    queryKey: ["/api/work-objects", { includeClosed: statusFilter !== "open", kind: kindFilter, limit: 500 }],
+    queryKey: ["/api/work-objects", { includeClosed: statusFilter !== "open", kind: kindFilter, limit: 500, projectId: activeProjectId ?? null }],
     queryFn: () => {
       const params = new URLSearchParams();
       if (kindFilter !== "all") params.set("kind", kindFilter);
       if (statusFilter !== "open") params.set("includeClosed", "1");
+      if (activeProjectId != null) params.set("projectId", String(activeProjectId));
       params.set("limit", "500");
       return apiRequest<WorkObject[]>("GET", `/api/work-objects?${params.toString()}`);
     },
@@ -293,6 +298,7 @@ export function WorkObjectsListDialog({ open, onClose, me, orgMembers }: Props) 
           onClose={() => setCreateOpen(false)}
           me={me}
           orgMembers={orgMembers}
+          projectId={activeProjectId ?? null}
           onCreated={() => {
             setCreateOpen(false);
           }}

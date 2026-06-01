@@ -11,6 +11,10 @@ interface Props {
   open: boolean;
   onClose: () => void;
   channelId?: number;          // if provided, link to this channel after create
+  // Active company. When set, the new job is created under this company so
+  // it shows up in the right company’s sidebar Jobs section. The backend
+  // reads this from query string or body — we send via body for consistency.
+  projectId?: number | null;
   me: ApiUser;
   orgMembers: ApiUser[];
   onCreated?: () => void;
@@ -39,7 +43,7 @@ const SAFETY_SEVERITIES = [
   { value: "fatality",   label: "Fatality" },
 ];
 
-export function CreateWorkObjectDialog({ open, onClose, channelId, me, orgMembers, onCreated }: Props) {
+export function CreateWorkObjectDialog({ open, onClose, channelId, projectId, me, orgMembers, onCreated }: Props) {
   const [kind, setKind] = useState<WorkObjectKind>("work_project");
   const [ref, setRef] = useState("");
   const [title, setTitle] = useState("");
@@ -95,6 +99,7 @@ export function CreateWorkObjectDialog({ open, onClose, channelId, me, orgMember
           ref: ref.trim(),
           title: title.trim(),
           ...(ownerUserId !== "" ? { ownerUserId } : {}),
+          ...(projectId != null ? { projectId } : {}),
           ...(Object.keys(attributes).length > 0 ? { attributes } : {}),
         }
       );

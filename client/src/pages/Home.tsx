@@ -256,6 +256,7 @@ export default function Home() {
             onClose={() => setWorkObjectsListOpen(false)}
             me={user as ApiUser}
             orgMembers={members}
+            activeProjectId={activeProjectId}
           />
         )}
         {activeProject && user && (

@@ -180,7 +180,10 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
   // ── PROJECTS ──
   app.get("/api/projects", requireAuth, (req, res) => {
     const u = (req as AuthedRequest).user;
-    const projects = storage.listProjectsForUser(u.id);
+    // Phase 1.8: admins see every company in their org (so admin tooling
+    // and the company switcher are fully populated). Non-admins see only
+    // the companies they're a member of via project_members.
+    const projects = storage.listProjectsForUserInOrg(u.id, u.orgId);
     res.json(projects);
   });
 
@@ -227,9 +230,21 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     if (!userCanAccessProject(u.id, u.orgId, id)) return res.status(404).json({ message: "Not found" });
     const parsed = channelCreateSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: parsed.error.issues[0]?.message ?? "Invalid input" });
+    // Phase 1.8: if the caller wants to nest this channel under a Job
+    // (work_object), make sure that job lives in the same company. Cross-
+    // company nesting would be confusing in the sidebar.
+    let workObjectId: number | null = null;
+    if (parsed.data.workObjectId) {
+      const job = storage.getWorkObject(parsed.data.workObjectId);
+      if (!job || job.orgId !== u.orgId || (job.projectId ?? null) !== id) {
+        return res.status(400).json({ message: "Job does not belong to this company" });
+      }
+      workObjectId = job.id;
+    }
     const existing = storage.listChannelsByProject(id);
     const channel = storage.createChannel({
       projectId: id,
+      workObjectId,
       position: existing.length,
       name: parsed.data.name,
       type: parsed.data.type,
@@ -293,6 +308,106 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
       return res.status(403).json({ message: "Only admins can remove other members" });
     }
     storage.removeChannelMember(channelId, targetId);
+    res.json({ ok: true });
+  });
+
+  // ── PHASE 1.8: ADMIN MOVE CHANNEL ──
+  // Admin-only. Re-home a channel to a different company (projectId) and/or
+  // nest it under a different Job (workObjectId). Used by the "Move channel"
+  // admin action in the sidebar context menu.
+  //
+  // Cross-company rules:
+  //   - Target company must be in the same org as the caller.
+  //   - If workObjectId is provided, that job must belong to the target
+  //     company. NULL workObjectId moves the channel back to company-global.
+  //   - We do NOT touch channel_members on move — explicit private grants
+  //     are preserved (admins can edit membership separately).
+  app.patch("/api/channels/:id", requireAuth, requireRole(["admin"]), (req, res) => {
+    const u = (req as AuthedRequest).user;
+    const channelId = Number(req.params.id);
+    const channel = storage.getChannel(channelId);
+    if (!channel) return res.status(404).json({ message: "Not found" });
+    // Source company must be in caller's org.
+    const srcProject = storage.getProject(channel.projectId);
+    if (!srcProject || srcProject.orgId !== u.orgId) return res.status(404).json({ message: "Not found" });
+
+    const patch: { name?: string; topic?: string | null; projectId?: number; workObjectId?: number | null; position?: number } = {};
+    if (typeof req.body?.name === "string" && req.body.name.trim().length > 0) {
+      patch.name = String(req.body.name).slice(0, 80);
+    }
+    if (req.body?.topic === null || typeof req.body?.topic === "string") {
+      patch.topic = req.body.topic === null ? null : String(req.body.topic).slice(0, 500);
+    }
+    if (typeof req.body?.position === "number" && Number.isFinite(req.body.position)) {
+      patch.position = req.body.position;
+    }
+
+    // Resolve target company. Default = current.
+    let targetProjectId = channel.projectId;
+    if (req.body?.projectId !== undefined && req.body.projectId !== null) {
+      const pid = Number(req.body.projectId);
+      if (!Number.isFinite(pid)) return res.status(400).json({ message: "Invalid projectId" });
+      const target = storage.getProject(pid);
+      if (!target || target.orgId !== u.orgId) return res.status(400).json({ message: "Target company not found" });
+      targetProjectId = pid;
+      if (pid !== channel.projectId) patch.projectId = pid;
+    }
+
+    // Resolve target job. Explicit null = move to company-global.
+    if (req.body?.workObjectId === null) {
+      patch.workObjectId = null;
+    } else if (req.body?.workObjectId !== undefined) {
+      const woid = Number(req.body.workObjectId);
+      if (!Number.isFinite(woid)) return res.status(400).json({ message: "Invalid workObjectId" });
+      const job = storage.getWorkObject(woid);
+      if (!job || job.orgId !== u.orgId || (job.projectId ?? null) !== targetProjectId) {
+        return res.status(400).json({ message: "Job does not belong to the target company" });
+      }
+      patch.workObjectId = woid;
+    } else if (patch.projectId !== undefined && channel.workObjectId !== null) {
+      // Moving to a new company but no job specified — clear the job link
+      // (the old job lives in the old company and would be invalid here).
+      patch.workObjectId = null;
+    }
+
+    if (Object.keys(patch).length === 0) return res.json(channel);
+    const updated = storage.updateChannel(channelId, patch);
+    res.json(updated);
+  });
+
+  // ── PHASE 1.8: COMPANY MEMBERSHIP ──
+  // Admins can grant/revoke access to a company. Flat membership — no
+  // per-company roles (the user's org-level role still governs what they
+  // can do).
+  app.post("/api/projects/:id/members", requireAuth, requireRole(["admin"]), (req, res) => {
+    const u = (req as AuthedRequest).user;
+    const projectId = Number(req.params.id);
+    const project = storage.getProject(projectId);
+    if (!project || project.orgId !== u.orgId) return res.status(404).json({ message: "Not found" });
+    const raw = Array.isArray(req.body?.userIds) ? req.body.userIds : (typeof req.body?.userId === "number" ? [req.body.userId] : []);
+    const wanted = raw.map((v: unknown) => Number(v)).filter((n: number) => Number.isFinite(n) && n > 0);
+    if (wanted.length === 0) return res.status(400).json({ message: "userIds required" });
+    const orgMemberIds = new Set(storage.listUsersByOrg(u.orgId).map(m => m.id));
+    let added = 0;
+    for (const uid of wanted) {
+      if (!orgMemberIds.has(uid)) continue;
+      storage.addProjectMember(projectId, uid);
+      added += 1;
+    }
+    res.json({ ok: true, added, memberIds: storage.listProjectMembers(projectId).map(m => m.id) });
+  });
+
+  app.delete("/api/projects/:id/members/:userId", requireAuth, requireRole(["admin"]), (req, res) => {
+    const u = (req as AuthedRequest).user;
+    const projectId = Number(req.params.id);
+    const targetId = Number(req.params.userId);
+    const project = storage.getProject(projectId);
+    if (!project || project.orgId !== u.orgId) return res.status(404).json({ message: "Not found" });
+    // Don't let an admin remove themself from a company by accident — they
+    // can lose admin tooling on that surface. They can still revoke other
+    // admins; the UI gates this with a confirm.
+    if (targetId === u.id) return res.status(400).json({ message: "Use a different admin to remove yourself" });
+    storage.removeProjectMember(projectId, targetId);
     res.json({ ok: true });
   });
 

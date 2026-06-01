@@ -80,7 +80,13 @@ export type ChannelScope = typeof channelScopes[number];
 
 export const channels = sqliteTable("channels", {
   id: integer("id").primaryKey({ autoIncrement: true }),
+  // The "company" this channel belongs to. Reuses the existing `projects`
+  // table (Path B). Renamed in UI as Company (VFD / VS / VTS).
   projectId: integer("project_id").notNull().references(() => projects.id),
+  // Optional Job (work_object) this channel is nested under. NULL = a
+  // company-global channel (e.g. #general, #announcements). When set,
+  // sidebar nests this channel under the job's section.
+  workObjectId: integer("work_object_id").references(() => workObjects.id),
   name: text("name").notNull(),
   type: text("type", { enum: channelTypes }).notNull().default("text"),
   topic: text("topic"),
@@ -103,6 +109,9 @@ export const channelCreateSchema = z.object({
   scope: z.enum(channelScopes).default("global"),
   entityId: z.string().max(80).optional().nullable(),
   teamRole: z.enum(userRoles).optional().nullable(),
+  // Optional: nest this channel under a specific Job (work_object).
+  // The job must belong to the same company (projectId) as the channel.
+  workObjectId: z.number().int().positive().optional().nullable(),
   memberIds: z.array(z.number().int().positive()).optional(),
 }).refine(
   (d) => d.scope !== "entity" || (typeof d.entityId === "string" && d.entityId.length > 0),
@@ -334,6 +343,10 @@ export type WorkObjectStatus = typeof workObjectStatuses[number];
 export const workObjects = sqliteTable("work_objects", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   orgId: integer("org_id").notNull().references(() => organizations.id),
+  // Which company (chat-side `projects` row) owns this job. Backfilled to
+  // VFD for all pre-Phase-1.8 rows. Required going forward; left nullable
+  // here so the migration can land before backfill on legacy DBs.
+  projectId: integer("project_id").references(() => projects.id),
   kind: text("kind", { enum: workObjectKinds }).notNull(),
   // Human reference used in chat ("BOE-FIBER-01", "CO-2026-014"). Unique
   // within (orgId, kind) so /object BOE-FIBER-01 always resolves.

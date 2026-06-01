@@ -1,8 +1,20 @@
-import { Hash, Volume2, ChevronDown, Plus, Mic, MicOff, Headphones, Settings, Search, Shield, ShieldCheck, Globe, Building2, Users, Lock, ClipboardList } from "lucide-react";
+import { Hash, Volume2, ChevronDown, ChevronRight, Plus, Mic, MicOff, Headphones, Settings, Search, Shield, ShieldCheck, Globe, Building2, Users, Lock, ClipboardList, Briefcase, AlertTriangle, FileEdit, MapPin } from "lucide-react";
 import { useLocation } from "wouter";
 import { useState, useMemo } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Avatar } from "./Avatar";
 import type { ApiChannel, ApiProject, ApiUser } from "@/types/api";
+
+// Phase 1.8: minimal job shape we need to nest channels under jobs in the
+// sidebar. Full shape lives on the right-rail / list dialog.
+interface SidebarJob {
+  id: number;
+  kind: "job_site" | "work_project" | "change_order" | "safety_incident";
+  ref: string;
+  title: string;
+  status: string;
+  projectId: number | null;
+}
 
 interface Props {
   project: ApiProject;
@@ -26,18 +38,66 @@ export function ChannelSidebar({
   // Any signed-in user can create a channel. Visibility is controlled by
   // the scope they pick in the dialog (global / entity / team / private).
   const canCreateChannel = true;
-  const { text, voice } = useMemo(() => {
-    const t = channels.filter(c => c.type === "text").sort((a, b) => a.position - b.position);
-    const v = channels.filter(c => c.type === "voice").sort((a, b) => a.position - b.position);
-    return { text: t, voice: v };
+
+  // Phase 1.8: Jobs for the active company so we can nest channels under
+  // them. Hide closed by default — the right-rail list dialog still shows
+  // them for archival purposes.
+  const jobsQ = useQuery<SidebarJob[]>({
+    queryKey: ["/api/work-objects", { projectId: project.id }],
+    queryFn: async () => {
+      const r = await fetch(`/api/work-objects?projectId=${project.id}`, { credentials: "include" });
+      if (!r.ok) return [];
+      return r.json();
+    },
+  });
+  const jobs = useMemo(
+    () => (jobsQ.data ?? []).filter(j => (j.projectId ?? null) === project.id),
+    [jobsQ.data, project.id],
+  );
+
+  // Partition channels by workObjectId. `globalText`/`globalVoice` are the
+  // company-wide channels rendered at the top; `byJob` is a lookup map keyed
+  // by job id for nested rendering.
+  const { globalText, globalVoice, byJob } = useMemo(() => {
+    const gt: ApiChannel[] = [];
+    const gv: ApiChannel[] = [];
+    const map = new Map<number, ApiChannel[]>();
+    for (const c of channels) {
+      if (c.workObjectId == null) {
+        if (c.type === "voice") gv.push(c); else gt.push(c);
+      } else {
+        const arr = map.get(c.workObjectId) ?? [];
+        arr.push(c);
+        map.set(c.workObjectId, arr);
+      }
+    }
+    const sortFn = (a: ApiChannel, b: ApiChannel) => a.position - b.position || a.id - b.id;
+    gt.sort(sortFn); gv.sort(sortFn);
+    for (const arr of map.values()) arr.sort(sortFn);
+    return { globalText: gt, globalVoice: gv, byJob: map };
   }, [channels]);
 
   const [textOpen, setTextOpen] = useState(true);
   const [voiceOpen, setVoiceOpen] = useState(true);
+  const [jobsOpen, setJobsOpen] = useState(true);
+  const [openJobs, setOpenJobs] = useState<Record<number, boolean>>({});
   const [search, setSearch] = useState("");
 
-  const filteredText = text.filter(c => c.name.toLowerCase().includes(search.toLowerCase()));
-  const filteredVoice = voice.filter(c => c.name.toLowerCase().includes(search.toLowerCase()));
+  const q = search.toLowerCase();
+  const matchText = (c: ApiChannel) => c.name.toLowerCase().includes(q);
+  const filteredGlobalText = globalText.filter(matchText);
+  const filteredGlobalVoice = globalVoice.filter(matchText);
+  // A job is visible while searching if its ref/title matches OR any of its
+  // channels match. This way typing "safety" reveals both the safety job
+  // and channels named #safety-* under unrelated jobs.
+  const visibleJobs = useMemo(() => {
+    if (!q) return jobs;
+    return jobs.filter(j => {
+      if (j.ref.toLowerCase().includes(q) || j.title.toLowerCase().includes(q)) return true;
+      const cs = byJob.get(j.id) ?? [];
+      return cs.some(matchText);
+    });
+  }, [jobs, byJob, q]);
 
   return (
     <aside
@@ -45,16 +105,27 @@ export function ChannelSidebar({
       data-testid="sidebar-channels"
     >
       <div className="h-14 px-4 flex items-center justify-between border-b border-black/30 shadow-sm">
-        <div className="min-w-0">
-          <div className="text-[10px] uppercase tracking-[0.14em] text-vs-red font-bold">Project</div>
-          <div className="text-sm font-display text-white truncate" title={project.name}>
-            {project.name}
+        <div className="min-w-0 flex items-center gap-2">
+          {/* Phase 1.8: small company badge using the project hue so VFD/VS/
+              VTS read at a glance. Switcher itself lives in the left rail. */}
+          <span
+            className="inline-flex items-center justify-center w-7 h-7 rounded-md text-[10px] font-bold text-white shrink-0"
+            style={{ background: `hsl(${project.hue} 70% 38%)` }}
+            aria-hidden
+          >
+            {project.short || project.name.slice(0, 3).toUpperCase()}
+          </span>
+          <div className="min-w-0">
+            <div className="text-[10px] uppercase tracking-[0.14em] text-vs-red font-bold">Company</div>
+            <div className="text-sm font-display text-white truncate" title={project.name} data-testid="text-active-company">
+              {project.name}
+            </div>
           </div>
         </div>
         <button
           type="button"
           className="text-[hsl(0_0%_65%)] hover:text-white transition-colors p-1"
-          title="Project info"
+          title="Company info"
           data-testid="button-project-settings"
         >
           <ChevronDown className="w-4 h-4" />
@@ -76,33 +147,57 @@ export function ChannelSidebar({
       </div>
 
       <div className="flex-1 overflow-y-auto px-2 py-3 space-y-4">
+        {/* Company-global channels. Rendered above Jobs so #general /
+            #announcements are always immediately reachable. */}
         <Section label="Sitrep Channels" open={textOpen} onToggle={() => setTextOpen(!textOpen)} onAdd={canCreateChannel ? onCreateChannel : undefined}>
-          {textOpen && filteredText.map((c) => (
-            <ChannelRow
-              key={c.id}
-              channel={c}
-              active={c.id === activeChannelId}
-              onClick={() => onSelectChannel(c.id)}
-            />
+          {textOpen && filteredGlobalText.map((c) => (
+            <ChannelRow key={c.id} channel={c} active={c.id === activeChannelId} onClick={() => onSelectChannel(c.id)} />
           ))}
-          {textOpen && filteredText.length === 0 && (
+          {textOpen && filteredGlobalText.length === 0 && (
             <div className="px-2 py-1.5 text-[11px] text-[hsl(0_0%_55%)]">No matching channels.</div>
           )}
         </Section>
 
         <Section label="Net Channels" open={voiceOpen} onToggle={() => setVoiceOpen(!voiceOpen)} onAdd={canCreateChannel ? onCreateChannel : undefined}>
-          {voiceOpen && filteredVoice.map((c) => (
-            <ChannelRow
-              key={c.id}
-              channel={c}
-              active={c.id === activeChannelId}
-              onClick={() => onSelectChannel(c.id)}
-            />
+          {voiceOpen && filteredGlobalVoice.map((c) => (
+            <ChannelRow key={c.id} channel={c} active={c.id === activeChannelId} onClick={() => onSelectChannel(c.id)} />
           ))}
         </Section>
 
-        {/* Org-wide Jobs launcher — separate from channels so it reads
-            as a workspace tool, not another room. */}
+        {/* Jobs section. Each Job is collapsible; channels nest under it.
+            Empty Jobs still render so the user knows the job exists and
+            can open it from the right rail. */}
+        <Section
+          label={`Jobs · ${visibleJobs.length}`}
+          open={jobsOpen}
+          onToggle={() => setJobsOpen(!jobsOpen)}
+          onAdd={onOpenWorkObjects}
+          addTitle="Open jobs panel"
+        >
+          {jobsOpen && visibleJobs.length === 0 && (
+            <div className="px-2 py-1.5 text-[11px] text-[hsl(0_0%_55%)]">
+              {q ? "No matching jobs." : `No jobs in ${project.short || project.name} yet.`}
+            </div>
+          )}
+          {jobsOpen && visibleJobs.map((job) => {
+            const expanded = openJobs[job.id] ?? true;
+            const jobChannels = (byJob.get(job.id) ?? []).filter(matchText);
+            return (
+              <JobGroup
+                key={job.id}
+                job={job}
+                expanded={expanded}
+                onToggle={() => setOpenJobs(s => ({ ...s, [job.id]: !expanded }))}
+                channels={jobChannels}
+                activeChannelId={activeChannelId}
+                onSelectChannel={onSelectChannel}
+              />
+            );
+          })}
+        </Section>
+
+        {/* Company-scoped Jobs launcher — opens the dialog filtered to the
+            current company. The dialog reads the active company from props. */}
         {onOpenWorkObjects && (
           <div className="pt-1">
             <div className="h-px bg-[hsl(232_40%_22%)] mx-1.5 mb-2" />
@@ -110,12 +205,12 @@ export function ChannelSidebar({
               type="button"
               onClick={onOpenWorkObjects}
               data-testid="button-open-work-objects"
-              title="Every job in your org — sites, projects, change orders, safety incidents."
+              title={`Every job in ${project.name} — sites, projects, change orders, safety incidents.`}
               className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-sm text-[hsl(0_0%_75%)] hover:bg-[hsl(232_45%_25%)] hover:text-white transition-colors"
             >
               <ClipboardList className="w-4 h-4 shrink-0 text-vs-red" />
               <span className="truncate font-medium">All Jobs</span>
-              <span className="ml-auto text-[10px] font-mono text-[hsl(0_0%_45%)]">org</span>
+              <span className="ml-auto text-[10px] font-mono text-[hsl(0_0%_45%)]">{project.short || "co"}</span>
             </button>
           </div>
         )}
@@ -150,8 +245,8 @@ export function ChannelSidebar({
 }
 
 function Section({
-  label, open, onToggle, onAdd, children,
-}: { label: string; open: boolean; onToggle: () => void; onAdd?: () => void; children: React.ReactNode }) {
+  label, open, onToggle, onAdd, addTitle, children,
+}: { label: string; open: boolean; onToggle: () => void; onAdd?: () => void; addTitle?: string; children: React.ReactNode }) {
   return (
     <div className="group">
       <div className="flex items-center justify-between px-1.5 py-1 text-[10px] uppercase tracking-[0.16em] font-bold text-[hsl(0_0%_55%)]">
@@ -167,7 +262,7 @@ function Section({
           <button
             type="button"
             onClick={onAdd}
-            title="New channel"
+            title={addTitle ?? "New channel"}
             data-testid="button-new-channel"
             className="opacity-0 group-hover:opacity-100 transition-opacity hover:text-white"
           >
@@ -176,6 +271,59 @@ function Section({
         )}
       </div>
       <div className="mt-1 space-y-0.5">{children}</div>
+    </div>
+  );
+}
+
+function jobKindIcon(kind: SidebarJob["kind"]) {
+  if (kind === "job_site") return MapPin;
+  if (kind === "work_project") return Briefcase;
+  if (kind === "change_order") return FileEdit;
+  return AlertTriangle; // safety_incident
+}
+
+function JobGroup({
+  job, expanded, onToggle, channels, activeChannelId, onSelectChannel,
+}: {
+  job: SidebarJob;
+  expanded: boolean;
+  onToggle: () => void;
+  channels: ApiChannel[];
+  activeChannelId: number | null;
+  onSelectChannel: (id: number) => void;
+}) {
+  const Icon = jobKindIcon(job.kind);
+  const isClosed = job.status === "closed";
+  return (
+    <div className="mb-1" data-testid={`job-group-${job.id}`}>
+      <button
+        type="button"
+        onClick={onToggle}
+        title={`${job.ref} — ${job.title}`}
+        className={[
+          "w-full flex items-center gap-1.5 px-1.5 py-1 rounded-md text-[12px] text-left transition-colors",
+          isClosed ? "text-[hsl(0_0%_50%)]" : "text-[hsl(0_0%_80%)] hover:text-white",
+          "hover:bg-[hsl(232_45%_22%)]",
+        ].join(" ")}
+      >
+        {expanded
+          ? <ChevronDown className="w-3 h-3 shrink-0 text-[hsl(0_0%_55%)]" />
+          : <ChevronRight className="w-3 h-3 shrink-0 text-[hsl(0_0%_55%)]" />}
+        <Icon className="w-3.5 h-3.5 shrink-0 text-vs-red" />
+        <span className="font-mono text-[10px] tracking-tight text-vs-blue-light shrink-0">{job.ref}</span>
+        <span className="truncate font-medium">{job.title}</span>
+        {isClosed && <span className="ml-1 text-[9px] uppercase text-[hsl(0_0%_45%)]">closed</span>}
+      </button>
+      {expanded && (
+        <div className="ml-3 mt-0.5 pl-1 border-l border-[hsl(232_40%_22%)] space-y-0.5">
+          {channels.length === 0 && (
+            <div className="px-2 py-1 text-[10px] text-[hsl(0_0%_45%)]">No channels in this job yet.</div>
+          )}
+          {channels.map(c => (
+            <ChannelRow key={c.id} channel={c} active={c.id === activeChannelId} onClick={() => onSelectChannel(c.id)} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }

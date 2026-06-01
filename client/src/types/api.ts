@@ -33,6 +33,9 @@ export type ChannelScope = "global" | "entity" | "team" | "private";
 export interface ApiChannel {
   id: number;
   projectId: number;
+  // Phase 1.8: optional Job (work_object) this channel is nested under.
+  // NULL = company-global channel rendered above the Jobs section.
+  workObjectId?: number | null;
   name: string;
   type: ChannelType;
   topic: string | null;

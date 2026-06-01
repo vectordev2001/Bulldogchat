@@ -350,6 +350,123 @@ export function runMigrations() {
     console.warn("[migrate] messages.meta add skipped:", e);
   }
 
+  // v8: Companies model — repurpose the existing `projects` table as
+  // "companies" (Path B from the Phase 1.8 design). Add nullable columns
+  // that nest channels under jobs and scope jobs to a company. Seed the
+  // three companies (VFD / VS / VTS) idempotently and backfill ownership
+  // of existing rows to VFD.
+  try {
+    // Channels: optional work_object_id so we can nest channels under a job.
+    const chCols = rawDb.prepare(`PRAGMA table_info(channels)`).all() as Array<{ name: string }>;
+    if (!chCols.find(c => c.name === "work_object_id")) {
+      rawDb.exec(`ALTER TABLE channels ADD COLUMN work_object_id INTEGER;`);
+      rawDb.exec(`CREATE INDEX IF NOT EXISTS channels_work_object_idx ON channels(work_object_id);`);
+      console.log("[migrate] Added channels.work_object_id column");
+    }
+    // Work objects: project_id (= company id). Nullable for backward compat,
+    // backfilled to VFD below. Indexed for the company-scoped Jobs list.
+    const woCols = rawDb.prepare(`PRAGMA table_info(work_objects)`).all() as Array<{ name: string }>;
+    if (!woCols.find(c => c.name === "project_id")) {
+      rawDb.exec(`ALTER TABLE work_objects ADD COLUMN project_id INTEGER;`);
+      rawDb.exec(`CREATE INDEX IF NOT EXISTS work_objects_project_idx ON work_objects(project_id);`);
+      console.log("[migrate] Added work_objects.project_id column");
+    }
+  } catch (e) {
+    console.warn("[migrate] v8 column adds skipped:", e);
+  }
+
+  // v8: Seed companies + backfill ownership. Idempotent.
+  // Naming map: there are several legacy seed names — we pick the first project
+  // for the org and rename it VFD. Then ensure VS and VTS exist alongside it.
+  try {
+    const orgs = rawDb.prepare(`SELECT id FROM organizations ORDER BY id`).all() as Array<{ id: number }>;
+    for (const org of orgs) {
+      // Look up the three target companies by slug.
+      const findBySlug = (slug: string) =>
+        rawDb.prepare(`SELECT id, name FROM projects WHERE org_id = ? AND slug = ?`).get(org.id, slug) as { id: number; name: string } | undefined;
+
+      let vfd = findBySlug("vfd");
+      let vs = findBySlug("vs");
+      let vts = findBySlug("vts");
+
+      // If VFD isn't present yet, promote the lowest-id existing project to VFD
+      // so all existing channels (which point at that project_id) stay linked.
+      if (!vfd) {
+        const existing = rawDb.prepare(`SELECT id, name FROM projects WHERE org_id = ? ORDER BY id ASC LIMIT 1`).get(org.id) as { id: number; name: string } | undefined;
+        if (existing) {
+          rawDb.prepare(`UPDATE projects SET name = ?, slug = ?, short = ?, hue = ?, description = ? WHERE id = ?`).run(
+            "Vector Force Development", "vfd", "VFD", 212,
+            "Utility construction — CCTV, hydrovac, traffic control.", existing.id,
+          );
+          vfd = { id: existing.id, name: "Vector Force Development" };
+          console.log(`[migrate] Renamed project ${existing.id} (${existing.name}) → Vector Force Development (VFD)`);
+        } else {
+          // Brand-new org with no projects yet — create VFD from scratch.
+          const now = Date.now();
+          rawDb.prepare(`INSERT INTO projects (org_id, name, slug, short, hue, description, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`).run(
+            org.id, "Vector Force Development", "vfd", "VFD", 212,
+            "Utility construction — CCTV, hydrovac, traffic control.", now,
+          );
+          vfd = findBySlug("vfd")!;
+          console.log(`[migrate] Created VFD company for org ${org.id}`);
+        }
+      }
+
+      const now = Date.now();
+      if (!vs) {
+        rawDb.prepare(`INSERT INTO projects (org_id, name, slug, short, hue, description, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`).run(
+          org.id, "Vector Services", "vs", "VS", 2,
+          "Service company — fleet, dispatch, response.", now,
+        );
+        vs = findBySlug("vs")!;
+        console.log(`[migrate] Created VS company for org ${org.id}`);
+      }
+      if (!vts) {
+        rawDb.prepare(`INSERT INTO projects (org_id, name, slug, short, hue, description, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`).run(
+          org.id, "Vector Talent Solutions", "vts", "VTS", 175,
+          "Talent and staffing — sourcing, placement, training.", now,
+        );
+        vts = findBySlug("vts")!;
+        console.log(`[migrate] Created VTS company for org ${org.id}`);
+      }
+
+      // Remove any stale extra projects (legacy seed data: lakewood-substation,
+      // i-405-fiber, etc.) by re-homing their channels to VFD and dropping the
+      // project. We delete project_members rows for the stale projects first.
+      const stale = rawDb.prepare(`SELECT id, slug FROM projects WHERE org_id = ? AND slug NOT IN ('vfd','vs','vts')`).all(org.id) as Array<{ id: number; slug: string }>;
+      for (const s of stale) {
+        rawDb.prepare(`UPDATE channels SET project_id = ? WHERE project_id = ?`).run(vfd.id, s.id);
+        rawDb.prepare(`DELETE FROM project_members WHERE project_id = ?`).run(s.id);
+        rawDb.prepare(`DELETE FROM invites WHERE project_id = ?`).run(s.id);
+        rawDb.prepare(`DELETE FROM projects WHERE id = ?`).run(s.id);
+        console.log(`[migrate] Re-homed channels from stale project ${s.slug} (${s.id}) → VFD, then deleted.`);
+      }
+
+      // Backfill: every existing work_object in the org gets pinned to VFD.
+      rawDb.prepare(`UPDATE work_objects SET project_id = ? WHERE org_id = ? AND project_id IS NULL`).run(vfd.id, org.id);
+
+      // Membership: ALL users in the org are members of all three companies
+      // by default. Per user direction: Cade and Holli are VFD-only; everyone
+      // else (admins) gets all three. Idempotent inserts — OR IGNORE on PK.
+      const orgUsers = rawDb.prepare(`SELECT id, email, role FROM users WHERE org_id = ?`).all(org.id) as Array<{ id: number; email: string; role: string }>;
+      const VFD_ONLY_EMAILS = new Set(["cade@vectorfd.com", "holli@vectorfd.com"]);
+      const memInsert = rawDb.prepare(`INSERT OR IGNORE INTO project_members (project_id, user_id, role) VALUES (?, ?, ?)`);
+      for (const u of orgUsers) {
+        // Everyone is in VFD.
+        memInsert.run(vfd.id, u.id, "member");
+        // Admins and foremen also get VS + VTS (unless explicitly VFD-only).
+        const vfdOnly = VFD_ONLY_EMAILS.has(u.email.toLowerCase());
+        if (!vfdOnly && (u.role === "admin" || u.role === "foreman")) {
+          memInsert.run(vs.id, u.id, "member");
+          memInsert.run(vts.id, u.id, "member");
+        }
+      }
+      console.log(`[migrate] Seeded company memberships for ${orgUsers.length} users in org ${org.id}`);
+    }
+  } catch (e) {
+    console.warn("[migrate] v8 company seed skipped:", e);
+  }
+
   // Admin email rebrand: if prod has the old email, migrate it.
   try {
     const oldRow = rawDb.prepare(`SELECT id FROM users WHERE email = ?`).get("admin@vectorservicesus.com") as { id: number } | undefined;

@@ -65,14 +65,24 @@ export interface IStorage {
   getProject(id: number): Project | undefined;
   createProject(input: InsertProject): Project;
   addProjectMember(projectId: number, userId: number, role?: string): void;
+  removeProjectMember(projectId: number, userId: number): void;
   isProjectMember(projectId: number, userId: number): boolean;
   listProjectMembers(projectId: number): User[];
+  // Phase 1.8: list every company (project) a user belongs to. Used by the
+  // company switcher to populate the dropdown for non-admins.
+  listProjectsForUserInOrg(userId: number, orgId: number): Project[];
 
   /* Channels */
   listChannelsByProject(projectId: number): Channel[];
   listChannelsForUserInProject(projectId: number, userId: number): Channel[];
+  // Phase 1.8: channels nested under a specific Job (work_object). Used
+  // when the sidebar renders the per-job channel group.
+  listChannelsByJob(workObjectId: number): Channel[];
   getChannel(id: number): Channel | undefined;
   createChannel(input: InsertChannel): Channel;
+  // Phase 1.8: admin "move channel" support. Lets admins re-home a channel
+  // to a different company and/or nest it under a different job.
+  updateChannel(id: number, patch: Partial<Pick<Channel, "name" | "topic" | "projectId" | "workObjectId" | "position">>): Channel | undefined;
   addChannelMembers(channelId: number, userIds: number[]): void;
   listChannelMemberIds(channelId: number): number[];
   isChannelMember(channelId: number, userId: number): boolean;
@@ -150,11 +160,11 @@ export interface IStorage {
   deleteExpoTokenByToken(token: string): void;
 
   /* Work Objects */
-  createWorkObject(input: { orgId: number; kind: WorkObjectKind; ref: string; title: string; status?: WorkObjectStatus; description?: string | null; parentId?: number | null; ownerUserId?: number | null; attributes?: string | null; createdByUserId: number }): WorkObject;
+  createWorkObject(input: { orgId: number; projectId?: number | null; kind: WorkObjectKind; ref: string; title: string; status?: WorkObjectStatus; description?: string | null; parentId?: number | null; ownerUserId?: number | null; attributes?: string | null; createdByUserId: number }): WorkObject;
   getWorkObject(id: number): WorkObject | undefined;
   getWorkObjectByRef(orgId: number, kind: WorkObjectKind, ref: string): WorkObject | undefined;
   findWorkObjectByRefAcrossKinds(orgId: number, ref: string): WorkObject | undefined;
-  listWorkObjectsByOrg(orgId: number, opts?: { kind?: WorkObjectKind; status?: WorkObjectStatus; includeClosed?: boolean; limit?: number }): WorkObject[];
+  listWorkObjectsByOrg(orgId: number, opts?: { kind?: WorkObjectKind; status?: WorkObjectStatus; includeClosed?: boolean; limit?: number; projectId?: number }): WorkObject[];
   listWorkObjectsByIds(ids: number[]): WorkObject[];
   updateWorkObject(id: number, patch: Partial<Pick<WorkObject, "title" | "status" | "description" | "ownerUserId" | "parentId" | "attributes" | "closedAt">>): WorkObject | undefined;
 
@@ -244,6 +254,30 @@ class DatabaseStorage implements IStorage {
     if (exists) return;
     db.insert(projectMembers).values({ projectId, userId, role }).run();
   }
+  removeProjectMember(projectId: number, userId: number) {
+    db.delete(projectMembers)
+      .where(and(eq(projectMembers.projectId, projectId), eq(projectMembers.userId, userId)))
+      .run();
+  }
+  // Companies a user can access, scoped to their org. Admins get every
+  // project in the org regardless of project_members rows so admin tooling
+  // still works; everyone else is filtered through project_members.
+  listProjectsForUserInOrg(userId: number, orgId: number): Project[] {
+    const user = this.getUser(userId);
+    if (!user) return [];
+    if (user.role === "admin") {
+      return db.select().from(projects).where(eq(projects.orgId, orgId)).orderBy(asc(projects.id)).all();
+    }
+    return db.select({
+      id: projects.id, orgId: projects.orgId, name: projects.name, slug: projects.slug,
+      short: projects.short, hue: projects.hue, description: projects.description,
+      createdAt: projects.createdAt,
+    }).from(projects)
+      .innerJoin(projectMembers, eq(projectMembers.projectId, projects.id))
+      .where(and(eq(projects.orgId, orgId), eq(projectMembers.userId, userId)))
+      .orderBy(asc(projects.id))
+      .all() as Project[];
+  }
   isProjectMember(projectId: number, userId: number) {
     return !!db.select().from(projectMembers)
       .where(and(eq(projectMembers.projectId, projectId), eq(projectMembers.userId, userId))).get();
@@ -272,9 +306,21 @@ class DatabaseStorage implements IStorage {
     if (!user) return [];
     return all.filter(c => this.userCanSeeChannel(c, user));
   }
+  listChannelsByJob(workObjectId: number) {
+    return db.select().from(channels)
+      .where(eq(channels.workObjectId, workObjectId))
+      .orderBy(asc(channels.position), asc(channels.id))
+      .all();
+  }
   getChannel(id: number) { return db.select().from(channels).where(eq(channels.id, id)).get(); }
   createChannel(input: InsertChannel) {
     return db.insert(channels).values({ ...input, createdAt: new Date() }).returning().get();
+  }
+  // Admin-only "move channel" support. Caller validates that the target
+  // workObjectId (if set) belongs to the target projectId.
+  updateChannel(id: number, patch: Partial<Pick<Channel, "name" | "topic" | "projectId" | "workObjectId" | "position">>) {
+    if (Object.keys(patch).length === 0) return this.getChannel(id);
+    return db.update(channels).set(patch).where(eq(channels.id, id)).returning().get();
   }
   addChannelMembers(channelId: number, userIds: number[]) {
     if (userIds.length === 0) return;
@@ -621,6 +667,10 @@ class DatabaseStorage implements IStorage {
     const now = new Date();
     return db.insert(workObjects).values({
       orgId: input.orgId,
+      // Phase 1.8: jobs are scoped to a company (chat-side `projects` row).
+      // Caller passes projectId = active company; fallback NULL only for
+      // legacy code paths still running on pre-1.8 client builds.
+      projectId: input.projectId ?? null,
       kind: input.kind,
       ref: input.ref,
       title: input.title,
@@ -654,10 +704,11 @@ class DatabaseStorage implements IStorage {
       eq(workObjects.ref, ref),
     )).orderBy(desc(workObjects.updatedAt)).get();
   }
-  listWorkObjectsByOrg(orgId: number, opts?: { kind?: WorkObjectKind; status?: WorkObjectStatus; includeClosed?: boolean; limit?: number }) {
+  listWorkObjectsByOrg(orgId: number, opts?: { kind?: WorkObjectKind; status?: WorkObjectStatus; includeClosed?: boolean; limit?: number; projectId?: number }) {
     const filters = [eq(workObjects.orgId, orgId)];
     if (opts?.kind) filters.push(eq(workObjects.kind, opts.kind));
     if (opts?.status) filters.push(eq(workObjects.status, opts.status));
+    if (opts?.projectId) filters.push(eq(workObjects.projectId, opts.projectId));
     if (!opts?.includeClosed && !opts?.status) {
       // Default behaviour: hide closed objects unless caller asked for them.
       filters.push(sql`${workObjects.status} != 'closed'`);
