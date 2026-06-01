@@ -23,10 +23,14 @@ export default function Home() {
   const [channelByProject, setChannelByProject] = useState<Record<number, number>>({});
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [createChannelOpen, setCreateChannelOpen] = useState(false);
-  // Right-rail members list. On large screens (xl+) it's shown by default;
-  // the header Users icon lets the user collapse/expand it explicitly so
-  // mid-size screens can also see the roster on demand.
-  const [membersOpen, setMembersOpen] = useState(true);
+  // Right-rail members list. Default to closed on mobile so the drawer
+  // never auto-pops on iPhone; open on desktop (≥md) so the static
+  // sidebar shows by default. Re-evaluated once on mount; user toggles
+  // it after that via the header Users icon.
+  const [membersOpen, setMembersOpen] = useState(() => {
+    if (typeof window === "undefined") return false;
+    try { return window.matchMedia("(min-width: 768px)").matches; } catch { return false; }
+  });
   // Right-rail work objects panel — opt-in; toggled from channel header.
   const [workObjectsOpen, setWorkObjectsOpen] = useState(false);
   // Org-wide Work Objects list modal — launched from sidebar.
@@ -357,8 +361,8 @@ export default function Home() {
         )}
       </main>
 
-      {/* Right rail: work objects panel (top) + members list (bottom).
-          Both toggle independently from the channel header. */}
+      {/* Right rail (desktop ≥md): work objects panel (top) + members
+          list (bottom). Both toggle independently from the channel header. */}
       {activeChannel && (workObjectsOpen || membersOpen) && (
         <div className="hidden md:flex md:flex-col">
           {workObjectsOpen && (
@@ -370,8 +374,31 @@ export default function Home() {
             />
           )}
           {membersOpen && (
-            <MemberList members={members} meId={(user as ApiUser)?.id} />
+            <MemberList
+              members={members}
+              meId={(user as ApiUser)?.id}
+              orgMembers={members}
+              channelId={activeChannel.id}
+              myRole={(user as ApiUser)?.role}
+            />
           )}
+        </div>
+      )}
+
+      {/* Mobile (<md): MemberList renders as a slide-over drawer when
+          the header Users icon is tapped. Backdrop dismisses. Add-member
+          button is built into the drawer for admins. */}
+      {activeChannel && membersOpen && (
+        <div className="md:hidden">
+          <MemberList
+            members={members}
+            meId={(user as ApiUser)?.id}
+            orgMembers={members}
+            channelId={activeChannel.id}
+            myRole={(user as ApiUser)?.role}
+            mobile
+            onClose={() => setMembersOpen(false)}
+          />
         </div>
       )}
     </div>
