@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { ApiChannel, ApiUser, ChannelScope, ChannelType, UserRole } from "@/types/api";
-import { Loader2, Hash, Volume2, Globe, Building2, Users, Lock, Briefcase } from "lucide-react";
+import { Loader2, Hash, Globe, Building2, Users, Lock, Briefcase } from "lucide-react";
 
 interface ApiJob {
   id: number;
@@ -39,7 +39,10 @@ const ROLES: { value: UserRole; label: string }[] = [
 export function CreateChannelDialog({ open, onClose, projectId, me, onCreated }: Props) {
   const [name, setName] = useState("");
   const [topic, setTopic] = useState("");
-  const [type, setType] = useState<ChannelType>("text");
+  // Phase 1.9: unified channels — every new channel is created with
+  // type="text" and gains voice/video on demand via the in-channel call
+  // button. The `type` column persists for back-compat only.
+  const type: ChannelType = "text";
   const [scope, setScope] = useState<ChannelScope>("global");
   const [entityId, setEntityId] = useState("");
   const [teamRole, setTeamRole] = useState<UserRole>("field");
@@ -146,30 +149,22 @@ export function CreateChannelDialog({ open, onClose, projectId, me, onCreated }:
         </DialogHeader>
 
         <form onSubmit={onSubmit} className="space-y-4">
-          {/* Name + type */}
-          <div className="grid grid-cols-[1fr_auto] gap-2">
-            <div className="flex items-center gap-2 rounded-md border border-[hsl(0_0%_18%)] bg-[hsl(0_0%_8%)] px-2">
-              {type === "voice" ? <Volume2 className="h-4 w-4 text-[hsl(0_0%_55%)]" /> : <Hash className="h-4 w-4 text-[hsl(0_0%_55%)]" />}
-              <input
-                value={name}
-                onChange={(e) => setName(e.target.value.replace(/\s+/g, "-").toLowerCase())}
-                placeholder="channel-name"
-                className="w-full bg-transparent py-2 text-sm outline-none placeholder:text-[hsl(0_0%_40%)]"
-                data-testid="input-channel-name"
-                maxLength={80}
-                autoFocus
-              />
-            </div>
-            <select
-              value={type}
-              onChange={(e) => setType(e.target.value as ChannelType)}
-              className="rounded-md border border-[hsl(0_0%_18%)] bg-[hsl(0_0%_8%)] px-2 py-2 text-sm"
-              data-testid="select-channel-type"
-            >
-              <option value="text">Sitrep</option>
-              <option value="voice">Net</option>
-            </select>
+          {/* Name only — every channel supports chat + voice/video. */}
+          <div className="flex items-center gap-2 rounded-md border border-[hsl(0_0%_18%)] bg-[hsl(0_0%_8%)] px-2">
+            <Hash className="h-4 w-4 text-[hsl(0_0%_55%)]" />
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value.replace(/\s+/g, "-").toLowerCase())}
+              placeholder="channel-name"
+              className="w-full bg-transparent py-2 text-sm outline-none placeholder:text-[hsl(0_0%_40%)]"
+              data-testid="input-channel-name"
+              maxLength={80}
+              autoFocus
+            />
           </div>
+          <p className="text-[11px] text-[hsl(0_0%_55%)] -mt-2">
+            Every channel supports chat plus voice/video on demand. Start a call from the channel header anytime.
+          </p>
 
           <input
             value={topic}

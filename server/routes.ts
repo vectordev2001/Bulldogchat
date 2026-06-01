@@ -14,6 +14,7 @@ import { runMigrations } from "./migrate";
 import { runSeed } from "./seed";
 import { registerV2Routes, parseMentions } from "./routes-v2";
 import { registerWorkObjectRoutes } from "./routes-work-objects";
+import { registerIntegrationRoutes } from "./routes-integrations";
 import { bulldogSsoBridge } from "./bulldog-sso";
 import { dialPhoneIntoRoom, sipConfigured } from "./sip";
 
@@ -100,6 +101,7 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
 
   registerV2Routes(app);
   registerWorkObjectRoutes(app);
+  registerIntegrationRoutes(app);
 
   // Health
   app.get("/api/health", (_req, res) => {
@@ -373,6 +375,28 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     if (Object.keys(patch).length === 0) return res.json(channel);
     const updated = storage.updateChannel(channelId, patch);
     res.json(updated);
+  });
+
+  // ── PHASE 1.9: ADMIN DELETE CHANNEL ──
+  // Admin-only: cascade-delete a channel and all of its messages,
+  // reactions, mentions, read receipts, member grants, recordings, and
+  // livekit room rows. The channel's company must belong to the caller's
+  // org. This is destructive and irreversible.
+  app.delete("/api/channels/:id", requireAuth, requireRole(["admin"]), (req, res) => {
+    const u = (req as AuthedRequest).user;
+    const channelId = Number(req.params.id);
+    if (!Number.isFinite(channelId)) return res.status(400).json({ message: "Invalid id" });
+    const channel = storage.getChannel(channelId);
+    if (!channel) return res.status(404).json({ message: "Not found" });
+    const project = storage.getProject(channel.projectId);
+    if (!project || project.orgId !== u.orgId) return res.status(404).json({ message: "Not found" });
+    try {
+      storage.deleteChannelCascade(channelId);
+      res.json({ ok: true, deleted: { type: "channel", id: channelId } });
+    } catch (err) {
+      console.error("[delete-channel]", err);
+      res.status(500).json({ message: "Failed to delete channel" });
+    }
   });
 
   // ── PHASE 1.8: COMPANY MEMBERSHIP ──

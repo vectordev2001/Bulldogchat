@@ -9,7 +9,6 @@ import { ProjectRail } from "@/components/ProjectRail";
 import { ChannelSidebar } from "@/components/ChannelSidebar";
 import { CreateChannelDialog } from "@/components/CreateChannelDialog";
 import { TextChannelView } from "@/components/TextChannelView";
-import { VoiceChannelView } from "@/components/VoiceChannelView";
 import { MemberList } from "@/components/MemberList";
 import { WorkObjectPanel } from "@/components/WorkObjectPanel";
 import { WorkObjectsListDialog } from "@/components/WorkObjectsListDialog";
@@ -45,9 +44,8 @@ export default function Home() {
     return isIOS; // muted on iOS, unmuted elsewhere
   });
   const [myDeafened, setMyDeafened] = useState(false);
-  const [myVideoOn, setMyVideoOn] = useState(false);
-  const [myScreenSharing, setMyScreenSharing] = useState(false);
-  const [myHandRaised, setMyHandRaised] = useState(false);
+  // (Phase 1.9) Video/screen/hand state is now owned by ChannelCallDialog
+  // — we don't pre-allocate it at the page level any more.
 
   // --- Queries ---
   const projectsQ = useQuery<ApiProject[]>({
@@ -140,18 +138,9 @@ export default function Home() {
     setMobileNavOpen(false);
   };
 
-  // Escape from voice channel back to first text
-  useEffect(() => {
-    const h = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && activeChannel?.type === "voice" && channelsQ.data) {
-        const firstText = [...channelsQ.data].sort((a, b) => a.position - b.position).find((c) => c.type === "text");
-        if (firstText) selectChannel(firstText.id);
-      }
-    };
-    window.addEventListener("keydown", h);
-    return () => window.removeEventListener("keydown", h);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeChannel?.type, channelsQ.data, activeProjectId]);
+  // Phase 1.9: Escape-to-text behavior is no longer needed — every channel
+  // is now a text channel that can optionally host a call. The Escape key
+  // is handled by ChannelCallDialog when a call is active.
 
   // Loading state
   if (!user) return null;
@@ -305,27 +294,12 @@ export default function Home() {
           <div className="flex-1 flex items-center justify-center">
             <Loader2 className="w-5 h-5 animate-spin text-vs-blue" />
           </div>
-        ) : activeChannel.type === "voice" ? (
-          <VoiceChannelView
-            channel={activeChannel}
-            me={user as ApiUser}
-            orgMembers={members}
-            myMicMuted={myMicMuted}
-            myVideoOn={myVideoOn}
-            myScreenSharing={myScreenSharing}
-            myHandRaised={myHandRaised}
-            onToggleMic={() => setMyMicMuted((v) => !v)}
-            onToggleVideo={() => setMyVideoOn((v) => !v)}
-            onToggleScreen={() => setMyScreenSharing((v) => !v)}
-            onToggleHand={() => setMyHandRaised((v) => !v)}
-            onLeave={() => {
-              const firstText = [...channels]
-                .sort((a, b) => a.position - b.position)
-                .find((c) => c.type === "text");
-              if (firstText) selectChannel(firstText.id);
-            }}
-          />
         ) : (
+          // Phase 1.9: unified channels. Every channel — text or legacy voice —
+          // renders as TextChannelView, which already exposes Phone + Video
+          // buttons in its header to start a LiveKit call inline. The
+          // `channel.type` column is retained for back-compat (and for sidebar
+          // sort/grouping) but no longer routes to a separate view.
           <TextChannelView
             channel={activeChannel}
             messages={messagesQ.data ?? []}
@@ -342,7 +316,7 @@ export default function Home() {
 
       {/* Right rail: work objects panel (top) + members list (bottom).
           Both toggle independently from the channel header. */}
-      {activeChannel?.type === "text" && (workObjectsOpen || membersOpen) && (
+      {activeChannel && (workObjectsOpen || membersOpen) && (
         <div className="hidden md:flex md:flex-col">
           {workObjectsOpen && (
             <WorkObjectPanel

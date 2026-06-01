@@ -297,6 +297,26 @@ export function registerWorkObjectRoutes(app: Express) {
     res.json(publicWorkObject(updated));
   });
 
+  /* ─── delete (admin-only, cascade) ─── */
+  // Cascade-delete a job and EVERY channel beneath it (with their
+  // messages, reactions, mentions, receipts, member grants, recordings,
+  // and livekit rooms). Also tears down work_object_channel_links and
+  // any work_object_activity rows. Org-scoped. Admin role required.
+  app.delete("/api/work-objects/:id", requireAuth, requireRole(["admin"]), (req, res) => {
+    const u = (req as AuthedRequest).user;
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
+    const wo = storage.getWorkObject(id);
+    if (!wo || wo.orgId !== u.orgId) return res.status(404).json({ message: "Not found" });
+    try {
+      storage.deleteWorkObjectCascade(id);
+      res.json({ ok: true, deleted: { type: "work-object", id, ref: wo.ref } });
+    } catch (err) {
+      console.error("[delete-work-object]", err);
+      res.status(500).json({ message: "Failed to delete job" });
+    }
+  });
+
   /* ─── close / reopen ─── */
   app.post("/api/work-objects/:id/close", requireAuth, requireRole(["admin", "foreman"]), (req, res) => {
     const u = (req as AuthedRequest).user;

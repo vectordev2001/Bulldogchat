@@ -14,9 +14,9 @@ import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   X, MapPin, Briefcase, FileEdit, AlertTriangle, ClipboardList,
-  Search, Loader2, ChevronRight, Plus,
+  Search, Loader2, ChevronRight, Plus, Trash2,
 } from "lucide-react";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { ApiUser } from "@/types/api";
 import { CreateWorkObjectDialog } from "./CreateWorkObjectDialog";
 import { WorkObjectDetailDrawer } from "./WorkObjectDetailDrawer";
@@ -272,6 +272,7 @@ export function WorkObjectsListDialog({ open, onClose, me, orgMembers, activePro
                             wo={wo}
                             ownerName={wo.ownerUserId ? ownerLookup.get(wo.ownerUserId)?.name ?? null : null}
                             onOpen={() => setDetailId(wo.id)}
+                            canDelete={me.role === "admin"}
                           />
                         ))}
                       </ul>
@@ -336,17 +337,39 @@ function FilterPill({
   );
 }
 
-function WorkObjectRow({ wo, ownerName, onOpen }: { wo: WorkObject; ownerName: string | null; onOpen: () => void }) {
+function WorkObjectRow({ wo, ownerName, onOpen, canDelete }: { wo: WorkObject; ownerName: string | null; onOpen: () => void; canDelete: boolean }) {
   const statusClass = STATUS_TONE[wo.status] ?? "bg-[hsl(0_0%_30%)]/30 text-[hsl(0_0%_70%)]";
   const updated = new Date(wo.updatedAt);
   const ago = relativeTime(updated);
+  const [deleting, setDeleting] = useState(false);
 
   // Surface one signal-rich attribute per kind in the trailing line so the
   // user can scan without expanding. Mirrors the right-rail panel.
   const attrPreview = previewAttribute(wo);
 
+  const handleDelete = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    e.preventDefault();
+    const ok = window.confirm(
+      `Delete job ${wo.ref} — “${wo.title}”?\n\nThis permanently deletes the job AND every channel nested under it, along with all messages, reactions, mentions, read receipts, member grants, recordings, and call rooms in those channels. Cannot be undone.`,
+    );
+    if (!ok) return;
+    setDeleting(true);
+    try {
+      await apiRequest("DELETE", `/api/work-objects/${wo.id}`);
+      // Refresh jobs lists and channel lists — a job delete may have torn
+      // down channels that ChannelSidebar still has cached.
+      queryClient.invalidateQueries({ queryKey: ["/api/work-objects"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/projects"] });
+    } catch (err) {
+      console.error("[delete-work-object]", err);
+      window.alert("Failed to delete job. Check the console for details.");
+      setDeleting(false);
+    }
+  };
+
   return (
-    <li>
+    <li className="relative group">
       <button
         type="button"
         onClick={onOpen}
@@ -375,6 +398,18 @@ function WorkObjectRow({ wo, ownerName, onOpen }: { wo: WorkObject; ownerName: s
         </div>
         <ChevronRight className="w-3.5 h-3.5 text-[hsl(0_0%_40%)] shrink-0" />
       </button>
+      {canDelete && (
+        <button
+          type="button"
+          onClick={handleDelete}
+          disabled={deleting}
+          title="Delete job (admin)"
+          data-testid={`button-delete-work-object-${wo.id}`}
+          className="absolute top-1.5 right-9 opacity-0 group-hover:opacity-100 disabled:opacity-50 transition-opacity p-1 rounded text-red-300 hover:bg-red-950/40 hover:text-red-200"
+        >
+          {deleting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+        </button>
+      )}
     </li>
   );
 }

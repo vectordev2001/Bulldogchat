@@ -83,6 +83,8 @@ export interface IStorage {
   // Phase 1.8: admin "move channel" support. Lets admins re-home a channel
   // to a different company and/or nest it under a different job.
   updateChannel(id: number, patch: Partial<Pick<Channel, "name" | "topic" | "projectId" | "workObjectId" | "position">>): Channel | undefined;
+  deleteChannelCascade(channelId: number): void;
+  deleteWorkObjectCascade(workObjectId: number): void;
   addChannelMembers(channelId: number, userIds: number[]): void;
   listChannelMemberIds(channelId: number): number[];
   isChannelMember(channelId: number, userId: number): boolean;
@@ -831,6 +833,44 @@ class DatabaseStorage implements IStorage {
     db.delete(projectMembers).where(eq(projectMembers.projectId, projectId)).run();
     db.delete(invites).where(eq(invites.projectId, projectId)).run();
     db.delete(projects).where(eq(projects.id, projectId)).run();
+  }
+  // Cascade-delete a single channel and all its dependent rows. Optional
+  // tables (livekit_rooms, work_object_channel_links) wrapped in safe-run
+  // because they may not exist on legacy DBs.
+  deleteChannelCascade(channelId: number) {
+    const msgs = db.select({ id: messages.id }).from(messages).where(eq(messages.channelId, channelId)).all();
+    for (const m of msgs) {
+      db.delete(reactions).where(eq(reactions.messageId, m.id)).run();
+      db.delete(messageMentions).where(eq(messageMentions.messageId, m.id)).run();
+    }
+    db.delete(messages).where(eq(messages.channelId, channelId)).run();
+    db.delete(readReceipts).where(eq(readReceipts.channelId, channelId)).run();
+    db.delete(channelMembers).where(eq(channelMembers.channelId, channelId)).run();
+    const safeRun = (sql: string, ...params: any[]) => {
+      try { rawDb.prepare(sql).run(...params); } catch (e: any) {
+        if (!/no such table/i.test(String(e?.message))) throw e;
+      }
+    };
+    safeRun(`DELETE FROM recordings WHERE channel_id = ?`, channelId);
+    safeRun(`DELETE FROM livekit_rooms WHERE channel_id = ?`, channelId);
+    safeRun(`DELETE FROM work_object_channel_links WHERE channel_id = ?`, channelId);
+    db.delete(channels).where(eq(channels.id, channelId)).run();
+  }
+  // Cascade-delete a job (work_object) and every channel nested under it.
+  // Unlinks any non-nested channels that point at this job via
+  // work_object_channel_links so they survive the delete.
+  deleteWorkObjectCascade(workObjectId: number) {
+    const nested = db.select({ id: channels.id }).from(channels).where(eq(channels.workObjectId, workObjectId)).all();
+    for (const ch of nested) {
+      this.deleteChannelCascade(ch.id);
+    }
+    const safeRun = (sql: string, ...params: any[]) => {
+      try { rawDb.prepare(sql).run(...params); } catch (e: any) {
+        if (!/no such table/i.test(String(e?.message))) throw e;
+      }
+    };
+    safeRun(`DELETE FROM work_object_channel_links WHERE work_object_id = ?`, workObjectId);
+    safeRun(`DELETE FROM work_objects WHERE id = ?`, workObjectId);
   }
   countChannelsForProject(projectId: number) {
     const r = db.select({ c: sql<number>`count(*)` }).from(channels).where(eq(channels.projectId, projectId)).get();

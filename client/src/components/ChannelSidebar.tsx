@@ -1,4 +1,5 @@
-import { Hash, Volume2, ChevronDown, ChevronRight, Plus, Mic, MicOff, Headphones, Settings, Search, Shield, ShieldCheck, Globe, Building2, Users, Lock, ClipboardList, Briefcase, AlertTriangle, FileEdit, MapPin, UserCog, ArrowRightLeft } from "lucide-react";
+import { Hash, ChevronDown, ChevronRight, Plus, Mic, MicOff, Headphones, Settings, Search, Shield, ShieldCheck, Globe, Building2, Users, Lock, ClipboardList, Briefcase, AlertTriangle, FileEdit, MapPin, UserCog, ArrowRightLeft, Trash2 } from "lucide-react";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useLocation } from "wouter";
 import { useState, useMemo, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -87,16 +88,16 @@ export function ChannelSidebar({
     [jobsQ.data, project.id],
   );
 
-  // Partition channels by workObjectId. `globalText`/`globalVoice` are the
-  // company-wide channels rendered at the top; `byJob` is a lookup map keyed
-  // by job id for nested rendering.
-  const { globalText, globalVoice, byJob } = useMemo(() => {
-    const gt: ApiChannel[] = [];
-    const gv: ApiChannel[] = [];
+  // Phase 1.9: unified channels. All company-global channels (text + legacy
+  // voice) render in one flat list — every channel can chat AND start a
+  // call, so the old text/voice split is just visual noise. We keep the
+  // `type` column on the data for back-compat but ignore it for grouping.
+  const { globalChannels, byJob } = useMemo(() => {
+    const global: ApiChannel[] = [];
     const map = new Map<number, ApiChannel[]>();
     for (const c of channels) {
       if (c.workObjectId == null) {
-        if (c.type === "voice") gv.push(c); else gt.push(c);
+        global.push(c);
       } else {
         const arr = map.get(c.workObjectId) ?? [];
         arr.push(c);
@@ -104,21 +105,19 @@ export function ChannelSidebar({
       }
     }
     const sortFn = (a: ApiChannel, b: ApiChannel) => a.position - b.position || a.id - b.id;
-    gt.sort(sortFn); gv.sort(sortFn);
+    global.sort(sortFn);
     for (const arr of map.values()) arr.sort(sortFn);
-    return { globalText: gt, globalVoice: gv, byJob: map };
+    return { globalChannels: global, byJob: map };
   }, [channels]);
 
   const [textOpen, setTextOpen] = useState(true);
-  const [voiceOpen, setVoiceOpen] = useState(true);
   const [jobsOpen, setJobsOpen] = useState(true);
   const [openJobs, setOpenJobs] = useState<Record<number, boolean>>({});
   const [search, setSearch] = useState("");
 
   const q = search.toLowerCase();
   const matchText = (c: ApiChannel) => c.name.toLowerCase().includes(q);
-  const filteredGlobalText = globalText.filter(matchText);
-  const filteredGlobalVoice = globalVoice.filter(matchText);
+  const filteredGlobalChannels = globalChannels.filter(matchText);
   // A job is visible while searching if its ref/title matches OR any of its
   // channels match. This way typing "safety" reveals both the safety job
   // and channels named #safety-* under unrelated jobs.
@@ -193,8 +192,8 @@ export function ChannelSidebar({
       <div className="flex-1 overflow-y-auto px-2 py-3 space-y-4">
         {/* Company-global channels. Rendered above Jobs so #general /
             #announcements are always immediately reachable. */}
-        <Section label="Sitrep Channels" open={textOpen} onToggle={() => setTextOpen(!textOpen)} onAdd={canCreateChannel ? onCreateChannel : undefined}>
-          {textOpen && filteredGlobalText.map((c) => (
+        <Section label="Channels" open={textOpen} onToggle={() => setTextOpen(!textOpen)} onAdd={canCreateChannel ? onCreateChannel : undefined}>
+          {textOpen && filteredGlobalChannels.map((c) => (
             <ChannelRow
               key={c.id}
               channel={c}
@@ -203,21 +202,9 @@ export function ChannelSidebar({
               onContextMenu={isAdmin ? (x, y) => setCtxMenu({ channel: c, x, y }) : undefined}
             />
           ))}
-          {textOpen && filteredGlobalText.length === 0 && (
+          {textOpen && filteredGlobalChannels.length === 0 && (
             <div className="px-2 py-1.5 text-[11px] text-[hsl(0_0%_55%)]">No matching channels.</div>
           )}
-        </Section>
-
-        <Section label="Net Channels" open={voiceOpen} onToggle={() => setVoiceOpen(!voiceOpen)} onAdd={canCreateChannel ? onCreateChannel : undefined}>
-          {voiceOpen && filteredGlobalVoice.map((c) => (
-            <ChannelRow
-              key={c.id}
-              channel={c}
-              active={c.id === activeChannelId}
-              onClick={() => onSelectChannel(c.id)}
-              onContextMenu={isAdmin ? (x, y) => setCtxMenu({ channel: c, x, y }) : undefined}
-            />
-          ))}
         </Section>
 
         {/* Jobs section. Each Job is collapsible; channels nest under it.
@@ -327,6 +314,38 @@ export function ChannelSidebar({
           >
             <ArrowRightLeft className="w-3.5 h-3.5 text-vs-red" />
             <span>Move channel…</span>
+          </button>
+          <button
+            type="button"
+            onClick={async () => {
+              const ch = ctxMenu.channel;
+              setCtxMenu(null);
+              const ok = window.confirm(
+                `Delete channel #${ch.name}?\n\nThis permanently removes every message, reaction, mention, read receipt, member grant, recording, and call room for this channel. Cannot be undone.`,
+              );
+              if (!ok) return;
+              try {
+                await apiRequest("DELETE", `/api/channels/${ch.id}`);
+                // Refresh sidebar lists. Invalidate both project channels and the
+                // job-scoped channel lists so right-rail/job groups update too.
+                queryClient.invalidateQueries({ queryKey: ["/api/projects", project.id, "channels"] });
+                queryClient.invalidateQueries({ queryKey: ["/api/work-objects"] });
+                // If the deleted channel was active, kick selection back to
+                // the company's first remaining channel (Home owns selection,
+                // so emit a soft hint via custom event the parent listens for).
+                if (activeChannelId === ch.id) {
+                  window.dispatchEvent(new CustomEvent("chat:channel-deleted", { detail: { channelId: ch.id } }));
+                }
+              } catch (err) {
+                console.error("[delete-channel]", err);
+                window.alert("Failed to delete channel. Check the console for details.");
+              }
+            }}
+            className="w-full flex items-center gap-2 px-3 py-2 text-left text-red-300 hover:bg-red-950/40 hover:text-red-200"
+            data-testid="menu-item-delete-channel"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+            <span>Delete channel…</span>
           </button>
           <div className="px-3 py-1.5 text-[10px] text-[hsl(0_0%_50%)] border-t border-[hsl(232_40%_22%)] font-mono">
             #{ctxMenu.channel.name}
@@ -441,7 +460,9 @@ function JobGroup({
 function ChannelRow({
   channel, active, onClick, onContextMenu,
 }: { channel: ApiChannel; active: boolean; onClick: () => void; onContextMenu?: (x: number, y: number) => void }) {
-  const Icon = channel.type === "voice" ? Volume2 : Hash;
+  // Phase 1.9: every channel renders with the # icon. The phone/video
+  // buttons live in the channel header (TextChannelView).
+  const Icon = Hash;
   // Subtle indicator that surfaces scope without taking row real estate.
   // Hidden for the default 'global' scope to avoid clutter.
   const scope = channel.scope ?? "global";
