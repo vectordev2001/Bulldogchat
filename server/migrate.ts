@@ -506,23 +506,28 @@ export function runMigrations() {
             WHERE project_id = ? AND name = ? AND work_object_id IS NULL AND id != ?
           `).all(g.project_id, g.name, g.keeper) as Array<{ id: number }>;
 
+          // Per-statement try/catch so a missing optional table (older DB)
+          // doesn't sink the whole dedupe. Required tables: messages,
+          // read_receipts, channel_members, channels. Optional: recordings,
+          // livekit_rooms, work_object_channel_links.
+          const safeRun = (sql: string, ...params: any[]) => {
+            try { rawDb.prepare(sql).run(...params); } catch (e: any) {
+              if (!/no such table/i.test(String(e?.message))) throw e;
+            }
+          };
           for (const d of dupes) {
-            // Re-point all FK rows. messages/read_receipts/recordings/
-            // livekit_rooms have plain channel_id columns.
             rawDb.prepare(`UPDATE messages SET channel_id = ? WHERE channel_id = ?`).run(g.keeper, d.id);
             rawDb.prepare(`UPDATE read_receipts SET channel_id = ? WHERE channel_id = ?`).run(g.keeper, d.id);
-            rawDb.prepare(`UPDATE recordings SET channel_id = ? WHERE channel_id = ?`).run(g.keeper, d.id);
-            rawDb.prepare(`UPDATE livekit_rooms SET channel_id = ? WHERE channel_id = ?`).run(g.keeper, d.id);
+            safeRun(`UPDATE recordings SET channel_id = ? WHERE channel_id = ?`, g.keeper, d.id);
+            safeRun(`UPDATE livekit_rooms SET channel_id = ? WHERE channel_id = ?`, g.keeper, d.id);
 
             // channel_members has (channel_id, user_id) as composite PK.
-            // Move rows over with OR IGNORE so we don't violate the PK if
-            // the user is already a member of the keeper.
-            rawDb.prepare(`INSERT OR IGNORE INTO channel_members (channel_id, user_id, role) SELECT ?, user_id, role FROM channel_members WHERE channel_id = ?`).run(g.keeper, d.id);
+            rawDb.prepare(`INSERT OR IGNORE INTO channel_members (channel_id, user_id) SELECT ?, user_id FROM channel_members WHERE channel_id = ?`).run(g.keeper, d.id);
             rawDb.prepare(`DELETE FROM channel_members WHERE channel_id = ?`).run(d.id);
 
             // work_object_channel_links: composite (work_object_id, channel_id) PK.
-            rawDb.prepare(`INSERT OR IGNORE INTO work_object_channel_links (work_object_id, channel_id) SELECT work_object_id, ? FROM work_object_channel_links WHERE channel_id = ?`).run(g.keeper, d.id);
-            rawDb.prepare(`DELETE FROM work_object_channel_links WHERE channel_id = ?`).run(d.id);
+            safeRun(`INSERT OR IGNORE INTO work_object_channel_links (work_object_id, channel_id) SELECT work_object_id, ? FROM work_object_channel_links WHERE channel_id = ?`, g.keeper, d.id);
+            safeRun(`DELETE FROM work_object_channel_links WHERE channel_id = ?`, d.id);
 
             // Finally, drop the duplicate channel.
             rawDb.prepare(`DELETE FROM channels WHERE id = ?`).run(d.id);
