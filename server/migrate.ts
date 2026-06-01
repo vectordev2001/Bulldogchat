@@ -551,8 +551,18 @@ export function runMigrations() {
       const vfd = rawDb.prepare(`SELECT id FROM projects WHERE org_id = ? AND slug = 'vfd'`).get(org.id) as { id: number } | undefined;
       if (!vfd) continue;
 
-      const existingJobCount = (rawDb.prepare(`SELECT COUNT(*) as n FROM work_objects WHERE project_id = ?`).get(vfd.id) as { n: number }).n;
-      if (existingJobCount > 0) continue; // already has jobs — don't seed demo data
+      // Guard: only seed demo jobs if VFD has no jobs that already host
+      // nested channels. We want the Company → Job → Channel hierarchy to
+      // be visible, and a real job with no nested channels still leaves
+      // the sidebar looking flat. This is idempotent: once any job has a
+      // nested channel (demo or real), this block stops running.
+      const nestedJobCount = (rawDb.prepare(`
+        SELECT COUNT(DISTINCT wo.id) as n
+        FROM work_objects wo
+        JOIN channels c ON c.work_object_id = wo.id
+        WHERE wo.project_id = ?
+      `).get(vfd.id) as { n: number }).n;
+      if (nestedJobCount > 0) continue;
 
       // Pick an admin user as creator. Falls back to first user in org.
       const admin = rawDb.prepare(`SELECT id FROM users WHERE org_id = ? AND role = 'admin' ORDER BY id LIMIT 1`).get(org.id) as { id: number } | undefined
@@ -561,9 +571,9 @@ export function runMigrations() {
 
       const now = Date.now();
       const demoJobs = [
-        { ref: "LAKEWOOD-SUB-01", title: "Lakewood Substation Rebuild", kind: "job_site", channels: ["site-updates", "safety-tailgate"] },
-        { ref: "I405-FIBER-02",   title: "I-405 Fiber Pull",            kind: "job_site", channels: ["crew-coord", "locates"] },
-        { ref: "BOE-HYDROVAC-03", title: "Boeing Field Hydrovac",       kind: "job_site", channels: ["day-of", "equipment"] },
+        { ref: "DEMO-LAKEWOOD-01", title: "Lakewood Substation Rebuild", kind: "job_site", channels: ["site-updates", "safety-tailgate"] },
+        { ref: "DEMO-I405-02",     title: "I-405 Fiber Pull",            kind: "job_site", channels: ["crew-coord", "locates"] },
+        { ref: "DEMO-BOE-03",      title: "Boeing Field Hydrovac",       kind: "job_site", channels: ["day-of", "equipment"] },
       ];
 
       const insertJob = rawDb.prepare(`
