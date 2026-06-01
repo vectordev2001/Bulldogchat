@@ -248,6 +248,8 @@ export default function Home() {
             onToggleDeafen={() => setMyDeafened((v) => !v)}
             onCreateChannel={() => setCreateChannelOpen(true)}
             onOpenWorkObjects={() => setWorkObjectsListOpen(true)}
+            allProjects={projects}
+            orgMembers={members}
           />
         )}
         {user && (

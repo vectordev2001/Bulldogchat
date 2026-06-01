@@ -1,8 +1,10 @@
-import { Hash, Volume2, ChevronDown, ChevronRight, Plus, Mic, MicOff, Headphones, Settings, Search, Shield, ShieldCheck, Globe, Building2, Users, Lock, ClipboardList, Briefcase, AlertTriangle, FileEdit, MapPin } from "lucide-react";
+import { Hash, Volume2, ChevronDown, ChevronRight, Plus, Mic, MicOff, Headphones, Settings, Search, Shield, ShieldCheck, Globe, Building2, Users, Lock, ClipboardList, Briefcase, AlertTriangle, FileEdit, MapPin, UserCog, ArrowRightLeft } from "lucide-react";
 import { useLocation } from "wouter";
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Avatar } from "./Avatar";
+import { ManageMembersDialog } from "./ManageMembersDialog";
+import { MoveChannelDialog } from "./MoveChannelDialog";
 import type { ApiChannel, ApiProject, ApiUser } from "@/types/api";
 
 // Phase 1.8: minimal job shape we need to nest channels under jobs in the
@@ -29,12 +31,42 @@ interface Props {
   onToggleDeafen: () => void;
   onCreateChannel?: () => void;
   onOpenWorkObjects?: () => void;
+  // Phase 1.8 admin actions need the full company + member lists so the
+  // Manage Members and Move Channel dialogs can render the right dropdowns.
+  allProjects?: ApiProject[];
+  orgMembers?: ApiUser[];
 }
 
 export function ChannelSidebar({
   project, channels, projectMembers, activeChannelId, onSelectChannel,
   me, myMicMuted, myDeafened, onToggleMic, onToggleDeafen, onCreateChannel, onOpenWorkObjects,
+  allProjects, orgMembers,
 }: Props) {
+  // Phase 1.8 admin dialogs. Both are admin-gated so we only mount the state
+  // when the current user is an admin — avoids accidental opens elsewhere.
+  const isAdmin = me.role === "admin";
+  const [manageMembersOpen, setManageMembersOpen] = useState(false);
+  const [moveChannel, setMoveChannel] = useState<ApiChannel | null>(null);
+  // Right-click context menu state for channel rows. Tracks the channel that
+  // was right-clicked plus the screen coordinates so the menu pops up under
+  // the cursor without us needing a heavier popover lib.
+  const [ctxMenu, setCtxMenu] = useState<{ channel: ApiChannel; x: number; y: number } | null>(null);
+
+  // Dismiss the context menu on any outside click / Escape / scroll. Keeps
+  // the UX tight — native-feeling without trapping focus.
+  useEffect(() => {
+    if (!ctxMenu) return;
+    const dismiss = () => setCtxMenu(null);
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setCtxMenu(null); };
+    window.addEventListener("click", dismiss);
+    window.addEventListener("scroll", dismiss, true);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("click", dismiss);
+      window.removeEventListener("scroll", dismiss, true);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [ctxMenu]);
   // Any signed-in user can create a channel. Visibility is controlled by
   // the scope they pick in the dialog (global / entity / team / private).
   const canCreateChannel = true;
@@ -122,14 +154,26 @@ export function ChannelSidebar({
             </div>
           </div>
         </div>
-        <button
-          type="button"
-          className="text-[hsl(0_0%_65%)] hover:text-white transition-colors p-1"
-          title="Company info"
-          data-testid="button-project-settings"
-        >
-          <ChevronDown className="w-4 h-4" />
-        </button>
+        {isAdmin ? (
+          <button
+            type="button"
+            onClick={() => setManageMembersOpen(true)}
+            className="flex items-center gap-1 text-[hsl(0_0%_65%)] hover:text-white transition-colors px-1.5 py-1 rounded-md hover:bg-[hsl(232_45%_25%)]"
+            title={`Manage members of ${project.name}`}
+            data-testid="button-manage-members"
+          >
+            <UserCog className="w-4 h-4" />
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="text-[hsl(0_0%_65%)] hover:text-white transition-colors p-1"
+            title="Company info"
+            data-testid="button-project-settings"
+          >
+            <ChevronDown className="w-4 h-4" />
+          </button>
+        )}
       </div>
 
       <div className="px-3 pt-3">
@@ -151,7 +195,13 @@ export function ChannelSidebar({
             #announcements are always immediately reachable. */}
         <Section label="Sitrep Channels" open={textOpen} onToggle={() => setTextOpen(!textOpen)} onAdd={canCreateChannel ? onCreateChannel : undefined}>
           {textOpen && filteredGlobalText.map((c) => (
-            <ChannelRow key={c.id} channel={c} active={c.id === activeChannelId} onClick={() => onSelectChannel(c.id)} />
+            <ChannelRow
+              key={c.id}
+              channel={c}
+              active={c.id === activeChannelId}
+              onClick={() => onSelectChannel(c.id)}
+              onContextMenu={isAdmin ? (x, y) => setCtxMenu({ channel: c, x, y }) : undefined}
+            />
           ))}
           {textOpen && filteredGlobalText.length === 0 && (
             <div className="px-2 py-1.5 text-[11px] text-[hsl(0_0%_55%)]">No matching channels.</div>
@@ -160,7 +210,13 @@ export function ChannelSidebar({
 
         <Section label="Net Channels" open={voiceOpen} onToggle={() => setVoiceOpen(!voiceOpen)} onAdd={canCreateChannel ? onCreateChannel : undefined}>
           {voiceOpen && filteredGlobalVoice.map((c) => (
-            <ChannelRow key={c.id} channel={c} active={c.id === activeChannelId} onClick={() => onSelectChannel(c.id)} />
+            <ChannelRow
+              key={c.id}
+              channel={c}
+              active={c.id === activeChannelId}
+              onClick={() => onSelectChannel(c.id)}
+              onContextMenu={isAdmin ? (x, y) => setCtxMenu({ channel: c, x, y }) : undefined}
+            />
           ))}
         </Section>
 
@@ -191,6 +247,7 @@ export function ChannelSidebar({
                 channels={jobChannels}
                 activeChannelId={activeChannelId}
                 onSelectChannel={onSelectChannel}
+                onChannelContextMenu={isAdmin ? (ch, x, y) => setCtxMenu({ channel: ch, x, y }) : undefined}
               />
             );
           })}
@@ -240,6 +297,52 @@ export function ChannelSidebar({
           </IconBtn>
         </div>
       </div>
+
+      {/* Phase 1.8 admin: Manage Members dialog. Mounted only for admins so
+          non-admins never hold the network/component cost. */}
+      {isAdmin && orgMembers && (
+        <ManageMembersDialog
+          open={manageMembersOpen}
+          onClose={() => setManageMembersOpen(false)}
+          project={project}
+          me={me}
+          orgMembers={orgMembers}
+        />
+      )}
+
+      {/* Phase 1.8 admin: right-click context menu for channel rows. Positions
+          itself near the cursor; dismisses on outside click / Escape / scroll. */}
+      {isAdmin && ctxMenu && (
+        <div
+          style={{ position: "fixed", top: ctxMenu.y, left: ctxMenu.x, zIndex: 60 }}
+          onClick={(e) => e.stopPropagation()}
+          data-testid="context-menu-channel"
+          className="min-w-[180px] rounded-md border border-[hsl(232_40%_25%)] bg-[hsl(232_55%_12%)] shadow-2xl overflow-hidden text-sm"
+        >
+          <button
+            type="button"
+            onClick={() => { setMoveChannel(ctxMenu.channel); setCtxMenu(null); }}
+            className="w-full flex items-center gap-2 px-3 py-2 text-left text-white hover:bg-[hsl(232_45%_22%)]"
+            data-testid="menu-item-move-channel"
+          >
+            <ArrowRightLeft className="w-3.5 h-3.5 text-vs-red" />
+            <span>Move channel…</span>
+          </button>
+          <div className="px-3 py-1.5 text-[10px] text-[hsl(0_0%_50%)] border-t border-[hsl(232_40%_22%)] font-mono">
+            #{ctxMenu.channel.name}
+          </div>
+        </div>
+      )}
+
+      {/* Phase 1.8 admin: Move Channel dialog. */}
+      {isAdmin && moveChannel && allProjects && (
+        <MoveChannelDialog
+          open={moveChannel != null}
+          onClose={() => setMoveChannel(null)}
+          channel={moveChannel}
+          projects={allProjects}
+        />
+      )}
     </aside>
   );
 }
@@ -283,7 +386,7 @@ function jobKindIcon(kind: SidebarJob["kind"]) {
 }
 
 function JobGroup({
-  job, expanded, onToggle, channels, activeChannelId, onSelectChannel,
+  job, expanded, onToggle, channels, activeChannelId, onSelectChannel, onChannelContextMenu,
 }: {
   job: SidebarJob;
   expanded: boolean;
@@ -291,6 +394,7 @@ function JobGroup({
   channels: ApiChannel[];
   activeChannelId: number | null;
   onSelectChannel: (id: number) => void;
+  onChannelContextMenu?: (channel: ApiChannel, x: number, y: number) => void;
 }) {
   const Icon = jobKindIcon(job.kind);
   const isClosed = job.status === "closed";
@@ -320,7 +424,13 @@ function JobGroup({
             <div className="px-2 py-1 text-[10px] text-[hsl(0_0%_45%)]">No channels in this job yet.</div>
           )}
           {channels.map(c => (
-            <ChannelRow key={c.id} channel={c} active={c.id === activeChannelId} onClick={() => onSelectChannel(c.id)} />
+            <ChannelRow
+              key={c.id}
+              channel={c}
+              active={c.id === activeChannelId}
+              onClick={() => onSelectChannel(c.id)}
+              onContextMenu={onChannelContextMenu ? (x, y) => onChannelContextMenu(c, x, y) : undefined}
+            />
           ))}
         </div>
       )}
@@ -329,8 +439,8 @@ function JobGroup({
 }
 
 function ChannelRow({
-  channel, active, onClick,
-}: { channel: ApiChannel; active: boolean; onClick: () => void }) {
+  channel, active, onClick, onContextMenu,
+}: { channel: ApiChannel; active: boolean; onClick: () => void; onContextMenu?: (x: number, y: number) => void }) {
   const Icon = channel.type === "voice" ? Volume2 : Hash;
   // Subtle indicator that surfaces scope without taking row real estate.
   // Hidden for the default 'global' scope to avoid clutter.
@@ -347,6 +457,7 @@ function ChannelRow({
     <button
       type="button"
       onClick={onClick}
+      onContextMenu={onContextMenu ? (e) => { e.preventDefault(); onContextMenu(e.clientX, e.clientY); } : undefined}
       data-testid={`channel-${channel.id}`}
       className={[
         "relative w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md text-sm transition-colors group",
