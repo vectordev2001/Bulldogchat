@@ -18,6 +18,7 @@ import {
 import { apiRequest } from "@/lib/queryClient";
 import type { ApiUser } from "@/types/api";
 import { CreateWorkObjectDialog } from "./CreateWorkObjectDialog";
+import { WorkObjectDetailDrawer } from "./WorkObjectDetailDrawer";
 
 type WorkObjectKind = "job_site" | "work_project" | "change_order" | "safety_incident";
 
@@ -82,6 +83,8 @@ export function WorkObjectsListDialog({ open, onClose, me, orgMembers }: Props) 
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("open");
   const [search, setSearch] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
+  // Detail drawer state — clicking a row opens this without dismissing the list.
+  const [detailId, setDetailId] = useState<number | null>(null);
 
   const canCreate = me.role === "admin" || me.role === "foreman";
 
@@ -259,6 +262,7 @@ export function WorkObjectsListDialog({ open, onClose, me, orgMembers }: Props) 
                             key={wo.id}
                             wo={wo}
                             ownerName={wo.ownerUserId ? ownerLookup.get(wo.ownerUserId)?.name ?? null : null}
+                            onOpen={() => setDetailId(wo.id)}
                           />
                         ))}
                       </ul>
@@ -290,6 +294,13 @@ export function WorkObjectsListDialog({ open, onClose, me, orgMembers }: Props) 
           }}
         />
       )}
+      <WorkObjectDetailDrawer
+        open={detailId != null}
+        workObjectId={detailId}
+        onClose={() => setDetailId(null)}
+        me={me}
+        orgMembers={orgMembers}
+      />
     </>
   );
 }
@@ -315,7 +326,7 @@ function FilterPill({
   );
 }
 
-function WorkObjectRow({ wo, ownerName }: { wo: WorkObject; ownerName: string | null }) {
+function WorkObjectRow({ wo, ownerName, onOpen }: { wo: WorkObject; ownerName: string | null; onOpen: () => void }) {
   const statusClass = STATUS_TONE[wo.status] ?? "bg-[hsl(0_0%_30%)]/30 text-[hsl(0_0%_70%)]";
   const updated = new Date(wo.updatedAt);
   const ago = relativeTime(updated);
@@ -326,8 +337,10 @@ function WorkObjectRow({ wo, ownerName }: { wo: WorkObject; ownerName: string | 
 
   return (
     <li>
-      <div
-        className="flex items-center gap-2 px-2.5 py-2 rounded-md bg-[hsl(232_50%_15%)] border border-[hsl(232_40%_22%)] hover:border-[hsl(232_40%_32%)] hover:bg-[hsl(232_50%_17%)] transition-colors"
+      <button
+        type="button"
+        onClick={onOpen}
+        className="w-full flex items-center gap-2 px-2.5 py-2 rounded-md bg-[hsl(232_50%_15%)] border border-[hsl(232_40%_22%)] hover:border-[hsl(232_40%_32%)] hover:bg-[hsl(232_50%_17%)] transition-colors text-left"
         data-testid={`row-work-object-${wo.id}`}
       >
         <div className="min-w-0 flex-1">
@@ -351,7 +364,7 @@ function WorkObjectRow({ wo, ownerName }: { wo: WorkObject; ownerName: string | 
           <div className="text-[10px] text-[hsl(0_0%_50%)] font-mono">{ago}</div>
         </div>
         <ChevronRight className="w-3.5 h-3.5 text-[hsl(0_0%_40%)] shrink-0" />
-      </div>
+      </button>
     </li>
   );
 }

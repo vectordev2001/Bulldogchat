@@ -1,9 +1,10 @@
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { ClipboardList, ChevronDown, ChevronRight, X, Plus, Loader2, MapPin, Briefcase, FileEdit, AlertTriangle } from "lucide-react";
+import { ClipboardList, ChevronRight, X, Plus, Loader2, MapPin, Briefcase, FileEdit, AlertTriangle } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { ApiUser } from "@/types/api";
 import { CreateWorkObjectDialog } from "./CreateWorkObjectDialog";
+import { WorkObjectDetailDrawer } from "./WorkObjectDetailDrawer";
 
 type WorkObjectKind = "job_site" | "work_project" | "change_order" | "safety_incident";
 
@@ -70,10 +71,11 @@ function statusPill(status: string): string {
 }
 
 export function WorkObjectPanel({ channelId, me, orgMembers, onClose }: Props) {
-  const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const [linkInput, setLinkInput] = useState("");
   const [linkError, setLinkError] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
+  // Detail drawer launches over this panel; null = closed.
+  const [detailId, setDetailId] = useState<number | null>(null);
 
   const canLink = me.role === "admin" || me.role === "foreman";
 
@@ -103,15 +105,6 @@ export function WorkObjectPanel({ channelId, me, orgMembers, onClose }: Props) {
       queryClient.invalidateQueries({ queryKey: ["/api/channels", channelId, "work-objects"] });
     },
   });
-
-  const toggleExpand = (id: number) => {
-    setExpanded((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
 
   const handleLinkSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -194,26 +187,18 @@ export function WorkObjectPanel({ channelId, me, orgMembers, onClose }: Props) {
         {(listQ.data ?? []).map((wo) => {
           const meta = KIND_META[wo.kind];
           const Icon = meta.icon;
-          const isOpen = expanded.has(wo.id);
-          const owner = orgMembers.find((m) => m.id === wo.ownerUserId);
           return (
             <div
               key={wo.id}
-              className="rounded border border-[hsl(232_40%_22%)] bg-[hsl(232_60%_10%)] overflow-hidden"
+              className="group relative rounded border border-[hsl(232_40%_22%)] bg-[hsl(232_60%_10%)] overflow-hidden hover:border-[hsl(232_40%_32%)] transition-colors"
               data-testid={`card-work-object-${wo.id}`}
             >
               <button
                 type="button"
-                onClick={() => toggleExpand(wo.id)}
-                className="w-full flex items-start gap-2 px-2 py-2 text-left hover-elevate"
+                onClick={() => setDetailId(wo.id)}
+                className="w-full flex items-start gap-2 px-2 py-2 text-left"
+                data-testid={`button-open-work-object-${wo.id}`}
               >
-                <div className="mt-0.5">
-                  {isOpen ? (
-                    <ChevronDown className="w-3.5 h-3.5 text-[hsl(0_0%_55%)]" />
-                  ) : (
-                    <ChevronRight className="w-3.5 h-3.5 text-[hsl(0_0%_55%)]" />
-                  )}
-                </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-1.5 mb-1">
                     <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium border ${meta.tone}`}>
@@ -231,15 +216,21 @@ export function WorkObjectPanel({ channelId, me, orgMembers, onClose }: Props) {
                     {wo.title}
                   </div>
                 </div>
+                <ChevronRight className="w-3.5 h-3.5 text-[hsl(0_0%_40%)] shrink-0 mt-0.5" />
               </button>
-              {isOpen && (
-                <WorkObjectDetailView
-                  workObjectId={wo.id}
-                  owner={owner}
-                  canLink={canLink}
-                  onUnlink={() => unlinkMutation.mutate(wo.id)}
-                  unlinking={unlinkMutation.isPending}
-                />
+              {canLink && (
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); unlinkMutation.mutate(wo.id); }}
+                  disabled={unlinkMutation.isPending}
+                  className="absolute top-1 right-1 p-1 rounded text-[hsl(0_0%_50%)] hover:text-vs-red hover:bg-[hsl(232_60%_15%)] opacity-0 group-hover:opacity-100 transition-opacity disabled:opacity-30"
+                  title="Unlink from this channel"
+                  data-testid={`button-unlink-work-object-${wo.id}`}
+                >
+                  {unlinkMutation.isPending && unlinkMutation.variables === wo.id
+                    ? <Loader2 className="w-3 h-3 animate-spin" />
+                    : <X className="w-3 h-3" />}
+                </button>
               )}
             </div>
           );
@@ -282,86 +273,15 @@ export function WorkObjectPanel({ channelId, me, orgMembers, onClose }: Props) {
           </div>
         </form>
       )}
+
+      <WorkObjectDetailDrawer
+        open={detailId != null}
+        workObjectId={detailId}
+        onClose={() => setDetailId(null)}
+        me={me}
+        orgMembers={orgMembers}
+      />
     </aside>
   );
 }
 
-function WorkObjectDetailView({
-  workObjectId,
-  owner,
-  canLink,
-  onUnlink,
-  unlinking,
-}: {
-  workObjectId: number;
-  owner?: ApiUser;
-  canLink: boolean;
-  onUnlink: () => void;
-  unlinking: boolean;
-}) {
-  const detailQ = useQuery<WorkObjectDetail>({
-    queryKey: ["/api/work-objects", workObjectId],
-    queryFn: () => apiRequest<WorkObjectDetail>("GET", `/api/work-objects/${workObjectId}`),
-  });
-
-  if (detailQ.isLoading) {
-    return (
-      <div className="px-3 py-2 border-t border-[hsl(232_40%_22%)] flex items-center gap-2 text-[11px] text-[hsl(0_0%_55%)]">
-        <Loader2 className="w-3 h-3 animate-spin" /> Loading
-      </div>
-    );
-  }
-
-  if (!detailQ.data) return null;
-
-  const wo = detailQ.data;
-  const attrs = wo.attributes ?? {};
-  const attrEntries = Object.entries(attrs).filter(([, v]) => v != null && v !== "");
-
-  return (
-    <div className="border-t border-[hsl(232_40%_22%)] px-3 py-2 space-y-2 bg-[hsl(232_60%_7%)]">
-      {owner && (
-        <div className="text-[11px] text-[hsl(0_0%_70%)]">
-          <span className="text-[hsl(0_0%_50%)]">Owner: </span>
-          {owner.name}
-        </div>
-      )}
-      {attrEntries.length > 0 && (
-        <div className="space-y-0.5">
-          {attrEntries.map(([k, v]) => (
-            <div key={k} className="text-[11px] leading-tight">
-              <span className="text-[hsl(0_0%_50%)]">{k}: </span>
-              <span className="text-[hsl(0_0%_85%)]">
-                {typeof v === "object" ? JSON.stringify(v) : String(v)}
-              </span>
-            </div>
-          ))}
-        </div>
-      )}
-      {wo.activity.length > 0 && (
-        <div className="pt-1 border-t border-[hsl(232_40%_18%)]">
-          <div className="text-[10px] uppercase tracking-wide text-[hsl(0_0%_50%)] mb-1">Recent activity</div>
-          <div className="space-y-0.5 max-h-24 overflow-y-auto">
-            {wo.activity.slice(0, 5).map((a) => (
-              <div key={a.id} className="text-[10px] text-[hsl(0_0%_65%)] leading-tight">
-                <span className="font-mono">{a.type}</span>
-                <span className="text-[hsl(0_0%_40%)]"> · {new Date(a.createdAt).toLocaleDateString()}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-      {canLink && (
-        <button
-          type="button"
-          onClick={onUnlink}
-          disabled={unlinking}
-          className="w-full text-[10px] text-[hsl(0_0%_55%)] hover:text-[hsl(2_85%_72%)] py-1 disabled:opacity-40"
-          data-testid={`button-unlink-${wo.id}`}
-        >
-          {unlinking ? "Unlinking…" : "Unlink from channel"}
-        </button>
-      )}
-    </div>
-  );
-}
