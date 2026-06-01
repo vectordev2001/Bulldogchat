@@ -478,4 +478,62 @@ export function runMigrations() {
   } catch (e) {
     console.warn("[migrate] admin email rebrand skipped:", e);
   }
+
+  // v9: Dedupe channels per company. The v8 backfill re-homed channels from
+  // legacy seed projects (lakewood-substation, i-405-fiber, hq-all-hands,
+  // etc.) into VFD without deduping, so VFD now shows 8x #general, 8x
+  // #announcements, 4x #field-ops. For each (project_id, name, work_object_id)
+  // group with multiple rows, we keep the lowest-id channel as canonical and
+  // re-point all FK refs from the duplicates to it, then delete the dupes.
+  //
+  // Only collapse GLOBAL channels (work_object_id IS NULL) — channels nested
+  // under a specific job are legitimately scoped and shouldn't merge with
+  // unrelated globals. Idempotent: re-running finds no dupes and is a no-op.
+  try {
+    const dupeGroups = rawDb.prepare(`
+      SELECT project_id, name, COUNT(*) as cnt, MIN(id) as keeper
+      FROM channels
+      WHERE work_object_id IS NULL
+      GROUP BY project_id, name
+      HAVING COUNT(*) > 1
+    `).all() as Array<{ project_id: number; name: string; cnt: number; keeper: number }>;
+
+    if (dupeGroups.length > 0) {
+      const tx = rawDb.transaction(() => {
+        for (const g of dupeGroups) {
+          const dupes = rawDb.prepare(`
+            SELECT id FROM channels
+            WHERE project_id = ? AND name = ? AND work_object_id IS NULL AND id != ?
+          `).all(g.project_id, g.name, g.keeper) as Array<{ id: number }>;
+
+          for (const d of dupes) {
+            // Re-point all FK rows. messages/read_receipts/recordings/
+            // livekit_rooms have plain channel_id columns.
+            rawDb.prepare(`UPDATE messages SET channel_id = ? WHERE channel_id = ?`).run(g.keeper, d.id);
+            rawDb.prepare(`UPDATE read_receipts SET channel_id = ? WHERE channel_id = ?`).run(g.keeper, d.id);
+            rawDb.prepare(`UPDATE recordings SET channel_id = ? WHERE channel_id = ?`).run(g.keeper, d.id);
+            rawDb.prepare(`UPDATE livekit_rooms SET channel_id = ? WHERE channel_id = ?`).run(g.keeper, d.id);
+
+            // channel_members has (channel_id, user_id) as composite PK.
+            // Move rows over with OR IGNORE so we don't violate the PK if
+            // the user is already a member of the keeper.
+            rawDb.prepare(`INSERT OR IGNORE INTO channel_members (channel_id, user_id, role) SELECT ?, user_id, role FROM channel_members WHERE channel_id = ?`).run(g.keeper, d.id);
+            rawDb.prepare(`DELETE FROM channel_members WHERE channel_id = ?`).run(d.id);
+
+            // work_object_channel_links: composite (work_object_id, channel_id) PK.
+            rawDb.prepare(`INSERT OR IGNORE INTO work_object_channel_links (work_object_id, channel_id) SELECT work_object_id, ? FROM work_object_channel_links WHERE channel_id = ?`).run(g.keeper, d.id);
+            rawDb.prepare(`DELETE FROM work_object_channel_links WHERE channel_id = ?`).run(d.id);
+
+            // Finally, drop the duplicate channel.
+            rawDb.prepare(`DELETE FROM channels WHERE id = ?`).run(d.id);
+          }
+          console.log(`[migrate] v9 deduped #${g.name} in project ${g.project_id}: kept id=${g.keeper}, removed ${dupes.length} duplicate(s)`);
+        }
+      });
+      tx();
+      console.log(`[migrate] v9 channel dedupe: collapsed ${dupeGroups.length} duplicate group(s)`);
+    }
+  } catch (e) {
+    console.warn("[migrate] v9 channel dedupe skipped:", e);
+  }
 }
