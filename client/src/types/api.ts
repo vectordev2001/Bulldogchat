@@ -89,6 +89,11 @@ export interface ApiMessage {
   isPinned: boolean;
   createdAt: string;
   editedAt: string | null;
+  // Soft-delete (tombstone). When non-null, the message was deleted by its
+  // author or an admin. Content is empty string; clients render a
+  // "Message deleted" placeholder instead.
+  deletedAt?: string | null;
+  deletedByUserId?: number | null;
   // Wire enrichment from backend:
   authorName: string;
   authorHue: number;

@@ -8,6 +8,7 @@ interface Handlers {
   onMessageUpdate?: (data: any) => void;
   onMessageDelete?: (data: any) => void;
   onReactionChange?: (data: any) => void;
+  onChannelDelete?: (data: any) => void;
 }
 
 export function useSSE(enabled: boolean, handlers: Handlers): SSEStatus {
@@ -48,6 +49,9 @@ export function useSSE(enabled: boolean, handlers: Handlers): SSEStatus {
     });
     es.addEventListener("reaction:change", (e: MessageEvent) => {
       try { handlersRef.current.onReactionChange?.(JSON.parse(e.data)); } catch {}
+    });
+    es.addEventListener("channel:delete", (e: MessageEvent) => {
+      try { handlersRef.current.onChannelDelete?.(JSON.parse(e.data)); } catch {}
     });
 
     // Presence broadcasts (Phase 1.9). Re-emit as a window CustomEvent so any

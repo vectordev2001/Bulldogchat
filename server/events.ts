@@ -55,6 +55,19 @@ export function emitReactionChange(orgId: number, payload: { messageId: number; 
   }
 }
 
+// Broadcast that a channel was deleted (admin delete or DM thread wipe).
+// Clients drop the channel from their caches and bail out of the view if
+// it's currently active. formerMemberIds lets a DM-aware client skip the
+// invalidate work for users who weren't members anyway.
+export function emitChannelDelete(
+  orgId: number,
+  payload: { channelId: number; deletedByUserId?: number; formerMemberIds?: number[] },
+) {
+  for (const sub of subscribers) {
+    if (sub.orgId === orgId) send(sub, "channel:delete", payload);
+  }
+}
+
 /**
  * 1:1 call events. We target the specific user (callee or caller) by id
  * so we don't leak ringing across the org. SSE clients subscribe by

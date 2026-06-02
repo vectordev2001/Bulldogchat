@@ -1,4 +1,4 @@
-import { Hash, Pin, Plus, Smile, Paperclip, Send, Users, Search, Loader2, MessageSquare, X, Reply, Phone, Video, ClipboardList, MapPin, FileText, AlertTriangle, Link2, Unlink, Lock, Unlock, UserCog, PenLine, CheckCircle2 } from "lucide-react";
+import { Hash, Pin, Plus, Smile, Paperclip, Send, Users, Search, Loader2, MessageSquare, X, Reply, Phone, Video, ClipboardList, MapPin, FileText, AlertTriangle, Link2, Unlink, Lock, Unlock, UserCog, PenLine, CheckCircle2, Trash2 } from "lucide-react";
 import { ChannelCallDialog } from "@/components/ChannelCallDialog";
 import { useCalls } from "@/lib/CallContext";
 import { Avatar } from "./Avatar";
@@ -392,6 +392,7 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers, me
                 grouped={!!grouped}
                 isMe={msg.userId === me.id}
                 meId={me.id}
+                myRole={me.role}
                 onOpenThread={() => setThreadParent(msg)}
               />
             );
@@ -661,12 +662,68 @@ function SystemMessageRow({ meta, content, createdAt }: { meta: ApiSystemMessage
   );
 }
 
-function MessageRow({ msg, grouped, isMe, meId, onOpenThread }: { msg: ApiMessage; grouped: boolean; isMe: boolean; meId: number; onOpenThread: () => void }) {
+function MessageRow({ msg, grouped, isMe, meId, myRole, onOpenThread }: { msg: ApiMessage; grouped: boolean; isMe: boolean; meId: number; myRole: UserRole; onOpenThread: () => void }) {
   // System messages (work-object events) render as compact centered banners.
   if (msg.meta && msg.meta.system) {
     return <SystemMessageRow meta={msg.meta} content={msg.content} createdAt={msg.createdAt} />;
   }
+
+  // Tombstoned message — author or admin deleted it. We still render the
+  // row so reply threading stays visually coherent, but content/avatar/
+  // reactions are stripped down to a muted placeholder. Hover/long-press
+  // actions are disabled here — nothing left to act on.
+  if (msg.deletedAt) {
+    return (
+      <div
+        className={[
+          "flex gap-3 px-2 py-1 rounded -mx-2",
+          grouped ? "" : "mt-4",
+        ].join(" ")}
+        data-testid={`message-${msg.id}-tombstone`}
+      >
+        <div className="w-10 shrink-0" />
+        <div className="min-w-0 flex-1 text-[12.5px] italic text-[hsl(0_0%_50%)] flex items-center gap-1.5">
+          <Trash2 className="w-3 h-3" />
+          Message deleted
+        </div>
+      </div>
+    );
+  }
+
   const roleClass = ROLE_COLOR[msg.authorRole] ?? "text-white";
+  const canDelete = isMe || myRole === "admin";
+
+  // Author/admin delete. Confirms once via window.confirm to avoid an extra
+  // modal component for what is otherwise a quick action. The server
+  // tombstones (not hard delete), so SSE will re-render this row as the
+  // tombstone variant above; we don't need to optimistically remove it.
+  const deleteMut = useMutation({
+    mutationFn: async () => {
+      return await apiRequest("DELETE", `/api/messages/${msg.id}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/channels", msg.channelId, "messages"] });
+    },
+  });
+
+  const onDelete = () => {
+    if (deleteMut.isPending) return;
+    if (!window.confirm("Delete this message? This can't be undone.")) return;
+    deleteMut.mutate();
+  };
+
+  // Long-press on mobile (no hover) surfaces the action bar. We use a
+  // 450ms touch hold; tap-cancel clears the timer so taps don't accidentally
+  // trigger the action bar.
+  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [mobileActionsOpen, setMobileActionsOpen] = useState(false);
+  const onTouchStart = () => {
+    if (longPressTimer.current) clearTimeout(longPressTimer.current);
+    longPressTimer.current = setTimeout(() => setMobileActionsOpen(true), 450);
+  };
+  const onTouchEnd = () => {
+    if (longPressTimer.current) { clearTimeout(longPressTimer.current); longPressTimer.current = null; }
+  };
 
   return (
     <motion.div
@@ -678,6 +735,9 @@ function MessageRow({ msg, grouped, isMe, meId, onOpenThread }: { msg: ApiMessag
         grouped ? "" : "mt-4",
       ].join(" ")}
       data-testid={`message-${msg.id}`}
+      onTouchStart={onTouchStart}
+      onTouchEnd={onTouchEnd}
+      onTouchCancel={onTouchEnd}
     >
       <div className="w-10 shrink-0">
         {!grouped ? (
@@ -728,17 +788,47 @@ function MessageRow({ msg, grouped, isMe, meId, onOpenThread }: { msg: ApiMessag
         )}
       </div>
 
-      {/* Hover action: reply in thread */}
-      <div className="opacity-0 group-hover:opacity-100 transition-opacity absolute top-0 right-2 flex items-center gap-1 -translate-y-2 bg-[hsl(232_55%_14%)] border border-[hsl(232_40%_25%)] rounded-md px-1 py-0.5 shadow-md">
+      {/* Hover action bar (desktop): reply + delete (when permitted).
+          On mobile, long-press toggles mobileActionsOpen which forces this
+          panel visible (opacity-100 via the data attr). */}
+      <div
+        className={`transition-opacity absolute top-0 right-2 flex items-center gap-1 -translate-y-2 bg-[hsl(232_55%_14%)] border border-[hsl(232_40%_25%)] rounded-md px-1 py-0.5 shadow-md ${
+          mobileActionsOpen ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+        }`}
+        onClick={(e) => e.stopPropagation()}
+      >
         <button
           type="button"
-          onClick={onOpenThread}
+          onClick={() => { setMobileActionsOpen(false); onOpenThread(); }}
           className="p-1 rounded hover:bg-[hsl(232_45%_22%)] text-[hsl(0_0%_70%)] hover:text-vs-red"
           title="Reply in comms"
           data-testid={`button-reply-thread-${msg.id}`}
         >
           <Reply className="w-3.5 h-3.5" />
         </button>
+        {canDelete && (
+          <button
+            type="button"
+            onClick={() => { setMobileActionsOpen(false); onDelete(); }}
+            disabled={deleteMut.isPending}
+            className="p-1 rounded hover:bg-[hsl(232_45%_22%)] text-[hsl(0_0%_70%)] hover:text-vs-red disabled:opacity-40"
+            title={isMe ? "Delete message" : "Delete message (admin)"}
+            data-testid={`button-delete-message-${msg.id}`}
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+          </button>
+        )}
+        {mobileActionsOpen && (
+          <button
+            type="button"
+            onClick={() => setMobileActionsOpen(false)}
+            className="p-1 rounded hover:bg-[hsl(232_45%_22%)] text-[hsl(0_0%_70%)] hover:text-white"
+            title="Close"
+            data-testid={`button-close-mobile-actions-${msg.id}`}
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        )}
       </div>
     </motion.div>
   );

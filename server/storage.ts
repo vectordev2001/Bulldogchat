@@ -103,6 +103,7 @@ export interface IStorage {
   createMessage(input: { channelId: number; userId: number; content: string; attachments?: string | null; replyToMessageId?: number | null; meta?: string | null }): Message;
   updateMessage(id: number, content: string): Message | undefined;
   deleteMessage(id: number): void;
+  tombstoneMessage(id: number, deletedByUserId: number): void;
   pinMessage(id: number, pinned: boolean): Message | undefined;
 
   /* Reactions */
@@ -489,6 +490,24 @@ class DatabaseStorage implements IStorage {
   deleteMessage(id: number) {
     db.delete(reactions).where(eq(reactions.messageId, id)).run();
     db.delete(messages).where(eq(messages.id, id)).run();
+  }
+  // Tombstone delete: wipe content/attachments/reactions/mentions but keep
+  // the row so replyToMessageId chains stay intact. Clients render a
+  // "Message deleted" placeholder for tombstoned rows.
+  tombstoneMessage(id: number, deletedByUserId: number) {
+    // Strip reactions and mentions — nothing meaningful to react to or be
+    // mentioned in once the content is gone.
+    db.delete(reactions).where(eq(reactions.messageId, id)).run();
+    rawDb.prepare("DELETE FROM mentions WHERE message_id = ?").run(id);
+    // Unlink attachments from this message. We leave the attachment rows
+    // alone — they may be referenced elsewhere or kept for object-store GC.
+    rawDb.prepare("UPDATE attachments SET message_id = NULL WHERE message_id = ?").run(id);
+    db.update(messages).set({
+      content: "",
+      attachments: null,
+      deletedAt: new Date(),
+      deletedByUserId,
+    }).where(eq(messages.id, id)).run();
   }
   pinMessage(id: number, pinned: boolean) {
     return db.update(messages).set({ isPinned: pinned }).where(eq(messages.id, id)).returning().get();

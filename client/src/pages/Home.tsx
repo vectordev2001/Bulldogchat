@@ -201,6 +201,31 @@ export default function Home() {
         queryClient.invalidateQueries({ queryKey: ["/api/channels", data.channelId, "messages"] });
       }
     },
+    // Phase 1.9.1: when a DM or channel is deleted, bail the user out of
+    // that view (otherwise they'd be staring at a 404) and refresh the
+    // sidebar lists so the row disappears.
+    onChannelDelete: (data) => {
+      const cid = data?.channelId;
+      if (!cid) return;
+      if (activeDmId === cid) {
+        setActiveDmId(null);
+      }
+      // If the active project's channel was deleted, clear that slot so
+      // the project view falls back to its first remaining channel.
+      setChannelByProject((prev) => {
+        const next: typeof prev = {};
+        let touched = false;
+        for (const [pid, chId] of Object.entries(prev)) {
+          if (chId === cid) { touched = true; continue; }
+          next[Number(pid)] = chId;
+        }
+        return touched ? next : prev;
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/dms"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/channels"] });
+      // Drop cached messages for the gone channel.
+      queryClient.removeQueries({ queryKey: ["/api/channels", cid] });
+    },
   });
 
   const selectProject = (id: number) => {

@@ -7,7 +7,7 @@ import {
   insertProjectSchema, insertChannelSchema, insertInviteSchema, channelCreateSchema,
 } from "@shared/schema";
 import { hashPassword, verifyPassword, signJwt, requireAuth, requireRole, setAuthCookie, clearAuthCookie, AuthedRequest, AUTH_COOKIE } from "./auth";
-import { addSubscriber, removeSubscriber, emitMessageNew, emitMessageDelete, emitMessageUpdate, emitReactionChange, emitCallIncoming, emitCallAccepted, emitCallEnded, emitPresenceChange, type CallEventPayload, WireMessage } from "./events";
+import { addSubscriber, removeSubscriber, emitMessageNew, emitMessageDelete, emitMessageUpdate, emitReactionChange, emitChannelDelete, emitCallIncoming, emitCallAccepted, emitCallEnded, emitPresenceChange, type CallEventPayload, WireMessage } from "./events";
 import { generateLivekitToken, livekitConfigured, listRoomParticipantIdentities } from "./livekit";
 import { setupWebPush, pushConfigured, getPublicVapidKey, sendNotificationToUsers } from "./push";
 import { runMigrations } from "./migrate";
@@ -412,6 +412,9 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     if (!project || project.orgId !== u.orgId) return res.status(404).json({ message: "Not found" });
     try {
       storage.deleteChannelCascade(channelId);
+      // Push the deletion to every live client in the org so their
+      // sidebars/active views update without a manual refresh.
+      emitChannelDelete(u.orgId, { channelId, deletedByUserId: u.id });
       res.json({ ok: true, deleted: { type: "channel", id: channelId } });
     } catch (err) {
       console.error("[delete-channel]", err);
@@ -541,6 +544,38 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
       memberIds: storage.listChannelMemberIds(ch.id),
       created: true,
     });
+  });
+
+  // Delete a DM thread for everyone. Any member of the DM can do this
+  // — there's no "thread owner" in a DM, every participant has equal
+  // standing. This is a HARD delete: channel row, messages, reactions,
+  // mentions, attachments, member grants all go. Irreversible.
+  app.delete("/api/dms/:id", requireAuth, (req, res) => {
+    const u = (req as AuthedRequest).user;
+    const channelId = Number(req.params.id);
+    if (!Number.isFinite(channelId)) return res.status(400).json({ message: "Invalid id" });
+    const channel = storage.getChannel(channelId);
+    if (!channel) return res.status(404).json({ message: "Not found" });
+    if (channel.scope !== "dm") {
+      return res.status(400).json({ message: "Not a DM channel — use DELETE /api/channels/:id instead" });
+    }
+    // Only members can wipe a DM (admins go through the same check; we don't
+    // want an admin tripping over a DM they're not in).
+    if (!storage.isChannelMember(channelId, u.id)) {
+      return res.status(403).json({ message: "Not a member of this DM" });
+    }
+    const memberIds = storage.listChannelMemberIds(channelId);
+    try {
+      storage.deleteChannelCascade(channelId);
+      // Tell every former member's open client to drop this DM. We reuse
+      // the channel-delete event — it carries channelId, which is enough
+      // for the client to evict from its caches.
+      emitChannelDelete(u.orgId, { channelId, deletedByUserId: u.id, formerMemberIds: memberIds });
+      res.json({ ok: true, deleted: { type: "dm", id: channelId } });
+    } catch (err) {
+      console.error("[delete-dm]", err);
+      res.status(500).json({ message: "Failed to delete DM" });
+    }
   });
 
   // ── MESSAGES ──
@@ -702,15 +737,26 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     res.json(wire);
   });
 
+  // Soft-delete a message. Author or admin only. We tombstone (keep the
+  // row, wipe content/attachments/reactions/mentions) so threaded replies
+  // pointing at this id stay coherent. SSE emits a message-update so live
+  // clients re-render the row as "Message deleted" instead of yanking it.
   app.delete("/api/messages/:id", requireAuth, (req, res) => {
     const u = (req as AuthedRequest).user;
     const id = Number(req.params.id);
     const msg = storage.getMessage(id);
     if (!msg) return res.status(404).json({ message: "Not found" });
     if (msg.userId !== u.id && u.role !== "admin") return res.status(403).json({ message: "Not allowed" });
-    storage.deleteMessage(id);
+    if (msg.deletedAt) return res.json({ ok: true, alreadyDeleted: true });
+    storage.tombstoneMessage(id, u.id);
+    // Emit BOTH update (so clients holding the message can re-render as
+    // tombstone) and delete (for any client that prefers to drop the row).
+    // The wire shape now carries deletedAt so the client renderer just
+    // branches on that field.
+    const wire = buildWireMessage(id)!;
+    emitMessageUpdate(u.orgId, wire);
     emitMessageDelete(u.orgId, { channelId: msg.channelId, messageId: id });
-    res.json({ ok: true });
+    res.json({ ok: true, message: wire });
   });
 
   app.post("/api/messages/:id/pin", requireAuth, requireRole(["admin", "foreman", "safety"]), (req, res) => {

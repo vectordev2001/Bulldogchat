@@ -153,6 +153,12 @@ export const messages = sqliteTable("messages", {
   isPinned: integer("is_pinned", { mode: "boolean" }).notNull().default(false),
   createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
   editedAt: integer("edited_at", { mode: "timestamp" }),
+  // Soft-delete (tombstone). When non-null, the row stays for thread-reply
+  // integrity but content/attachments are wiped and clients render a
+  // "Message deleted" placeholder. deletedByUserId records who did it for
+  // audit — either the author or an admin moderator.
+  deletedAt: integer("deleted_at", { mode: "timestamp" }),
+  deletedByUserId: integer("deleted_by_user_id"),
   // JSON: { system: true, kind: 'work_object.created' | ..., workObjectId, ref, fields? }
   // Null for normal user messages.
   meta: text("meta"),

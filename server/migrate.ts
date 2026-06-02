@@ -645,4 +645,23 @@ export function runMigrations() {
   } catch (e) {
     console.warn("[migrate] v13 user name unprefix skipped:", e);
   }
+
+  // v14: Soft-delete columns on messages. Phase 1.9.1 lets authors (and
+  // admins) delete messages, leaving a "Message deleted" tombstone in place
+  // so reply threading and audit history stay intact. Idempotent.
+  try {
+    const cols = rawDb.prepare("PRAGMA table_info(messages)").all() as Array<{ name: string }>;
+    const hasDeletedAt = cols.some(c => c.name === "deleted_at");
+    const hasDeletedBy = cols.some(c => c.name === "deleted_by_user_id");
+    if (!hasDeletedAt) {
+      rawDb.exec("ALTER TABLE messages ADD COLUMN deleted_at INTEGER");
+      console.log("[migrate] v14 added messages.deleted_at column");
+    }
+    if (!hasDeletedBy) {
+      rawDb.exec("ALTER TABLE messages ADD COLUMN deleted_by_user_id INTEGER");
+      console.log("[migrate] v14 added messages.deleted_by_user_id column");
+    }
+  } catch (e) {
+    console.warn("[migrate] v14 message soft-delete columns skipped:", e);
+  }
 }

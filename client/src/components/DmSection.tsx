@@ -1,6 +1,6 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { ChevronDown, ChevronRight, Plus, MessageSquare, Search, X, Loader2 } from "lucide-react";
+import { ChevronDown, ChevronRight, Plus, MessageSquare, Search, X, Loader2, Trash2 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Avatar } from "./Avatar";
 import type { ApiUser, ApiDmChannel } from "@/types/api";
@@ -82,6 +82,10 @@ export function DmSection({ me, orgMembers, activeDmId, onSelectDm }: Props) {
                 onClick={() => onSelectDm(dm.id)}
               />
             ))}
+            {/* Note: the trash button on each row deletes the DM for
+                EVERYONE (1:1 or group). Any member of the DM can do this.
+                This is irreversible — we surface a confirm dialog before
+                firing the request. */}
           </div>
         )}
       </div>
@@ -112,6 +116,10 @@ interface RowProps {
   onClick: () => void;
 }
 
+// Long-press / touch-hold duration that surfaces the row delete button on
+// mobile (no hover state). Same value we use for message rows.
+const LONG_PRESS_MS = 450;
+
 // Each row shows a stacked avatar (1:1) or a group icon (3+ members) plus
 // a comma-joined member name string. We intentionally do NOT render the
 // internal `dm-<ids>-<ts>` channel name — that's just a database handle.
@@ -124,35 +132,90 @@ function DmRow({ dm, me, userById, active, onClick }: RowProps) {
     : otherUsers.map(u => u.name).join(", ");
   const previewUser = otherUsers[0];
 
+  // Long-press to surface the delete button on mobile. Desktop uses hover.
+  const [touchActionsOpen, setTouchActionsOpen] = useState(false);
+  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const onTouchStart = () => {
+    if (longPressTimer.current) clearTimeout(longPressTimer.current);
+    longPressTimer.current = setTimeout(() => setTouchActionsOpen(true), LONG_PRESS_MS);
+  };
+  const onTouchEnd = () => {
+    if (longPressTimer.current) { clearTimeout(longPressTimer.current); longPressTimer.current = null; }
+  };
+
+  const deleteMut = useMutation({
+    mutationFn: async () => {
+      return await apiRequest("DELETE", `/api/dms/${dm.id}`);
+    },
+    onSuccess: () => {
+      // Refresh the DM list. If this DM was active, the SSE channel:delete
+      // handler in Home.tsx is responsible for bailing out of the view.
+      queryClient.invalidateQueries({ queryKey: ["/api/dms"] });
+      setTouchActionsOpen(false);
+    },
+  });
+
+  const onDelete = (e: React.MouseEvent | React.KeyboardEvent) => {
+    e.stopPropagation();
+    e.preventDefault();
+    if (deleteMut.isPending) return;
+    const who = isGroup
+      ? `this group chat with ${otherUsers.map(u => u.name.split(" ")[0]).join(", ")}`
+      : `your chat with ${otherUsers[0]?.name ?? "this person"}`;
+    if (!window.confirm(`Delete ${who} for everyone? Messages will be lost. This can't be undone.`)) return;
+    deleteMut.mutate();
+  };
+
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-md transition-colors text-left ${
+    <div
+      className={`group relative w-full rounded-md transition-colors ${
         active
           ? "bg-[hsl(232_55%_22%)] text-white"
           : "text-[hsl(0_0%_75%)] hover:bg-[hsl(232_45%_25%)] hover:text-white"
       }`}
-      data-testid={`button-dm-${dm.id}`}
-      title={label}
+      onTouchStart={onTouchStart}
+      onTouchEnd={onTouchEnd}
+      onTouchCancel={onTouchEnd}
     >
-      {isGroup ? (
-        <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-[hsl(232_45%_30%)] shrink-0">
-          <MessageSquare className="w-3.5 h-3.5 text-white" />
-        </span>
-      ) : previewUser ? (
-        <Avatar
-          member={{ name: previewUser.name, hue: previewUser.hue, status: previewUser.presence ?? "offline" }}
-          size={24}
-          showStatus
-        />
-      ) : (
-        <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-[hsl(232_45%_30%)] shrink-0">
-          <MessageSquare className="w-3.5 h-3.5 text-white" />
-        </span>
-      )}
-      <span className="text-sm truncate min-w-0 flex-1">{label}</span>
-    </button>
+      <button
+        type="button"
+        onClick={onClick}
+        className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-left"
+        data-testid={`button-dm-${dm.id}`}
+        title={label}
+      >
+        {isGroup ? (
+          <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-[hsl(232_45%_30%)] shrink-0">
+            <MessageSquare className="w-3.5 h-3.5 text-white" />
+          </span>
+        ) : previewUser ? (
+          <Avatar
+            member={{ name: previewUser.name, hue: previewUser.hue, status: previewUser.presence ?? "offline" }}
+            size={24}
+            showStatus
+          />
+        ) : (
+          <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-[hsl(232_45%_30%)] shrink-0">
+            <MessageSquare className="w-3.5 h-3.5 text-white" />
+          </span>
+        )}
+        <span className="text-sm truncate min-w-0 flex-1 pr-6">{label}</span>
+      </button>
+      <span
+        role="button"
+        tabIndex={0}
+        onClick={onDelete}
+        onKeyDown={(e) => { if (e.key === "Enter") onDelete(e); }}
+        className={`absolute right-1.5 top-1/2 -translate-y-1/2 p-1 rounded text-[hsl(0_0%_55%)] hover:text-vs-red hover:bg-[hsl(232_45%_15%)] transition-opacity cursor-pointer ${
+          touchActionsOpen ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+        } ${deleteMut.isPending ? "opacity-30 pointer-events-none" : ""}`}
+        title="Delete chat for everyone"
+        aria-label={`Delete ${label}`}
+        data-testid={`button-delete-dm-${dm.id}`}
+      >
+        <Trash2 className="w-3.5 h-3.5" />
+      </span>
+    </div>
   );
 }
 
