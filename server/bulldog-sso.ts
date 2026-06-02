@@ -45,9 +45,14 @@ function hasValidChatToken(req: Request): boolean {
 
 export function bulldogSsoBridge(): RequestHandler {
   return async function (req: Request, res: Response, next: NextFunction) {
-    // If the caller already has a valid chat-issued token, let the normal
-    // auth pipeline handle it.
-    if (hasValidChatToken(req)) return next();
+    // We used to short-circuit when a valid chat token was already present,
+    // but that meant fields like `phone` (added in auth after first chat
+    // login) never re-synced — the bridge only ran on the first SSO landing.
+    // Now we always run the optional verifier: if a bulldog-auth cookie is
+    // present we re-sync name/phone idempotently; if not, we fall through.
+    // The chat-token check is still used at the bottom to decide whether to
+    // (re)issue a vc_token cookie.
+    const hasChatToken = hasValidChatToken(req);
 
     optionalVerifier(req, res, async (err?: unknown) => {
       if (err) return next();
@@ -134,15 +139,25 @@ export function bulldogSsoBridge(): RequestHandler {
         } catch (e) {
           console.warn("[chat bulldogSsoBridge] backfill membership failed:", e);
         }
-        // Issue a chat JWT and set the vc_token cookie for subsequent requests.
-        const token = signJwt(local.id);
-        setAuthCookie(res, token);
-        // Make the token available to the current request too.
-        req.headers.authorization = `Bearer ${token}`;
-        // Clear req.user set by optionalVerifier so requireAuth re-reads from
-        // the chat token (which carries the local numeric id).
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        delete (req as any).user;
+        // Only mint a new chat JWT when one isn't already present. When the
+        // caller already has a valid chat token we just ran the sync above
+        // and let the existing token flow through unchanged.
+        if (!hasChatToken) {
+          const token = signJwt(local.id);
+          setAuthCookie(res, token);
+          // Make the token available to the current request too.
+          req.headers.authorization = `Bearer ${token}`;
+          // Clear req.user set by optionalVerifier so requireAuth re-reads from
+          // the chat token (which carries the local numeric id).
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          delete (req as any).user;
+        } else {
+          // Chat token already present — don't let optionalVerifier's req.user
+          // (which has the auth-side string sub) shadow what requireAuth will
+          // resolve from the chat JWT.
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          delete (req as any).user;
+        }
         next();
       } catch (e) {
         console.error("[chat bulldogSsoBridge] error:", e);
