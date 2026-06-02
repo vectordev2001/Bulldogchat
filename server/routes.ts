@@ -1019,18 +1019,35 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     const channelId = Number(req.params.id);
     const kind = (req.body?.kind === "video" ? "video" : "voice") as "voice" | "video";
     const rawInvitees: unknown = req.body?.inviteeIds;
-    if (!Array.isArray(rawInvitees) || rawInvitees.length === 0) {
-      return res.status(400).json({ message: "inviteeIds[] required" });
-    }
-    const inviteeIds: number[] = Array.from(
-      new Set(
-        rawInvitees
-          .map((x) => Number(x))
-          .filter((n) => Number.isFinite(n) && n > 0 && n !== u.id),
-      ),
-    );
-    if (inviteeIds.length === 0) {
-      return res.status(400).json({ message: "No valid invitees" });
+    const rawPhones: unknown = req.body?.phoneNumbers;
+    const inviteeIds: number[] = Array.isArray(rawInvitees)
+      ? Array.from(
+          new Set(
+            (rawInvitees as unknown[])
+              .map((x) => Number(x))
+              .filter((n) => Number.isFinite(n) && n > 0 && n !== u.id),
+          ),
+        )
+      : [];
+    // Normalize raw phone numbers to E.164. Default to US (+1) when no
+    // leading +. Drop anything shorter than 8 digits as obvious garbage.
+    const phoneNumbers: string[] = Array.isArray(rawPhones)
+      ? Array.from(
+          new Set(
+            (rawPhones as unknown[])
+              .map((x) => String(x).trim())
+              .filter((s) => s.length > 0)
+              .map((raw) =>
+                raw.startsWith("+")
+                  ? "+" + raw.slice(1).replace(/\D/g, "")
+                  : "+1" + raw.replace(/\D/g, ""),
+              )
+              .filter((p) => /^\+\d{8,15}$/.test(p)),
+          ),
+        )
+      : [];
+    if (inviteeIds.length === 0 && phoneNumbers.length === 0) {
+      return res.status(400).json({ message: "inviteeIds[] or phoneNumbers[] required" });
     }
 
     const access = userCanAccessChannel(u.id, u.orgId, channelId);
@@ -1045,11 +1062,13 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     const groupRoomName = `group-channel-${channelId}-${Date.now()}`;
 
     // Validate invitees and filter to same-org, non-deactivated users.
+    // It's OK if this list is empty as long as phoneNumbers is non-empty
+    // (call still goes out via Twilio SIP).
     const validInvitees = inviteeIds
       .map((id) => ({ id, user: storage.getUser(id) }))
       .filter((x) => x.user && x.user.orgId === u.orgId && !x.user.deactivated)
       .map((x) => x.id);
-    if (validInvitees.length === 0) {
+    if (validInvitees.length === 0 && phoneNumbers.length === 0) {
       return res.status(400).json({ message: "No reachable invitees" });
     }
 

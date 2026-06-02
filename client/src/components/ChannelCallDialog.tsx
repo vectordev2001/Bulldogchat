@@ -16,7 +16,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Phone, Video, X, Loader2 } from "lucide-react";
+import { Phone, Video, X, Loader2, Plus } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -40,6 +40,11 @@ export function ChannelCallDialog({ channel, fallbackMembers, meId, open, initia
   const { startGroupCall, active, outgoing } = useCalls();
   const [kind, setKind] = useState<"voice" | "video">(initialKind);
   const [selected, setSelected] = useState<Set<number>>(new Set());
+  // Free-form phone numbers the caller wants to dial in alongside chat
+  // members. Stored raw here; server normalizes to E.164 (US +1 default).
+  // The recipient sees "Bulldog · #channel" as SIP From-display.
+  const [phoneNumbers, setPhoneNumbers] = useState<string[]>([]);
+  const [phoneInput, setPhoneInput] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -50,8 +55,27 @@ export function ChannelCallDialog({ channel, fallbackMembers, meId, open, initia
       setKind(initialKind);
       setError(null);
       setSubmitting(false);
+      setPhoneNumbers([]);
+      setPhoneInput("");
+      setSelected(new Set());
     }
   }, [open, initialKind]);
+
+  function addPhone() {
+    const raw = phoneInput.trim();
+    if (!raw) return;
+    const cleaned = raw.startsWith("+")
+      ? "+" + raw.slice(1).replace(/\D/g, "")
+      : "+1" + raw.replace(/\D/g, "");
+    if (!/^\+\d{8,15}$/.test(cleaned)) {
+      setError("Phone number must be at least 8 digits.");
+      return;
+    }
+    if (phoneNumbers.includes(cleaned)) { setPhoneInput(""); return; }
+    setPhoneNumbers((prev) => [...prev, cleaned]);
+    setPhoneInput("");
+    setError(null);
+  }
 
   // Fetch effective channel members. The /channels/:id/members endpoint
   // returns the actual reachable list (handles global/entity/team/private
@@ -71,7 +95,7 @@ export function ChannelCallDialog({ channel, fallbackMembers, meId, open, initia
   }, [membersQ.data, fallbackMembers, meId]);
 
   const allSelected = allMembers.length > 0 && selected.size === allMembers.length;
-  const someSelected = selected.size > 0;
+  const totalTargets = selected.size + phoneNumbers.length;
 
   function toggleAll() {
     if (allSelected) {
@@ -88,7 +112,7 @@ export function ChannelCallDialog({ channel, fallbackMembers, meId, open, initia
     setSelected(next);
   }
 
-  const canSubmit = someSelected && !submitting && !active && !outgoing;
+  const canSubmit = totalTargets > 0 && !submitting && !active && !outgoing;
 
   async function submit() {
     if (!canSubmit) return;
@@ -99,6 +123,7 @@ export function ChannelCallDialog({ channel, fallbackMembers, meId, open, initia
         channelId: channel.id,
         channelName: channel.name,
         inviteeIds: Array.from(selected),
+        phoneNumbers,
         kind,
       });
       onClose();
@@ -207,6 +232,59 @@ export function ChannelCallDialog({ channel, fallbackMembers, meId, open, initia
                 </label>
               );
             })
+          )}
+        </div>
+
+        {/* Free-form phone-number entry — lets the caller dial people who
+            aren't (or shouldn't need to be) chat users. Server brands the
+            outbound SIP call as "Bulldog · #channel" so the recipient
+            knows it's coming from the app. They can answer on the phone
+            or open the app to join. */}
+        <div className="rounded-md border border-border bg-muted/20 px-3 py-2.5 space-y-2">
+          <div className="text-xs font-mono uppercase tracking-wider text-muted-foreground">
+            Or dial a phone number
+          </div>
+          <div className="flex items-center gap-2">
+            <input
+              type="tel"
+              value={phoneInput}
+              onChange={(e) => setPhoneInput(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addPhone(); } }}
+              placeholder="+1 555 123 4567"
+              className="flex-1 h-9 px-3 rounded-md bg-background border border-border text-sm placeholder:text-muted-foreground focus:outline-none focus:border-vs-blue"
+              data-testid="input-channel-call-phone"
+            />
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={addPhone}
+              disabled={!phoneInput.trim()}
+              data-testid="button-channel-call-phone-add"
+            >
+              <Plus className="w-3.5 h-3.5 mr-1" /> Add
+            </Button>
+          </div>
+          {phoneNumbers.length > 0 && (
+            <div className="flex flex-wrap gap-1.5">
+              {phoneNumbers.map((p) => (
+                <span
+                  key={p}
+                  className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-vs-red/15 border border-vs-red/40 text-vs-red text-[11px] font-mono"
+                  data-testid={`chip-channel-call-phone-${p}`}
+                >
+                  {p}
+                  <button
+                    type="button"
+                    onClick={() => setPhoneNumbers((prev) => prev.filter((x) => x !== p))}
+                    className="hover:opacity-80"
+                    aria-label={`Remove ${p}`}
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </span>
+              ))}
+            </div>
           )}
         </div>
 
