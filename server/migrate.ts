@@ -630,4 +630,19 @@ export function runMigrations() {
   } catch (e) {
     console.warn("[migrate] v12 presence column skipped:", e);
   }
+
+  // v13: Strip the "Bulldog - " display prefix Phase 1.9 baked into every
+  // user.name row. Phase 1.9.1 walks it back — the Bulldog brand now only
+  // shows on outbound SIP caller-id, not in front of every in-app user.
+  // Idempotent: only touches rows that still have the prefix.
+  try {
+    const info = rawDb.prepare(
+      "UPDATE users SET name = substr(name, 11) WHERE name LIKE 'Bulldog - %'",
+    ).run();
+    if (info.changes && info.changes > 0) {
+      console.log(`[migrate] v13 stripped "Bulldog - " prefix from ${info.changes} user.name rows`);
+    }
+  } catch (e) {
+    console.warn("[migrate] v13 user name unprefix skipped:", e);
+  }
 }

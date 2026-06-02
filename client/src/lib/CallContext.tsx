@@ -71,6 +71,10 @@ interface CallCtxValue {
     channelId: number;
     channelName: string;
     inviteeIds: number[];
+    /** Raw phone numbers to phone-bridge into the room (E.164 preferred;
+     *  server normalizes US numbers as +1). Each is dialed via Twilio
+     *  with the SIP From branded as "Bulldog · #channel". */
+    phoneNumbers?: string[];
     kind?: "voice" | "video";
   }): Promise<void>;
   acceptIncoming(): Promise<void>;
@@ -256,11 +260,11 @@ export function CallProvider({ children }: { children: ReactNode }) {
   // joins the LiveKit room immediately so they don't sit on a "calling…"
   // screen while waiting for the first accept.
   const startGroupCall = useCallback<CallCtxValue["startGroupCall"]>(async ({
-    channelId, channelName, inviteeIds, kind = "voice",
+    channelId, channelName, inviteeIds, phoneNumbers = [], kind = "voice",
   }) => {
     if (outgoing || active) return;
     const resp = await apiRequest<StartGroupCallResponse>(
-      "POST", `/api/channels/${channelId}/group-call/start`, { inviteeIds, kind },
+      "POST", `/api/channels/${channelId}/group-call/start`, { inviteeIds, phoneNumbers, kind },
     );
     setActive({
       // No single callId for a group call — we use 0 as a sentinel and

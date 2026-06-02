@@ -99,12 +99,13 @@ export function bulldogSsoBridge(): RequestHandler {
         // the value hasn't changed at the DB level for our purposes.
         const authName = (req.user.name || "").trim();
         if (authName) {
-          // Phase 1.9: chat-side users carry a "Bulldog - " prefix so the
-          // suite of origin is obvious. Re-apply on sync so a rename in
-          // bulldog-auth still lands as "Bulldog - <new name>" in chat.
-          const prefixed = authName.startsWith("Bulldog - ") ? authName : `Bulldog - ${authName}`;
-          if (prefixed !== local.name) {
-            try { storage.updateUser(local.id, { name: prefixed }); }
+          // Phase 1.9.1: dropped the "Bulldog - " prefix — we now strip it
+          // on sync so any legacy auth-side name that still has it lands
+          // clean here. Bulldog branding only shows on outbound phone
+          // calls (SIP From display), not on in-app user labels.
+          const clean = authName.startsWith("Bulldog - ") ? authName.slice("Bulldog - ".length) : authName;
+          if (clean !== local.name) {
+            try { storage.updateUser(local.id, { name: clean }); }
             catch (e) { console.warn("[chat bulldogSsoBridge] name sync failed:", e); }
           }
         }

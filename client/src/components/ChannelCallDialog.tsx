@@ -238,9 +238,9 @@ export function ChannelCallDialog({ channel, fallbackMembers, meId, open, initia
             )}
             {submitting
               ? "Starting…"
-              : selected.size === 0
-                ? "Pick at least one person"
-                : `Ring ${selected.size} ${selected.size === 1 ? "person" : "people"}`}
+              : totalTargets === 0
+                ? "Pick a person or add a number"
+                : `Ring ${totalTargets} ${totalTargets === 1 ? "line" : "lines"}`}
           </Button>
         </DialogFooter>
       </DialogContent>

@@ -1092,15 +1092,45 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     }
 
     // Fire a single batched push to all invitees with the group-call label.
-    void sendNotificationToUsers(validInvitees, {
-      title: `\ud83d\udcde ${u.name} is calling`,
-      body:
-        kind === "video"
-          ? `Group video call — ${access.channel?.name ? "#" + access.channel.name : "channel"}`
-          : `Group voice call — ${access.channel?.name ? "#" + access.channel.name : "channel"}`,
-      url: `/#/call/group/${encodeURIComponent(groupRoomName)}`,
-      tag: `group-call-${groupRoomName}`,
-    });
+    if (validInvitees.length > 0) {
+      void sendNotificationToUsers(validInvitees, {
+        title: `\ud83d\udcde ${u.name} is calling`,
+        body:
+          kind === "video"
+            ? `Group video call — ${access.channel?.name ? "#" + access.channel.name : "channel"}`
+            : `Group voice call — ${access.channel?.name ? "#" + access.channel.name : "channel"}`,
+        url: `/#/call/group/${encodeURIComponent(groupRoomName)}`,
+        tag: `group-call-${groupRoomName}`,
+      });
+    }
+
+    // Phone-bridge any raw numbers the caller typed in. dialPhoneIntoRoom
+    // brands the SIP From as "Bulldog · #channel" so the recipient knows
+    // it's the app calling, not an unknown number.
+    const dialedPhones: string[] = [];
+    const dialWarnings: string[] = [];
+    if (phoneNumbers.length > 0) {
+      if (!sipConfigured()) {
+        dialWarnings.push("SIP not configured — phone numbers were not dialed");
+      } else {
+        const channelLabel = access.channel?.name ? `#${access.channel.name}` : "call";
+        for (const phone of phoneNumbers) {
+          try {
+            const ident = await dialPhoneIntoRoom({
+              phone, roomName: groupRoomName, displayName: phone, channelLabel,
+            });
+            if (ident) {
+              dialedPhones.push(phone);
+            } else {
+              dialWarnings.push(`dial ${phone}: SIP trunk unavailable`);
+            }
+          } catch (err) {
+            const msg = (err as { message?: string })?.message ?? "failed";
+            dialWarnings.push(`dial ${phone}: ${msg}`);
+          }
+        }
+      }
+    }
 
     // Mint the caller's token for the shared room and return.
     const token = await generateLivekitToken({
@@ -1111,6 +1141,8 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
       token,
       ws_url: process.env.LIVEKIT_WS_URL,
       invitedUserIds: validInvitees,
+      dialedPhones,
+      dialWarnings,
       kind,
     });
   });

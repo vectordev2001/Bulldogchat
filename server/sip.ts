@@ -138,7 +138,8 @@ export async function ensureSipTrunk(): Promise<string | null> {
  * From-display — they only show CNAM, which requires Twilio CNAM
  * registration and STIR/SHAKEN attestation. We still set the From display
  * so callers identify us anywhere it IS surfaced (and on the SIP leg
- * itself), and we set a sensible default of `Vector · {Channel}`.
+ * itself), and we set a sensible default of `Bulldog · {Channel}` so the
+ * recipient knows it is the Bulldog app calling, not an unknown number.
  *
  * Returns the participant identity on success, or null on failure.
  */
@@ -161,9 +162,13 @@ export async function dialPhoneIntoRoom(opts: {
   }
   const identity = `sip_${opts.phone.replace(/\D/g, "")}_${Date.now()}`;
   // SIP display names should stay under ~64 chars for broad compatibility.
+  // We brand this as "Bulldog" so the recipient sees the app name when
+  // their device honors SIP From-display. On US mobile this is gated by
+  // CNAM — register "Bulldog" against TWILIO_FROM_NUMBER in the Twilio
+  // console for that to surface on iPhone/Android carrier screens.
   const callerDisplay = (opts.channelLabel
-    ? `Vector · ${opts.channelLabel}`
-    : "Vector").slice(0, 64);
+    ? `Bulldog · ${opts.channelLabel}`
+    : "Bulldog").slice(0, 64);
   try {
     await client().createSipParticipant(
       trunkId,

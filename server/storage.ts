@@ -210,15 +210,16 @@ class DatabaseStorage implements IStorage {
   getUser(id: number) { return db.select().from(users).where(eq(users.id, id)).get(); }
   getUserByEmail(email: string) { return db.select().from(users).where(eq(users.email, email.toLowerCase())).get(); }
   createUser(input: InsertUser) {
-    // Phase 1.9: every Bulldog chat user is shown as "Bulldog - <name>" so
-    // it's visually obvious which suite a user belongs to when we federate
-    // with Slack/Teams later. Apply the prefix here so all create paths
-    // (signup, invite accept, SSO provisioning, seed) get it for free.
+    // Phase 1.9.1: dropped the "Bulldog - " display prefix — the Bulldog
+    // brand only shows up where it matters (e.g. as the outbound SIP
+    // caller display), not in front of every name inside the app. We
+    // keep the legacy strip logic so any name that still includes the
+    // old prefix lands clean on insert.
     const baseName = (input.name ?? "").trim() || input.email.toLowerCase();
-    const prefixed = baseName.startsWith("Bulldog - ") ? baseName : `Bulldog - ${baseName}`;
+    const clean = baseName.startsWith("Bulldog - ") ? baseName.slice("Bulldog - ".length) : baseName;
     return db.insert(users).values({
       ...input,
-      name: prefixed,
+      name: clean,
       email: input.email.toLowerCase(),
       createdAt: new Date(),
     }).returning().get();
