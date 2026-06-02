@@ -160,7 +160,23 @@ export async function dialPhoneIntoRoom(opts: {
     console.warn("[sip] dialPhoneIntoRoom skipped — no SIP trunk available");
     return null;
   }
-  const identity = `sip_${opts.phone.replace(/\D/g, "")}_${Date.now()}`;
+  // Normalize to E.164. Twilio/LiveKit SIP require a leading `+` and
+  // country code; raw 10-digit numbers (e.g. "4253726929") never ring.
+  // Strip all non-digits, then add `+` / `+1` as appropriate. Defaults
+  // to US for 10-digit inputs since this is a US-only deployment today.
+  const digits = opts.phone.replace(/\D/g, "");
+  let e164: string | null = null;
+  if (opts.phone.trim().startsWith("+") && digits.length >= 10) {
+    e164 = `+${digits}`;
+  } else if (digits.length === 10) {
+    e164 = `+1${digits}`;
+  } else if (digits.length === 11 && digits.startsWith("1")) {
+    e164 = `+${digits}`;
+  } else {
+    console.warn(`[sip] dialPhoneIntoRoom skipped — unparseable phone ${JSON.stringify(opts.phone)}`);
+    return null;
+  }
+  const identity = `sip_${digits}_${Date.now()}`;
   // SIP display names should stay under ~64 chars for broad compatibility.
   // We brand this as "Bulldog" so the recipient sees the app name when
   // their device honors SIP From-display. On US mobile this is gated by
@@ -172,11 +188,11 @@ export async function dialPhoneIntoRoom(opts: {
   try {
     await client().createSipParticipant(
       trunkId,
-      opts.phone,
+      e164,
       opts.roomName,
       {
         participantIdentity: identity,
-        participantName: opts.displayName || opts.phone,
+        participantName: opts.displayName || e164,
         // SIP From display name — surfaced on softphones / landlines /
         // SIP-aware endpoints. Ignored by most US mobile carriers (which
         // gate on CNAM, not SIP display).
@@ -186,10 +202,10 @@ export async function dialPhoneIntoRoom(opts: {
         playDialtone: true,
       },
     );
-    console.log(`[sip] Dialed ${opts.phone} → room ${opts.roomName} as ${identity} (From: "${callerDisplay}")`);
+    console.log(`[sip] Dialed ${e164} (raw=${opts.phone}) → room ${opts.roomName} as ${identity} (From: "${callerDisplay}")`);
     return identity;
   } catch (e) {
-    console.error(`[sip] createSipParticipant failed for ${opts.phone} → ${opts.roomName}:`, e);
+    console.error(`[sip] createSipParticipant failed for ${e164} (raw=${opts.phone}) → ${opts.roomName}:`, e);
     return null;
   }
 }
