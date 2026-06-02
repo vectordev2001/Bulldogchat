@@ -199,7 +199,11 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
             headers: { Cookie: cookieHeader },
           });
           if (resp.ok) {
-            const authUsers = (await resp.json()) as Array<{ email?: string; phone?: string | null }>;
+            // Auth wraps the list as { users: [...] }; tolerate either shape.
+            const body = (await resp.json()) as
+              | { users?: Array<{ email?: string; phone?: string | null }> }
+              | Array<{ email?: string; phone?: string | null }>;
+            const authUsers = Array.isArray(body) ? body : (body.users ?? []);
             const phoneByEmail = new Map<string, string>();
             for (const au of authUsers) {
               if (au.email && au.phone) phoneByEmail.set(au.email.toLowerCase(), au.phone);
