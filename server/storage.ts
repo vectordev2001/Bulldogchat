@@ -91,6 +91,12 @@ export interface IStorage {
   removeChannelMember(channelId: number, userId: number): void;
   userCanSeeChannel(channel: Channel, user: User): boolean;
 
+  /* DMs (channel rows with scope='dm'). Stored as channels under the user's
+     home project so messages/reactions/attachments reuse channel infra. */
+  listDmChannelsForUser(userId: number): Channel[];
+  findDmChannelByMemberSet(memberIds: number[]): Channel | undefined;
+  createDmChannel(input: { projectId: number; memberIds: number[]; createdByUserId: number }): Channel;
+
   /* Messages */
   listMessages(channelId: number, opts?: { before?: number; limit?: number }): Message[];
   getMessage(id: number): Message | undefined;
@@ -305,7 +311,11 @@ class DatabaseStorage implements IStorage {
 
   /* Channels */
   listChannelsByProject(projectId: number) {
-    return db.select().from(channels).where(eq(channels.projectId, projectId)).orderBy(asc(channels.position), asc(channels.id)).all();
+    // Hide DM channels from the project sidebar. DMs live in their own
+    // "Direct Messages" section, surfaced via listDmChannelsForUser.
+    return db.select().from(channels)
+      .where(and(eq(channels.projectId, projectId), sql`(${channels.scope} IS NULL OR ${channels.scope} != 'dm')`))
+      .orderBy(asc(channels.position), asc(channels.id)).all();
   }
   // Channels in this project that the given user is allowed to see, given
   // each channel's scope. Computed in JS (not SQL) so the rule set stays in
@@ -368,10 +378,88 @@ class DatabaseStorage implements IStorage {
       if (!channel.teamRole) return false;
       return user.role === channel.teamRole;
     }
-    if (scope === "private") {
+    if (scope === "private" || scope === "dm") {
+      // DMs share the explicit-member model with private channels. Admins
+      // still get a bypass at the top of this function, but the DM endpoints
+      // never list DMs they aren't a member of, so this is mostly defense in
+      // depth.
       return this.isChannelMember(channel.id, user.id);
     }
     return false;
+  }
+
+  /* ─────────────── DM helpers ─────────────── */
+  // Every DM channel this user is in, newest first by last message activity.
+  // We pull the channels first, then sort by the max(message.id) in each,
+  // falling back to channel id when there are no messages yet.
+  listDmChannelsForUser(userId: number) {
+    const rows = db.select({ c: channels }).from(channels)
+      .innerJoin(channelMembers, eq(channels.id, channelMembers.channelId))
+      .where(and(eq(channelMembers.userId, userId), eq(channels.scope, "dm")))
+      .all();
+    const list = rows.map(r => r.c);
+    if (list.length === 0) return [];
+    // Build a single SQL aggregate so we don't fan out N queries.
+    const ids = list.map(c => c.id);
+    const placeholders = ids.map(() => "?").join(",");
+    const lastRows = rawDb.prepare(
+      `SELECT channel_id AS channelId, MAX(id) AS lastId FROM messages WHERE channel_id IN (${placeholders}) GROUP BY channel_id`,
+    ).all(...ids) as Array<{ channelId: number; lastId: number }>;
+    const lastById = new Map<number, number>();
+    for (const r of lastRows) lastById.set(r.channelId, r.lastId ?? 0);
+    return [...list].sort((a, b) => {
+      const al = lastById.get(a.id) ?? 0;
+      const bl = lastById.get(b.id) ?? 0;
+      if (al !== bl) return bl - al; // most-recent activity first
+      return b.id - a.id; // newer channels first
+    });
+  }
+
+  // Returns the existing DM channel whose channel_members set EXACTLY matches
+  // the given user-id set, or undefined if no such channel exists. Used by
+  // POST /api/dms to make DM creation idempotent (same picker → same thread).
+  findDmChannelByMemberSet(memberIds: number[]) {
+    if (memberIds.length === 0) return undefined;
+    const sorted = Array.from(new Set(memberIds)).sort((a, b) => a - b);
+    const placeholders = sorted.map(() => "?").join(",");
+    // 1) Find candidate DM channels that include ALL requested members.
+    // 2) Reject any whose member count differs from the requested set.
+    const candidates = rawDb.prepare(`
+      SELECT cm.channel_id AS channelId
+      FROM channel_members cm
+      JOIN channels c ON c.id = cm.channel_id
+      WHERE c.scope = 'dm' AND cm.user_id IN (${placeholders})
+      GROUP BY cm.channel_id
+      HAVING COUNT(DISTINCT cm.user_id) = ?
+    `).all(...sorted, sorted.length) as Array<{ channelId: number }>;
+    for (const { channelId } of candidates) {
+      const cnt = (rawDb.prepare(`SELECT COUNT(*) AS c FROM channel_members WHERE channel_id = ?`)
+        .get(channelId) as { c: number }).c;
+      if (cnt === sorted.length) return this.getChannel(channelId);
+    }
+    return undefined;
+  }
+
+  // Create a new DM channel under the given project. Name is synthesized from
+  // member ids — it's an internal handle; the client renders the row using
+  // member display names instead.
+  createDmChannel(input: { projectId: number; memberIds: number[]; createdByUserId: number }) {
+    const allMembers = Array.from(new Set([input.createdByUserId, ...input.memberIds]));
+    const internalName = `dm-${allMembers.sort((a, b) => a - b).join("-")}-${Date.now().toString(36)}`;
+    const ch = db.insert(channels).values({
+      projectId: input.projectId,
+      name: internalName,
+      type: "text",
+      topic: null,
+      position: 0,
+      scope: "dm",
+      entityId: null,
+      teamRole: null,
+      workObjectId: null,
+      createdAt: new Date(),
+    } as any).returning().get();
+    this.addChannelMembers(ch.id, allMembers);
+    return ch;
   }
 
   /* Messages */

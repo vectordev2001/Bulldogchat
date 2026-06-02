@@ -465,6 +465,84 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     return res.json({ ...access.channel, projectId: access.project!.id });
   });
 
+  // ─────────────── DIRECT MESSAGES ───────────────
+  // DMs are modeled as channels with scope='dm' under the user's home project.
+  // This lets messages/reactions/attachments/mentions/push all reuse channel
+  // infrastructure. The two endpoints here surface DM threads to the sidebar.
+  //
+  // The DM thread itself is read/written via the regular channel message
+  // endpoints (/api/channels/:id/messages) — the only difference is the
+  // scope='dm' row in the channels table.
+
+  // List every DM channel the caller is part of, decorated with member ids
+  // and counts so the sidebar can render names without a second round-trip.
+  app.get("/api/dms", requireAuth, (req, res) => {
+    const u = (req as AuthedRequest).user;
+    const chs = storage.listDmChannelsForUser(u.id);
+    const wire = chs.map(c => ({
+      ...c,
+      memberIds: storage.listChannelMemberIds(c.id),
+    }));
+    res.json(wire);
+  });
+
+  // Find-or-create a DM channel for the given member set. The caller is
+  // always implicitly included. Idempotent: passing the same member set
+  // returns the same channel row, so the picker doesn't accidentally spawn
+  // duplicate threads.
+  app.post("/api/dms", requireAuth, (req, res) => {
+    const u = (req as AuthedRequest).user;
+    const body = req.body ?? {};
+    const rawIds = Array.isArray(body.memberIds) ? body.memberIds : [];
+    const memberIds: number[] = [];
+    for (const v of rawIds) {
+      const n = Number(v);
+      if (Number.isFinite(n) && n > 0 && n !== u.id) memberIds.push(n);
+    }
+    if (memberIds.length === 0) {
+      return res.status(400).json({ message: "At least one other member is required" });
+    }
+    if (memberIds.length > 20) {
+      return res.status(400).json({ message: "Group DMs are capped at 20 other members" });
+    }
+    // Validate every target is a real user in the caller's org. We don't want
+    // a malformed payload silently creating a DM with a stranger or a deleted
+    // account.
+    const targets = storage.listUsersByIds(memberIds);
+    const okIds = new Set(targets.filter(t => t.orgId === u.orgId).map(t => t.id));
+    const cleaned = memberIds.filter(id => okIds.has(id));
+    if (cleaned.length === 0) {
+      return res.status(400).json({ message: "No valid recipients in your organization" });
+    }
+
+    // Pick the home project: prefer the caller's first project (usually VFD
+    // in single-org installs). We never expose project membership in the DM
+    // UI, so the row just needs a valid project_id.
+    const homeProjects = storage.listProjectsForUserInOrg(u.id, u.orgId);
+    const homeProject = homeProjects[0];
+    if (!homeProject) return res.status(400).json({ message: "No home project — contact an admin" });
+
+    const fullSet = [u.id, ...cleaned];
+    const existing = storage.findDmChannelByMemberSet(fullSet);
+    if (existing) {
+      return res.json({
+        ...existing,
+        memberIds: storage.listChannelMemberIds(existing.id),
+        created: false,
+      });
+    }
+    const ch = storage.createDmChannel({
+      projectId: homeProject.id,
+      memberIds: cleaned,
+      createdByUserId: u.id,
+    });
+    res.json({
+      ...ch,
+      memberIds: storage.listChannelMemberIds(ch.id),
+      created: true,
+    });
+  });
+
   // ── MESSAGES ──
   app.get("/api/channels/:id/messages", requireAuth, async (req, res) => {
     const u = (req as AuthedRequest).user;
@@ -546,10 +624,19 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
       storage.linkAttachmentsToMessage(parsed.data.attachmentIds, msg.id, u.id);
     }
 
-    // Parse + persist mentions
+    // Parse + persist mentions. DMs use channel_members for the audience
+    // (members of THIS DM thread), regular channels use the project's
+    // member roster.
     const projectId = access.project!.id;
-    const members = storage.listProjectMembers(projectId);
-    const mentions = parseMentions(parsed.data.content, members.map(m => ({ id: m.id, name: m.name })));
+    const isDm = access.channel!.scope === "dm";
+    const audience: Array<{ id: number; name: string; lastSeenAt?: Date | string | null }> = isDm
+      ? (() => {
+          const ids = storage.listChannelMemberIds(access.channel!.id);
+          const users = storage.listUsersByIds(ids);
+          return users.map(usr => ({ id: usr.id, name: usr.name, lastSeenAt: usr.lastSeenAt }));
+        })()
+      : storage.listProjectMembers(projectId).map(m => ({ id: m.id, name: m.name, lastSeenAt: m.lastSeenAt }));
+    const mentions = parseMentions(parsed.data.content, audience.map(m => ({ id: m.id, name: m.name })));
     storage.createMentions(msg.id, mentions);
 
     const wire = buildWireMessage(msg.id)!;
@@ -564,8 +651,16 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     const hasHere = mentions.some(m => m.type === "here");
 
     const recipientIds = new Set<number>();
-    for (const m of members) {
+    for (const m of audience) {
       if (m.id === u.id) continue;
+      if (isDm) {
+        // DMs push every member every time — the whole point of a DM is
+        // that the recipient gets pinged. DND (presence=busy) gating is
+        // applied inside sendNotificationToUsers, so a busy user still
+        // doesn't get woken up.
+        recipientIds.add(m.id);
+        continue;
+      }
       if (userMentions.has(m.id)) { recipientIds.add(m.id); continue; }
       if (hasEveryone) { recipientIds.add(m.id); continue; }
       const lastSeen = m.lastSeenAt ? new Date(m.lastSeenAt).getTime() : 0;
@@ -576,11 +671,16 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     }
 
     if (recipientIds.size > 0) {
+      const title = isDm
+        ? (audience.length <= 2
+            ? `${u.name}` // 1:1 DM: just the sender's name
+            : `${u.name} in ${audience.filter(m => m.id !== u.id).map(m => m.name.split(" ")[0]).slice(0, 3).join(", ")}`)
+        : `#${access.channel!.name} · ${access.project!.name}`;
       void sendNotificationToUsers(Array.from(recipientIds), {
-        title: `#${access.channel!.name} · ${access.project!.name}`,
-        body: `${u.name}: ${parsed.data.content.slice(0, 140)}`,
-        url: `/#/channels/${channelId}/m/${msg.id}`,
-        tag: `channel-${channelId}`,
+        title,
+        body: isDm ? parsed.data.content.slice(0, 140) : `${u.name}: ${parsed.data.content.slice(0, 140)}`,
+        url: isDm ? `/#/dms/${channelId}/m/${msg.id}` : `/#/channels/${channelId}/m/${msg.id}`,
+        tag: isDm ? `dm-${channelId}` : `channel-${channelId}`,
       });
     }
 

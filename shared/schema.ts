@@ -80,7 +80,11 @@ export type ChannelType = typeof channelTypes[number];
 //   entity  → only users whose user.entityId matches channel.entityId
 //   team    → only users whose user.role matches channel.teamRole
 //   private → only users explicitly listed in channel_members
-export const channelScopes = ["global", "entity", "team", "private"] as const;
+//   dm      → 1:1 or group direct message; members tracked in channel_members.
+//             Hidden from the project sidebar; surfaced in the dedicated
+//             "Direct Messages" section instead. Channels live under the user's
+//             home project so messages/reactions/attachments all work as-is.
+export const channelScopes = ["global", "entity", "team", "private", "dm"] as const;
 export type ChannelScope = typeof channelScopes[number];
 
 export const channels = sqliteTable("channels", {

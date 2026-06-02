@@ -6,6 +6,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Avatar } from "./Avatar";
 import { ManageMembersDialog } from "./ManageMembersDialog";
 import { MoveChannelDialog } from "./MoveChannelDialog";
+import { DmSection } from "./DmSection";
 import type { ApiChannel, ApiProject, ApiUser } from "@/types/api";
 
 // Phase 1.8: minimal job shape we need to nest channels under jobs in the
@@ -36,12 +37,17 @@ interface Props {
   // Manage Members and Move Channel dialogs can render the right dropdowns.
   allProjects?: ApiProject[];
   orgMembers?: ApiUser[];
+  // Phase 1.9.1: DM section state. DMs live above Jobs/Channels and are
+  // project-agnostic, so the parent owns the selection and we just render
+  // the section + bubble taps back up.
+  activeDmId?: number | null;
+  onSelectDm?: (dmId: number) => void;
 }
 
 export function ChannelSidebar({
   project, channels, projectMembers, activeChannelId, onSelectChannel,
   me, myMicMuted, myDeafened, onToggleMic, onToggleDeafen, onCreateChannel, onOpenWorkObjects,
-  allProjects, orgMembers,
+  allProjects, orgMembers, activeDmId, onSelectDm,
 }: Props) {
   // Phase 1.8 admin dialogs. Both are admin-gated so we only mount the state
   // when the current user is an admin — avoids accidental opens elsewhere.
@@ -190,7 +196,19 @@ export function ChannelSidebar({
       </div>
 
       <div className="flex-1 overflow-y-auto px-2 py-3 space-y-4">
-        {/* Jobs section first — Josh wants active work front-and-center.
+        {/* Direct Messages — pinned at the TOP of the sidebar above Jobs and
+            global Channels. DMs are project-agnostic; the section lives here
+            so it's always one tap away no matter which company is active. */}
+        {onSelectDm && (
+          <DmSection
+            me={me}
+            orgMembers={orgMembers ?? []}
+            activeDmId={activeDmId ?? null}
+            onSelectDm={onSelectDm}
+          />
+        )}
+
+        {/* Jobs section — Josh wants active work front-and-center.
             Each Job is collapsible; channels nest under it. Empty Jobs
             still render so the user knows the job exists and can open it
             from the right rail. */}

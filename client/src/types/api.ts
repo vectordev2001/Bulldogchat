@@ -32,7 +32,7 @@ export interface ApiProject {
 }
 
 export type ChannelType = "text" | "voice";
-export type ChannelScope = "global" | "entity" | "team" | "private";
+export type ChannelScope = "global" | "entity" | "team" | "private" | "dm";
 
 export interface ApiChannel {
   id: number;
@@ -48,6 +48,13 @@ export interface ApiChannel {
   entityId?: string | null;
   teamRole?: UserRole | null;
   createdAt: string;
+}
+
+// DM channels are regular channels with scope='dm', decorated with the
+// channel_members user-id set so the sidebar can render "Alice, Bob" without
+// a follow-up fetch.
+export interface ApiDmChannel extends ApiChannel {
+  memberIds: number[];
 }
 
 export interface ApiReaction {

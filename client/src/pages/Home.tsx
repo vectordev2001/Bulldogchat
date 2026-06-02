@@ -21,6 +21,12 @@ export default function Home() {
   // Project + channel selection
   const [activeProjectId, setActiveProjectId] = useState<number | null>(null);
   const [channelByProject, setChannelByProject] = useState<Record<number, number>>({});
+  // Phase 1.9.1: Active DM selection. When non-null we render the DM thread
+  // INSTEAD of the project channel — DMs are a parallel "view" that lives
+  // above Jobs in the sidebar. Selecting a project channel clears the DM,
+  // and selecting a DM doesn't disturb the per-project channel slot so the
+  // user can hop back to where they were.
+  const [activeDmId, setActiveDmId] = useState<number | null>(null);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [createChannelOpen, setCreateChannelOpen] = useState(false);
   // Right-rail members list. Default to closed on mobile so the drawer
@@ -152,14 +158,32 @@ export default function Home() {
 
   const messagesQ = useQuery<ApiMessage[]>({
     queryKey: ["/api/channels", activeChannelId, "messages"],
-    enabled: !!activeChannelId && activeChannel?.type === "text",
+    enabled: !!activeChannelId && activeChannel?.type === "text" && !activeDmId,
   });
 
-  // SSE: invalidate messages on relevant events
+  // When a DM is active, fetch the DM channel row (by id) and its messages.
+  // We reuse the standard channel endpoints — a DM is a channel with
+  // scope='dm' on the server. The channel fetch makes sure TextChannelView
+  // gets the same ApiChannel shape it expects.
+  const dmChannelQ = useQuery<ApiChannel>({
+    queryKey: ["/api/channels", activeDmId],
+    queryFn: () => apiRequest<ApiChannel>("GET", `/api/channels/${activeDmId}`),
+    enabled: !!activeDmId,
+  });
+  const dmMessagesQ = useQuery<ApiMessage[]>({
+    queryKey: ["/api/channels", activeDmId, "messages"],
+    enabled: !!activeDmId,
+  });
+
+  // SSE: invalidate messages on relevant events. New DM messages also kick
+  // the DM list query so the sender re-sorts to the top of the section.
   const sseStatus = useSSE(!!user, {
     onMessageNew: (data) => {
       if (data?.channelId) {
         queryClient.invalidateQueries({ queryKey: ["/api/channels", data.channelId, "messages"] });
+        // Cheap: always poke the DM list. The server returns 0 rows for
+        // users who aren't in any DM channel, so the cost is negligible.
+        queryClient.invalidateQueries({ queryKey: ["/api/dms"] });
       }
     },
     onMessageUpdate: (data) => {
@@ -181,11 +205,17 @@ export default function Home() {
 
   const selectProject = (id: number) => {
     setActiveProjectId(id);
+    setActiveDmId(null); // Hopping into a company — leave the DM view.
     setMobileNavOpen(false);
   };
   const selectChannel = (id: number) => {
     if (activeProjectId == null) return;
     setChannelByProject((prev) => ({ ...prev, [activeProjectId]: id }));
+    setActiveDmId(null); // Picked a channel — leave the DM view.
+    setMobileNavOpen(false);
+  };
+  const selectDm = (id: number) => {
+    setActiveDmId(id);
     setMobileNavOpen(false);
   };
 
@@ -279,7 +309,7 @@ export default function Home() {
             project={activeProject}
             channels={channels}
             projectMembers={[]}
-            activeChannelId={activeChannelId}
+            activeChannelId={activeDmId ? null : activeChannelId}
             onSelectChannel={selectChannel}
             me={user as ApiUser}
             myMicMuted={myMicMuted}
@@ -290,6 +320,8 @@ export default function Home() {
             onOpenWorkObjects={() => setWorkObjectsListOpen(true)}
             allProjects={projects}
             orgMembers={members}
+            activeDmId={activeDmId}
+            onSelectDm={selectDm}
           />
         )}
         {user && (
@@ -341,7 +373,28 @@ export default function Home() {
         </div>
 
         {/* Channel content */}
-        {channelsQ.isLoading ? (
+        {activeDmId ? (
+          // DM view: same TextChannelView, hydrated from the DM channel row.
+          // We deliberately do NOT pass workObjects/job props — DMs aren't
+          // tied to jobs, so the right-rail Jobs panel toggle is hidden.
+          dmChannelQ.isLoading || !dmChannelQ.data ? (
+            <div className="flex-1 flex items-center justify-center">
+              <Loader2 className="w-5 h-5 animate-spin text-vs-blue" />
+            </div>
+          ) : (
+            <TextChannelView
+              channel={dmChannelQ.data}
+              messages={dmMessagesQ.data ?? []}
+              loading={dmMessagesQ.isLoading}
+              me={user as ApiUser}
+              orgMembers={members}
+              membersOpen={membersOpen}
+              onToggleMembers={() => setMembersOpen((v) => !v)}
+              workObjectsOpen={false}
+              onToggleWorkObjects={() => {}}
+            />
+          )
+        ) : channelsQ.isLoading ? (
           <div className="flex-1 flex items-center justify-center">
             <Loader2 className="w-5 h-5 animate-spin text-vs-blue" />
           </div>
@@ -375,47 +428,60 @@ export default function Home() {
       </main>
 
       {/* Right rail (desktop ≥md): work objects panel (top) + members
-          list (bottom). Both toggle independently from the channel header. */}
-      {activeChannel && (workObjectsOpen || membersOpen) && (
-        <div className="hidden md:flex md:flex-col">
-          {workObjectsOpen && (
-            <WorkObjectPanel
-              channelId={activeChannel.id}
-              me={user as ApiUser}
-              orgMembers={members}
-              onClose={() => setWorkObjectsOpen(false)}
-            />
-          )}
-          {membersOpen && (
-            <MemberList
-              members={members}
-              meId={(user as ApiUser)?.id}
-              orgMembers={members}
-              channelId={activeChannel.id}
-              channelName={activeChannel.name}
-              myRole={(user as ApiUser)?.role}
-            />
-          )}
-        </div>
-      )}
+          list (bottom). Both toggle independently from the channel header.
+          When a DM is active, use the DM channel for member/job context;
+          when a project channel is active, use that. */}
+      {(() => {
+        const viewChannel = activeDmId ? dmChannelQ.data : activeChannel;
+        if (!viewChannel) return null;
+        // DMs never have a Jobs panel — they're not tied to work objects.
+        const showWorkObjects = !activeDmId && workObjectsOpen;
+        if (!showWorkObjects && !membersOpen) return null;
+        return (
+          <div className="hidden md:flex md:flex-col">
+            {showWorkObjects && (
+              <WorkObjectPanel
+                channelId={viewChannel.id}
+                me={user as ApiUser}
+                orgMembers={members}
+                onClose={() => setWorkObjectsOpen(false)}
+              />
+            )}
+            {membersOpen && (
+              <MemberList
+                members={members}
+                meId={(user as ApiUser)?.id}
+                orgMembers={members}
+                channelId={viewChannel.id}
+                channelName={viewChannel.name}
+                myRole={(user as ApiUser)?.role}
+              />
+            )}
+          </div>
+        );
+      })()}
 
       {/* Mobile (<md): MemberList renders as a slide-over drawer when
           the header Users icon is tapped. Backdrop dismisses. Add-member
           button is built into the drawer for admins. */}
-      {activeChannel && membersOpen && (
-        <div className="md:hidden">
-          <MemberList
-            members={members}
-            meId={(user as ApiUser)?.id}
-            orgMembers={members}
-            channelId={activeChannel.id}
-            channelName={activeChannel.name}
-            myRole={(user as ApiUser)?.role}
-            mobile
-            onClose={() => setMembersOpen(false)}
-          />
-        </div>
-      )}
+      {(() => {
+        const viewChannel = activeDmId ? dmChannelQ.data : activeChannel;
+        if (!viewChannel || !membersOpen) return null;
+        return (
+          <div className="md:hidden">
+            <MemberList
+              members={members}
+              meId={(user as ApiUser)?.id}
+              orgMembers={members}
+              channelId={viewChannel.id}
+              channelName={viewChannel.name}
+              myRole={(user as ApiUser)?.role}
+              mobile
+              onClose={() => setMembersOpen(false)}
+            />
+          </div>
+        );
+      })()}
     </div>
   );
 }
