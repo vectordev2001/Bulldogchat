@@ -183,11 +183,13 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     const u = (req as AuthedRequest).user;
     let list = storage.listUsersByOrg(u.orgId).map(sanitize);
 
-    // Only attempt the backfill if at least one member is missing a phone
-    // AND the caller is an admin (auth's admin API will 403 otherwise).
+    // Admin sync from bulldog-auth: backfill phones AND soft-delete ghost
+    // users (deleted/deactivated in auth but still showing in chat). We
+    // only run this when the caller is an admin because auth's admin API
+    // 403s for everyone else. Cheap operations — we just hit
+    // /api/admin/users once.
     const me = storage.getUser(u.id);
-    const needsBackfill = list.some((m) => !m.phone);
-    if (needsBackfill && me?.role === "admin") {
+    if (me?.role === "admin") {
       try {
         // Forward the caller's bulldog-auth cookie verbatim. If they don't
         // have one (e.g. legacy HS256-only chat login) we silently skip.
@@ -201,14 +203,18 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
           if (resp.ok) {
             // Auth wraps the list as { users: [...] }; tolerate either shape.
             const body = (await resp.json()) as
-              | { users?: Array<{ email?: string; phone?: string | null }> }
-              | Array<{ email?: string; phone?: string | null }>;
+              | { users?: Array<{ email?: string; phone?: string | null; active?: boolean }> }
+              | Array<{ email?: string; phone?: string | null; active?: boolean }>;
             const authUsers = Array.isArray(body) ? body : (body.users ?? []);
             const phoneByEmail = new Map<string, string>();
+            const activeEmails = new Set<string>();
             for (const au of authUsers) {
-              if (au.email && au.phone) phoneByEmail.set(au.email.toLowerCase(), au.phone);
+              if (!au.email) continue;
+              const e = au.email.toLowerCase();
+              if (au.active !== false) activeEmails.add(e);
+              if (au.phone) phoneByEmail.set(e, au.phone);
             }
-            // Persist phones into chat DB so subsequent calls don't re-hit auth.
+            // 1) Persist phones into chat DB so subsequent calls don't re-hit auth.
             for (const m of list) {
               if (m.phone) continue;
               const fresh = phoneByEmail.get(m.email.toLowerCase());
@@ -217,12 +223,30 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
                 catch (e) { console.warn("[org/members] phone backfill update failed:", e); }
               }
             }
-            // Re-read so the response includes the freshly-backfilled phones.
+            // 2) Ghost roster cleanup: any chat user whose email is NOT in
+            //    auth's active set gets soft-deactivated. Skip the caller
+            //    themselves (no self-lockout), already-deactivated rows,
+            //    and system-deleted emails (deleted-*@deleted.local).
+            for (const m of list) {
+              if (m.deactivated) continue;
+              if (m.id === u.id) continue;
+              const e = m.email.toLowerCase();
+              if (e.endsWith("@deleted.local")) continue;
+              if (!activeEmails.has(e)) {
+                try {
+                  storage.setUserDeactivated(m.id, true);
+                  console.log(`[org/members] ghost cleanup: deactivated chat user ${m.id} (${m.email}) — not in auth active set`);
+                } catch (err) {
+                  console.warn("[org/members] ghost cleanup failed:", err);
+                }
+              }
+            }
+            // Re-read so the response reflects backfills + deactivations.
             list = storage.listUsersByOrg(u.orgId).map(sanitize);
           }
         }
       } catch (e) {
-        console.warn("[org/members] phone backfill from auth failed:", e);
+        console.warn("[org/members] auth sync failed:", e);
       }
     }
 
