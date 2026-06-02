@@ -3,14 +3,17 @@
  * calls. Mounts once at the app root so the modal appears no matter
  * which page the user is on when the phone rings.
  */
-import { useEffect, useRef } from "react";
-import { Phone, PhoneOff, Mic, MicOff, Video, VideoOff, MonitorUp, Loader2, Volume2 } from "lucide-react";
+import { useEffect, useMemo, useRef } from "react";
+import { Phone, PhoneOff, Mic, MicOff, Video, VideoOff, MonitorUp, Loader2, Volume2, UserPlus, X, Check, Search, PhoneCall } from "lucide-react";
 import { useCalls } from "@/lib/CallContext";
 import { useLiveKitRoom, attachTrack } from "@/lib/useLiveKitRoom";
 import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Avatar } from "./Avatar";
 import type { Track } from "livekit-client";
 import type { RoomParticipantState } from "@/lib/useLiveKitRoom";
+import type { ApiUser } from "@/types/api";
+import { useAuth } from "@/lib/auth";
 
 export function CallOverlays() {
   const calls = useCalls();
@@ -107,6 +110,7 @@ function ActiveCallOverlay() {
   const [micMuted, setMicMuted] = useState(false);
   const [videoOn, setVideoOn] = useState(active?.kind === "video");
   const [screenSharing, setScreenSharing] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
 
   // Reset toggles when the call changes.
   useEffect(() => {
@@ -187,6 +191,19 @@ function ActiveCallOverlay() {
         <CtrlBtn on={!micMuted} onClick={() => setMicMuted(m => !m)} disabled={lk.status !== "connected"} onIcon={<Mic className="w-5 h-5" />} offIcon={<MicOff className="w-5 h-5" />} title={micMuted ? "Unmute" : "Mute"} testid="call-mic" />
         <CtrlBtn on={videoOn} onClick={() => setVideoOn(v => !v)} disabled={lk.status !== "connected"} onIcon={<Video className="w-5 h-5" />} offIcon={<VideoOff className="w-5 h-5" />} title={videoOn ? "Stop video" : "Start video"} testid="call-video" />
         <CtrlBtn on={screenSharing} onClick={() => setScreenSharing(s => !s)} disabled={lk.status !== "connected"} onIcon={<MonitorUp className="w-5 h-5" />} offIcon={<MonitorUp className="w-5 h-5" />} title={screenSharing ? "Stop sharing" : "Share screen"} testid="call-screen" />
+        {/* Add people to this call. Opens a picker; selected users get
+            rung into the same LiveKit room, phone-route users get dialed
+            via Twilio with caller-id 'Bulldog · <channel-or-name>'. */}
+        <button
+          type="button"
+          onClick={() => setAddOpen(true)}
+          className="w-12 h-12 rounded-full flex items-center justify-center bg-[hsl(232_45%_27%)] hover:bg-[hsl(232_45%_32%)] text-white transition-colors"
+          title="Add people to this call"
+          aria-label="Add people to this call"
+          data-testid="button-call-add"
+        >
+          <UserPlus className="w-5 h-5" />
+        </button>
         <div className="w-3" />
         <button
           type="button"
@@ -197,6 +214,285 @@ function ActiveCallOverlay() {
           <PhoneOff className="w-4 h-4" />
           <span className="text-sm font-semibold">End</span>
         </button>
+        </div>
+      </div>
+
+      {addOpen && <InCallAddDialog onClose={() => setAddOpen(false)} />}
+    </div>
+  );
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * InCallAddDialog — picker shown when the caller taps the UserPlus
+ * button on the active-call overlay. Lists org members (minus self and
+ * deactivated), search bar, per-row App|Phone segmented control, and a
+ * free-form phone number field. Submits to inviteToActiveCall() which
+ * hits /api/calls/active/invite — server rings them into the live room.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+function InCallAddDialog({ onClose }: { onClose: () => void }) {
+  const { inviteToActiveCall } = useCalls();
+  const { user } = useAuth();
+  const meId = (user as ApiUser | null)?.id;
+
+  const membersQ = useQuery<ApiUser[]>({ queryKey: ["/api/org/members"] });
+  const allMembers = useMemo(
+    () => (membersQ.data ?? []).filter((m) => m.id !== meId && !(m as { deactivated?: boolean }).deactivated),
+    [membersQ.data, meId],
+  );
+
+  const [query, setQuery] = useState("");
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [route, setRoute] = useState<Map<number, "app" | "phone">>(new Map());
+  const [phoneInput, setPhoneInput] = useState("");
+  const [phoneNumbers, setPhoneNumbers] = useState<string[]>([]);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [warnings, setWarnings] = useState<string[]>([]);
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return allMembers;
+    return allMembers.filter((m) => m.name.toLowerCase().includes(q) || m.email.toLowerCase().includes(q));
+  }, [allMembers, query]);
+
+  const toggleOne = (id: number) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) { next.delete(id); } else { next.add(id); }
+      return next;
+    });
+    setRoute((prev) => {
+      const next = new Map(prev);
+      if (!next.has(id)) next.set(id, "app");
+      return next;
+    });
+  };
+
+  const setRouteFor = (id: number, r: "app" | "phone") => {
+    setRoute((prev) => { const next = new Map(prev); next.set(id, r); return next; });
+  };
+
+  const addPhone = () => {
+    const raw = phoneInput.trim();
+    if (!raw) return;
+    const normalized = raw.startsWith("+")
+      ? "+" + raw.slice(1).replace(/\D/g, "")
+      : "+1" + raw.replace(/\D/g, "");
+    if (!/^\+\d{8,15}$/.test(normalized)) { setError("Enter a valid phone number"); return; }
+    if (phoneNumbers.includes(normalized)) { setPhoneInput(""); return; }
+    setPhoneNumbers((p) => [...p, normalized]);
+    setPhoneInput("");
+    setError(null);
+  };
+
+  const totalTargets = selected.size + phoneNumbers.length;
+
+  const submit = async () => {
+    if (totalTargets === 0) { setError("Pick at least one person or phone number"); return; }
+    const appIds: number[] = [];
+    const phoneIds: number[] = [];
+    for (const id of Array.from(selected)) {
+      if (route.get(id) === "phone") phoneIds.push(id); else appIds.push(id);
+    }
+    setSubmitting(true);
+    setError(null);
+    setWarnings([]);
+    try {
+      const resp = await inviteToActiveCall({
+        inviteeIds: appIds, phoneInviteeIds: phoneIds, phoneNumbers,
+      });
+      if (resp.dialWarnings.length > 0) {
+        setWarnings(resp.dialWarnings);
+        // Keep the dialog open so the user can see the warnings;
+        // they can close manually.
+      } else {
+        onClose();
+      }
+    } catch (err) {
+      setError((err as { message?: string })?.message ?? "Failed to add people");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-[110] flex items-end md:items-center justify-center bg-black/70 backdrop-blur-sm"
+      onClick={onClose}
+      data-testid="dialog-in-call-add"
+    >
+      <div
+        className="w-full md:w-[520px] md:max-w-[92vw] max-h-[92vh] flex flex-col bg-[hsl(232_55%_13%)] border border-[hsl(232_40%_25%)] md:rounded-2xl rounded-t-2xl shadow-2xl overflow-hidden"
+        style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="px-4 py-3 border-b border-[hsl(232_40%_22%)] flex items-center justify-between shrink-0">
+          <div className="min-w-0">
+            <div className="text-sm font-display text-white">Add to this call</div>
+            <div className="text-[10px] text-[hsl(0_0%_60%)] font-mono uppercase tracking-wider">
+              Ring more people into the live room
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="p-1.5 rounded-md text-[hsl(0_0%_70%)] hover:text-white hover:bg-black/30"
+            aria-label="Close"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        <div className="px-3 py-2 border-b border-[hsl(232_40%_22%)] shrink-0">
+          <div className="flex items-center gap-2 px-2 py-1.5 rounded-md bg-[hsl(232_50%_18%)] border border-[hsl(232_40%_25%)]">
+            <Search className="w-4 h-4 text-[hsl(0_0%_55%)] shrink-0" />
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search members…"
+              className="flex-1 bg-transparent text-sm text-white placeholder:text-[hsl(0_0%_50%)] outline-none"
+              data-testid="input-in-call-add-search"
+            />
+          </div>
+        </div>
+
+        <div className="flex-1 overflow-y-auto min-h-0">
+          {membersQ.isLoading ? (
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="w-5 h-5 animate-spin text-vs-blue" />
+            </div>
+          ) : filtered.length === 0 ? (
+            <div className="text-center text-xs text-[hsl(0_0%_60%)] py-6">No members match “{query}”</div>
+          ) : (
+            <ul className="px-2 py-2 flex flex-col gap-1">
+              {filtered.map((m) => {
+                const isSel = selected.has(m.id);
+                const r = route.get(m.id) ?? "app";
+                const hasPhone = !!(m.phone && m.phone.trim());
+                return (
+                  <li key={m.id}>
+                    <div
+                      className={[
+                        "flex items-center gap-2 px-2 py-1.5 rounded-md",
+                        isSel ? "bg-[hsl(232_50%_22%)] ring-1 ring-vs-blue/40" : "hover:bg-[hsl(232_45%_22%)]",
+                      ].join(" ")}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => toggleOne(m.id)}
+                        className="flex-1 min-w-0 flex items-center gap-2 text-left"
+                        data-testid={`in-call-add-row-${m.id}`}
+                      >
+                        <div className={[
+                          "w-5 h-5 rounded-md border flex items-center justify-center shrink-0",
+                          isSel ? "bg-vs-blue border-vs-blue text-[hsl(232_60%_9%)]" : "border-[hsl(0_0%_45%)]",
+                        ].join(" ")}>
+                          {isSel && <Check className="w-3 h-3" strokeWidth={3} />}
+                        </div>
+                        <Avatar member={{ name: m.name, hue: m.hue }} size={28} />
+                        <div className="min-w-0">
+                          <div className="text-sm text-white truncate">{m.name}</div>
+                          <div className="text-[10px] text-[hsl(0_0%_60%)] truncate">{m.email}</div>
+                        </div>
+                      </button>
+                      {isSel && (
+                        <div className="flex items-center gap-0.5 shrink-0 bg-[hsl(232_60%_11%)] rounded-md p-0.5 border border-[hsl(232_40%_25%)]">
+                          <button
+                            type="button"
+                            onClick={() => setRouteFor(m.id, "app")}
+                            className={[
+                              "px-2 py-1 rounded text-[11px] font-mono uppercase tracking-wider flex items-center gap-1",
+                              r === "app" ? "bg-vs-blue text-[hsl(232_60%_9%)]" : "text-[hsl(0_0%_65%)] hover:text-white",
+                            ].join(" ")}
+                            title="Ring in the app"
+                          >
+                            <Video className="w-3 h-3" /> App
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => hasPhone && setRouteFor(m.id, "phone")}
+                            disabled={!hasPhone}
+                            className={[
+                              "px-2 py-1 rounded text-[11px] font-mono uppercase tracking-wider flex items-center gap-1 disabled:opacity-30 disabled:cursor-not-allowed",
+                              r === "phone" ? "bg-vs-red text-white" : "text-[hsl(0_0%_65%)] hover:text-white",
+                            ].join(" ")}
+                            title={hasPhone ? "Dial their cell" : "No phone on file"}
+                          >
+                            <PhoneCall className="w-3 h-3" /> Phone
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+
+        <div className="shrink-0 px-3 py-2 border-t border-[hsl(232_40%_22%)] bg-[hsl(232_55%_11%)] flex flex-col gap-2">
+          <div className="text-[10px] uppercase tracking-wider font-mono text-[hsl(0_0%_55%)]">Or dial a phone number</div>
+          <div className="flex items-center gap-2">
+            <input
+              value={phoneInput}
+              onChange={(e) => setPhoneInput(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addPhone(); } }}
+              placeholder="+1 555 123 4567"
+              inputMode="tel"
+              className="flex-1 bg-[hsl(232_50%_18%)] border border-[hsl(232_40%_25%)] rounded-md px-2 py-1.5 text-sm text-white placeholder:text-[hsl(0_0%_45%)] outline-none focus:border-vs-blue"
+              data-testid="input-in-call-add-phone"
+            />
+            <button
+              type="button"
+              onClick={addPhone}
+              className="px-3 py-1.5 rounded-md bg-[hsl(232_45%_27%)] hover:bg-[hsl(232_45%_32%)] text-white text-sm"
+            >
+              Add
+            </button>
+          </div>
+          {phoneNumbers.length > 0 && (
+            <div className="flex flex-wrap gap-1.5">
+              {phoneNumbers.map((p) => (
+                <span key={p} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-vs-red/15 border border-vs-red/40 text-[hsl(2_85%_75%)]">
+                  {p}
+                  <button type="button" onClick={() => setPhoneNumbers((arr) => arr.filter((x) => x !== p))} className="hover:text-white" aria-label={`Remove ${p}`}>
+                    <X className="w-3 h-3" />
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {warnings.length > 0 && (
+          <div className="shrink-0 px-3 py-2 bg-[hsl(40_80%_45%/0.12)] border-t border-[hsl(40_80%_45%/0.4)] text-xs text-[hsl(40_80%_75%)]">
+            {warnings.map((w, i) => <div key={i}>• {w}</div>)}
+          </div>
+        )}
+        {error && (
+          <div className="shrink-0 px-3 py-2 bg-[hsl(2_70%_55%/0.15)] border-t border-[hsl(2_70%_55%/0.4)] text-xs text-[hsl(2_85%_75%)]">{error}</div>
+        )}
+
+        <div className="shrink-0 px-3 py-3 border-t border-[hsl(232_40%_22%)] bg-[hsl(232_55%_13%)] flex items-center justify-between gap-2">
+          <span className="text-[11px] text-[hsl(0_0%_60%)] font-mono">
+            {totalTargets > 0 ? `${totalTargets} to add` : "Pick people or phone numbers"}
+          </span>
+          <div className="flex items-center gap-2">
+            <button type="button" onClick={onClose} className="px-3 py-1.5 rounded-md text-sm text-[hsl(0_0%_75%)] hover:text-white">
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={submit}
+              disabled={submitting || totalTargets === 0}
+              className="px-4 py-1.5 rounded-md bg-vs-red hover:bg-[hsl(2_75%_60%)] text-white text-sm font-semibold disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
+              data-testid="button-in-call-add-submit"
+            >
+              {submitting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+              Ring them
+            </button>
+          </div>
         </div>
       </div>
     </div>

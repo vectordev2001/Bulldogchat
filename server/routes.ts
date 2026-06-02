@@ -1224,6 +1224,185 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     });
   });
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // Invite more people into an ALREADY-RUNNING call. Mirrors
+  // group-call/start but joins the existing room (1:1 "direct-<callId>"
+  // OR a previously-started "group-channel-<id>-<ts>") instead of
+  // creating a new one. Used by the "Add" button on the active-call
+  // overlay to pull additional members or phone numbers into the live
+  // LiveKit room without forcing everyone to drop and re-join.
+  // ─────────────────────────────────────────────────────────────────────────
+  app.post("/api/calls/active/invite", requireAuth, async (req, res) => {
+    const u = (req as AuthedRequest).user;
+    const roomName = String(req.body?.roomName ?? "").trim();
+    const kind = (req.body?.kind === "video" ? "video" : "voice") as "voice" | "video";
+    if (!roomName) return res.status(400).json({ message: "roomName required" });
+    // Sanity-check the room name shape. We only allow rooms minted by
+    // this server (direct-<n>, group-channel-<n>-<ts>, vector-<n>-channel-<n>)
+    // so a malicious client can't poke users into arbitrary rooms.
+    if (!/^(direct-\d+|group-channel-\d+-\d+|vector-\d+-channel-\d+)$/.test(roomName)) {
+      return res.status(400).json({ message: "invalid roomName" });
+    }
+
+    const rawInvitees: unknown = req.body?.inviteeIds;
+    const rawPhoneInvitees: unknown = req.body?.phoneInviteeIds;
+    const rawPhones: unknown = req.body?.phoneNumbers;
+    const inviteeIds: number[] = Array.isArray(rawInvitees)
+      ? Array.from(
+          new Set(
+            (rawInvitees as unknown[])
+              .map((x) => Number(x))
+              .filter((n) => Number.isFinite(n) && n > 0 && n !== u.id),
+          ),
+        )
+      : [];
+    const phoneInviteeIds: number[] = Array.isArray(rawPhoneInvitees)
+      ? Array.from(
+          new Set(
+            (rawPhoneInvitees as unknown[])
+              .map((x) => Number(x))
+              .filter((n) => Number.isFinite(n) && n > 0 && n !== u.id),
+          ),
+        )
+      : [];
+    const phoneNumbers: string[] = Array.isArray(rawPhones)
+      ? Array.from(
+          new Set(
+            (rawPhones as unknown[])
+              .map((x) => String(x).trim())
+              .filter((s) => s.length > 0)
+              .map((raw) =>
+                raw.startsWith("+")
+                  ? "+" + raw.slice(1).replace(/\D/g, "")
+                  : "+1" + raw.replace(/\D/g, ""),
+              )
+              .filter((p) => /^\+\d{8,15}$/.test(p)),
+          ),
+        )
+      : [];
+    if (inviteeIds.length === 0 && phoneNumbers.length === 0 && phoneInviteeIds.length === 0) {
+      return res.status(400).json({ message: "inviteeIds[], phoneInviteeIds[], or phoneNumbers[] required" });
+    }
+
+    if (!livekitConfigured()) {
+      return res.status(503).json({ message: "Calling unavailable: LiveKit not configured" });
+    }
+
+    // Org-scope filter for app invitees.
+    const validInvitees = inviteeIds
+      .map((id) => ({ id, user: storage.getUser(id) }))
+      .filter((x) => x.user && x.user.orgId === u.orgId && !x.user.deactivated)
+      .map((x) => x.id);
+    const phoneInviteeRecords = phoneInviteeIds
+      .map((id) => ({ id, user: storage.getUser(id) }))
+      .filter((x) => x.user && x.user.orgId === u.orgId && !x.user.deactivated)
+      .map((x) => ({ id: x.id, name: x.user!.name, phone: (x.user as { phone?: string | null }).phone ?? null }));
+
+    if (validInvitees.length === 0 && phoneNumbers.length === 0 && phoneInviteeRecords.filter((r) => r.phone).length === 0) {
+      return res.status(400).json({ message: "No reachable invitees" });
+    }
+
+    // Best-effort label for SIP From-display. Use the channel name when
+    // the room is a channel-bound group room; otherwise fall back to the
+    // caller's name (so the recipient sees "Bulldog · Josh Bieler").
+    let channelLabel = `${u.name}`;
+    const chanMatch = roomName.match(/(?:group-channel-|vector-\d+-channel-)(\d+)/);
+    if (chanMatch) {
+      const chId = Number(chanMatch[1]);
+      const ch = storage.getChannel(chId);
+      if (ch) channelLabel = `#${ch.name}`;
+    }
+
+    // Create per-invitee ringing rows (so the standard incoming-call UI
+    // fires on each invitee's device). All rows share the existing room.
+    for (const calleeId of validInvitees) {
+      const row = storage.createDirectCall({
+        orgId: u.orgId, callerId: u.id, calleeId, roomName, kind,
+      });
+      storage.updateDirectCallStatus(row.id, "ringing");
+      try {
+        (await import("./db")).rawDb
+          .prepare(`UPDATE direct_calls SET room_name = ? WHERE id = ?`)
+          .run(roomName, row.id);
+      } catch {
+        /* best-effort */
+      }
+      const payload: CallEventPayload = {
+        callId: row.id, callerId: u.id, calleeId,
+        callerName: u.name, callerHue: u.hue,
+        kind, roomName,
+      };
+      emitCallIncoming(payload);
+      setTimeout(() => {
+        const current = storage.getDirectCall(row.id);
+        if (current && current.status === "ringing") {
+          storage.updateDirectCallStatus(row.id, "missed", { endedAt: new Date() });
+          emitCallEnded({ ...payload, reason: "missed" });
+        }
+      }, 60_000);
+    }
+
+    if (validInvitees.length > 0) {
+      void sendNotificationToUsers(validInvitees, {
+        title: `\ud83d\udcde ${u.name} is calling`,
+        body: kind === "video" ? `Adding you to a video call — ${channelLabel}` : `Adding you to a voice call — ${channelLabel}`,
+        url: `/#/call/group/${encodeURIComponent(roomName)}`,
+        tag: `call-add-${roomName}`,
+      });
+    }
+
+    // Phone-bridge.
+    const dialedPhones: string[] = [];
+    const dialedUserIds: number[] = [];
+    const dialWarnings: string[] = [];
+    if (phoneInviteeRecords.length > 0) {
+      if (!sipConfigured()) {
+        dialWarnings.push("SIP not configured — chat users picked 'via Phone' were not dialed");
+      } else {
+        for (const rec of phoneInviteeRecords) {
+          if (!rec.phone) {
+            dialWarnings.push(`${rec.name}: no phone on file`);
+            continue;
+          }
+          try {
+            const ident = await dialPhoneIntoRoom({
+              phone: rec.phone, roomName, displayName: rec.name, channelLabel,
+            });
+            if (ident) {
+              dialedUserIds.push(rec.id);
+              dialedPhones.push(rec.phone);
+            } else {
+              dialWarnings.push(`dial ${rec.name}: SIP trunk unavailable`);
+            }
+          } catch (err) {
+            const msg = (err as { message?: string })?.message ?? "failed";
+            dialWarnings.push(`dial ${rec.name}: ${msg}`);
+          }
+        }
+      }
+    }
+    if (phoneNumbers.length > 0) {
+      if (!sipConfigured()) {
+        dialWarnings.push("SIP not configured — phone numbers were not dialed");
+      } else {
+        for (const phone of phoneNumbers) {
+          try {
+            const ident = await dialPhoneIntoRoom({
+              phone, roomName, displayName: phone, channelLabel,
+            });
+            if (ident) dialedPhones.push(phone);
+            else dialWarnings.push(`dial ${phone}: SIP trunk unavailable`);
+          } catch (err) {
+            const msg = (err as { message?: string })?.message ?? "failed";
+            dialWarnings.push(`dial ${phone}: ${msg}`);
+          }
+        }
+      }
+    }
+
+    res.json({ roomName, invitedUserIds: validInvitees, dialedUserIds, dialedPhones, dialWarnings, kind });
+  });
+
   // Callee accepts. Mints their token and flips the row to 'active'.
   app.post("/api/calls/:id/accept", requireAuth, async (req, res) => {
     const u = (req as AuthedRequest).user;

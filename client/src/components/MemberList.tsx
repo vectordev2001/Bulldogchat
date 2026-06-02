@@ -180,13 +180,18 @@ function MemberRow({
   dimmed?: boolean;
 }) {
   const { startCall, startGroupCall, active, outgoing } = useCalls();
+  const [chooserOpen, setChooserOpen] = useState(false);
   const isMe = meId != null && member.id === meId;
   const busy = !!active || !!outgoing;
   const memberPhone = (member as { phone?: string | null }).phone ?? null;
 
-  const onCall = (e: React.MouseEvent, kind: "voice" | "video") => {
-    e.stopPropagation();
-    e.preventDefault();
+  const openChooser = () => {
+    if (isMe || busy) return;
+    setChooserOpen(true);
+  };
+
+  const callInApp = (kind: "voice" | "video") => {
+    setChooserOpen(false);
     if (isMe || busy) return;
     void startCall({
       calleeId: member.id,
@@ -201,9 +206,8 @@ function MemberRow({
   // bridges the call via Twilio (caller-id 'Bulldog · #channel'). We
   // route through startGroupCall so the caller still lands in the same
   // LiveKit room and can be joined from the chat or web app too.
-  const onCallCell = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    e.preventDefault();
+  const callCell = () => {
+    setChooserOpen(false);
     if (isMe || busy || !channelId || !memberPhone) return;
     void startGroupCall({
       channelId,
@@ -215,76 +219,163 @@ function MemberRow({
   };
 
   return (
-    <div
-      className={[
-        "group flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-[hsl(232_45%_27%)] transition-colors",
-        isMe ? "" : "cursor-pointer",
-        dimmed ? "opacity-50" : "",
-      ].join(" ")}
-      data-testid={`member-${member.id}`}
-    >
-      <Avatar
-        member={{
-          name: member.name,
-          hue: member.hue,
-          status: member.status,
-          presence: (member as { presence?: "online" | "away" | "busy" | "offline" }).presence,
-        }}
-        size={32}
-        showStatus
-      />
-      <div className="min-w-0 flex-1">
-        <div className={`text-sm font-semibold truncate ${ROLE_TINT[member.role]}`}>
-          {member.name}{isMe ? " (you)" : ""}
+    <>
+      <button
+        type="button"
+        onClick={openChooser}
+        disabled={isMe || busy}
+        className={[
+          "w-full group flex items-center gap-2 px-2 py-1.5 rounded-md text-left",
+          "hover:bg-[hsl(232_45%_27%)] transition-colors",
+          isMe ? "cursor-default" : busy ? "cursor-not-allowed opacity-60" : "cursor-pointer",
+          dimmed ? "opacity-50" : "",
+        ].join(" ")}
+        data-testid={`member-${member.id}`}
+        aria-label={isMe ? member.name : `Call ${member.name}`}
+      >
+        <Avatar
+          member={{
+            name: member.name,
+            hue: member.hue,
+            status: member.status,
+            presence: (member as { presence?: "online" | "away" | "busy" | "offline" }).presence,
+          }}
+          size={32}
+          showStatus
+        />
+        <div className="min-w-0 flex-1">
+          <div className={`text-sm font-semibold truncate ${ROLE_TINT[member.role]}`}>
+            {member.name}{isMe ? " (you)" : ""}
+          </div>
+          <div className="text-[10px] text-[hsl(0_0%_60%)] truncate font-mono uppercase tracking-wider">
+            {ROLE_LABEL[member.role]}{member.title ? ` · ${member.title}` : ""}
+          </div>
         </div>
-        <div className="text-[10px] text-[hsl(0_0%_60%)] truncate font-mono uppercase tracking-wider">
-          {ROLE_LABEL[member.role]}{member.title ? ` · ${member.title}` : ""}
+        {!isMe && (
+          // Tiny inline phone icon hints that the row is tappable. Real
+          // routing choice (app vs cell) happens in the chooser dialog.
+          <Phone className="w-3.5 h-3.5 text-[hsl(0_0%_50%)] group-hover:text-vs-red transition-colors shrink-0" />
+        )}
+      </button>
+
+      {chooserOpen && !isMe && (
+        <CallTargetDialog
+          memberName={member.name}
+          memberPhone={memberPhone}
+          channelLabel={channelName ?? "channel"}
+          onClose={() => setChooserOpen(false)}
+          onCallAppVoice={() => callInApp("voice")}
+          onCallAppVideo={() => callInApp("video")}
+          onCallCell={callCell}
+        />
+      )}
+    </>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// CallTargetDialog — modal shown when a member row is tapped. Lets the
+// caller pick between in-app voice, in-app video, or ringing the member's
+// cell phone. Cell option is disabled if no phone is on file. Mobile-first
+// styling: full-width bottom sheet on small screens, centered card on md+.
+// ──────────────────────────────────────────────────────────────────────────
+
+function CallTargetDialog({
+  memberName, memberPhone, channelLabel,
+  onClose, onCallAppVoice, onCallAppVideo, onCallCell,
+}: {
+  memberName: string;
+  memberPhone: string | null;
+  channelLabel: string;
+  onClose: () => void;
+  onCallAppVoice: () => void;
+  onCallAppVideo: () => void;
+  onCallCell: () => void;
+}) {
+  return (
+    <div
+      className="fixed inset-0 z-[100] flex items-end md:items-center justify-center bg-black/60 backdrop-blur-sm"
+      onClick={onClose}
+      data-testid="dialog-call-target"
+    >
+      <div
+        className="w-full md:w-[420px] md:max-w-[92vw] bg-[hsl(232_55%_13%)] border border-[hsl(232_40%_25%)] md:rounded-2xl rounded-t-2xl shadow-2xl overflow-hidden"
+        style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="px-4 py-3 border-b border-[hsl(232_40%_22%)] flex items-center justify-between">
+          <div className="min-w-0">
+            <div className="text-sm font-display text-white truncate">Call {memberName}</div>
+            <div className="text-[10px] text-[hsl(0_0%_60%)] font-mono uppercase tracking-wider">
+              How do you want to reach them?
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="p-1.5 rounded-md text-[hsl(0_0%_70%)] hover:text-white hover:bg-black/30"
+            aria-label="Close"
+            data-testid="button-call-target-close"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        <div className="p-3 flex flex-col gap-2">
+          {/* In-app voice */}
+          <button
+            type="button"
+            onClick={onCallAppVoice}
+            className="flex items-center gap-3 px-3 py-3 rounded-xl bg-[hsl(232_50%_18%)] hover:bg-[hsl(232_50%_22%)] border border-[hsl(232_40%_25%)] transition-colors text-left"
+            data-testid="button-call-target-app-voice"
+          >
+            <div className="w-10 h-10 rounded-full bg-vs-green/15 border border-vs-green/40 flex items-center justify-center shrink-0">
+              <Phone className="w-5 h-5 text-vs-green" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-semibold text-white">Voice call in app</div>
+              <div className="text-[11px] text-[hsl(0_0%_65%)]">Rings them on Bulldog Chat (web + mobile)</div>
+            </div>
+          </button>
+
+          {/* In-app video */}
+          <button
+            type="button"
+            onClick={onCallAppVideo}
+            className="flex items-center gap-3 px-3 py-3 rounded-xl bg-[hsl(232_50%_18%)] hover:bg-[hsl(232_50%_22%)] border border-[hsl(232_40%_25%)] transition-colors text-left"
+            data-testid="button-call-target-app-video"
+          >
+            <div className="w-10 h-10 rounded-full bg-vs-blue-light/15 border border-vs-blue-light/40 flex items-center justify-center shrink-0">
+              <Video className="w-5 h-5 text-vs-blue-light" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-semibold text-white">Video call in app</div>
+              <div className="text-[11px] text-[hsl(0_0%_65%)]">Rings them on Bulldog Chat with camera on</div>
+            </div>
+          </button>
+
+          {/* Cell phone */}
+          <button
+            type="button"
+            onClick={onCallCell}
+            disabled={!memberPhone}
+            className="flex items-center gap-3 px-3 py-3 rounded-xl bg-[hsl(232_50%_18%)] hover:bg-[hsl(232_50%_22%)] border border-[hsl(232_40%_25%)] transition-colors text-left disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-[hsl(232_50%_18%)]"
+            data-testid="button-call-target-cell"
+          >
+            <div className="w-10 h-10 rounded-full bg-vs-red/15 border border-vs-red/40 flex items-center justify-center shrink-0">
+              <PhoneCall className="w-5 h-5 text-vs-red" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-semibold text-white">Call their cell phone</div>
+              <div className="text-[11px] text-[hsl(0_0%_65%)] truncate">
+                {memberPhone
+                  ? `Dials ${memberPhone} · caller ID “Bulldog · #${channelLabel}”`
+                  : "No phone number on file"}
+              </div>
+            </div>
+          </button>
         </div>
       </div>
-
-      {!isMe && (
-        // On mobile (touch, no hover) the call buttons stay visible; on
-        // desktop they fade in on row hover. Voice = in-app, Video =
-        // in-app, Cell = ring their phone via Twilio (only shown when
-        // the member has a phone number on file).
-        <div className="flex items-center gap-0.5 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
-          <button
-            type="button"
-            onClick={(e) => onCall(e, "voice")}
-            disabled={busy}
-            title={busy ? "In a call" : `Voice call ${member.name} in app`}
-            aria-label={`Voice call ${member.name} in app`}
-            className="p-1.5 rounded-md text-vs-green hover:bg-black/30 disabled:opacity-40 disabled:cursor-not-allowed"
-            data-testid={`button-call-voice-${member.id}`}
-          >
-            <Phone className="w-3.5 h-3.5" />
-          </button>
-          <button
-            type="button"
-            onClick={(e) => onCall(e, "video")}
-            disabled={busy}
-            title={busy ? "In a call" : `Video call ${member.name} in app`}
-            aria-label={`Video call ${member.name} in app`}
-            className="p-1.5 rounded-md text-vs-blue-light hover:bg-black/30 disabled:opacity-40 disabled:cursor-not-allowed"
-            data-testid={`button-call-video-${member.id}`}
-          >
-            <Video className="w-3.5 h-3.5" />
-          </button>
-          {memberPhone && channelId && (
-            <button
-              type="button"
-              onClick={onCallCell}
-              disabled={busy}
-              title={busy ? "In a call" : `Ring ${member.name}'s cell phone (${memberPhone})`}
-              aria-label={`Ring ${member.name}'s cell phone`}
-              className="p-1.5 rounded-md text-vs-red hover:bg-black/30 disabled:opacity-40 disabled:cursor-not-allowed"
-              data-testid={`button-call-cell-${member.id}`}
-            >
-              <PhoneCall className="w-3.5 h-3.5" />
-            </button>
-          )}
-        </div>
-      )}
     </div>
   );
 }

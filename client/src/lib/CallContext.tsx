@@ -85,6 +85,17 @@ interface CallCtxValue {
   endActive(): Promise<void>;
   cancelOutgoing(): Promise<void>;
   clearLastEnded(): void;
+  /**
+   * Ring more people into the CURRENTLY-ACTIVE call. Server posts to
+   * /api/calls/active/invite which mirrors group-call/start but joins
+   * the existing LiveKit room (no new room minted). Returns the server
+   * response so the UI can surface dialWarnings to the caller.
+   */
+  inviteToActiveCall(opts: {
+    inviteeIds: number[];
+    phoneInviteeIds?: number[];
+    phoneNumbers?: string[];
+  }): Promise<{ invitedUserIds: number[]; dialedUserIds: number[]; dialedPhones: string[]; dialWarnings: string[] }>;
 }
 
 const CallCtx = createContext<CallCtxValue | null>(null);
@@ -323,6 +334,23 @@ export function CallProvider({ children }: { children: ReactNode }) {
     await apiRequest("POST", `/api/calls/${out.callId}/end`, { action: "end" });
   }, [stopRing]);
 
+  const inviteToActiveCall = useCallback<CallCtxValue["inviteToActiveCall"]>(async ({
+    inviteeIds, phoneInviteeIds = [], phoneNumbers = [],
+  }) => {
+    const cur = activeRef.current;
+    if (!cur) {
+      return { invitedUserIds: [], dialedUserIds: [], dialedPhones: [], dialWarnings: ["No active call"] };
+    }
+    const resp = await apiRequest<{
+      invitedUserIds: number[]; dialedUserIds: number[]; dialedPhones: string[]; dialWarnings: string[];
+    }>("POST", "/api/calls/active/invite", {
+      roomName: cur.roomName,
+      kind: cur.kind,
+      inviteeIds, phoneInviteeIds, phoneNumbers,
+    });
+    return resp;
+  }, []);
+
   const endActive = useCallback(async () => {
     const cur = activeRef.current;
     if (!cur) return;
@@ -339,6 +367,7 @@ export function CallProvider({ children }: { children: ReactNode }) {
     <CallCtx.Provider value={{
       incoming, outgoing, active, lastEnded,
       startCall, startGroupCall, acceptIncoming, declineIncoming, endActive, cancelOutgoing, clearLastEnded,
+      inviteToActiveCall,
     }}>
       {children}
     </CallCtx.Provider>
