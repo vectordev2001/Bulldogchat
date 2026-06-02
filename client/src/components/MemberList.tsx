@@ -3,7 +3,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { Avatar } from "./Avatar";
 import type { ApiUser, UserRole } from "@/types/api";
 import { useCalls } from "@/lib/CallContext";
-import { Phone, Video, X, UserPlus, Loader2, Check, Search, PhoneCall } from "lucide-react";
+import { Phone, Video, X, UserPlus, Loader2, Check, Search, PhoneCall, Link as LinkIcon } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 
 const ROLE_ORDER: UserRole[] = ["admin", "foreman", "safety", "office", "field"];
@@ -218,6 +218,23 @@ function MemberRow({
     });
   };
 
+  // "Hybrid" — ring their cell AND text them a video-join link. The
+  // recipient can either pick up the cell (voice via SIP) OR tap the SMS
+  // link to join the same LiveKit room from the app with video. Both paths
+  // converge in the same shared room name.
+  const callHybrid = () => {
+    setChooserOpen(false);
+    if (isMe || busy || !channelId || !memberPhone) return;
+    void startGroupCall({
+      channelId,
+      channelName: channelName ?? "channel",
+      inviteeIds: [],
+      phoneInviteeIds: [member.id],
+      smsInviteeIds: [member.id],
+      kind: "video",
+    });
+  };
+
   return (
     <>
       <button
@@ -267,6 +284,7 @@ function MemberRow({
           onCallAppVoice={() => callInApp("voice")}
           onCallAppVideo={() => callInApp("video")}
           onCallCell={callCell}
+          onCallHybrid={callHybrid}
         />
       )}
     </>
@@ -282,7 +300,7 @@ function MemberRow({
 
 function CallTargetDialog({
   memberName, memberPhone, channelLabel,
-  onClose, onCallAppVoice, onCallAppVideo, onCallCell,
+  onClose, onCallAppVoice, onCallAppVideo, onCallCell, onCallHybrid,
 }: {
   memberName: string;
   memberPhone: string | null;
@@ -291,6 +309,7 @@ function CallTargetDialog({
   onCallAppVoice: () => void;
   onCallAppVideo: () => void;
   onCallCell: () => void;
+  onCallHybrid: () => void;
 }) {
   return (
     <div
@@ -370,6 +389,27 @@ function CallTargetDialog({
               <div className="text-[11px] text-[hsl(0_0%_65%)] truncate">
                 {memberPhone
                   ? `Dials ${memberPhone} · caller ID “Bulldog · #${channelLabel}”`
+                  : "No phone number on file"}
+              </div>
+            </div>
+          </button>
+
+          {/* Hybrid: ring cell + send video join link */}
+          <button
+            type="button"
+            onClick={onCallHybrid}
+            disabled={!memberPhone}
+            className="flex items-center gap-3 px-3 py-3 rounded-xl bg-[hsl(232_50%_18%)] hover:bg-[hsl(232_50%_22%)] border border-[hsl(232_40%_25%)] transition-colors text-left disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-[hsl(232_50%_18%)]"
+            data-testid="button-call-target-hybrid"
+          >
+            <div className="w-10 h-10 rounded-full bg-vs-blue-light/15 border border-vs-blue-light/40 flex items-center justify-center shrink-0">
+              <LinkIcon className="w-5 h-5 text-vs-blue-light" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-semibold text-white">Ring cell + text video link</div>
+              <div className="text-[11px] text-[hsl(0_0%_65%)] truncate">
+                {memberPhone
+                  ? `Calls ${memberPhone} and texts a join link for video`
                   : "No phone number on file"}
               </div>
             </div>

@@ -1,4 +1,4 @@
-import { Hash, ChevronDown, ChevronRight, Plus, Mic, MicOff, Headphones, Settings, Search, Shield, ShieldCheck, Globe, Building2, Users, Lock, ClipboardList, Briefcase, AlertTriangle, FileEdit, MapPin, UserCog, ArrowRightLeft, Trash2 } from "lucide-react";
+import { Hash, ChevronDown, ChevronRight, Plus, Mic, MicOff, Headphones, Settings, Search, Shield, ShieldCheck, Globe, Building2, Users, Lock, ClipboardList, Briefcase, AlertTriangle, FileEdit, MapPin, UserCog, ArrowRightLeft, Trash2, Calendar } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useLocation } from "wouter";
 import { useState, useMemo, useEffect } from "react";
@@ -33,6 +33,8 @@ interface Props {
   onToggleDeafen: () => void;
   onCreateChannel?: () => void;
   onOpenWorkObjects?: () => void;
+  // Phase 1.9.1 — opens the Meetings list dialog (upcoming/past scheduled calls).
+  onOpenMeetings?: () => void;
   // Phase 1.8 admin actions need the full company + member lists so the
   // Manage Members and Move Channel dialogs can render the right dropdowns.
   allProjects?: ApiProject[];
@@ -47,6 +49,7 @@ interface Props {
 export function ChannelSidebar({
   project, channels, projectMembers, activeChannelId, onSelectChannel,
   me, myMicMuted, myDeafened, onToggleMic, onToggleDeafen, onCreateChannel, onOpenWorkObjects,
+  onOpenMeetings,
   allProjects, orgMembers, activeDmId, onSelectDm,
 }: Props) {
   // Phase 1.8 admin dialogs. Both are admin-gated so we only mount the state
@@ -274,6 +277,23 @@ export function ChannelSidebar({
               <ClipboardList className="w-4 h-4 shrink-0 text-vs-red" />
               <span className="truncate font-medium">All Jobs</span>
               <span className="ml-auto text-[10px] font-mono text-[hsl(0_0%_45%)]">{project.short || "co"}</span>
+            </button>
+          </div>
+        )}
+
+        {/* Phase 1.9.1 — Meetings (scheduled calls) launcher. Org-wide,
+            not project-scoped: same dialog from any sidebar. */}
+        {onOpenMeetings && (
+          <div className="pt-1">
+            <button
+              type="button"
+              onClick={onOpenMeetings}
+              data-testid="button-open-meetings"
+              title="Upcoming and recent Bulldog calls—schedule a new one or RSVP."
+              className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-sm text-[hsl(0_0%_75%)] hover:bg-[hsl(232_45%_25%)] hover:text-white transition-colors"
+            >
+              <Calendar className="w-4 h-4 shrink-0 text-vs-blue-light" />
+              <span className="truncate font-medium">Meetings</span>
             </button>
           </div>
         )}

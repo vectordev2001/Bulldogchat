@@ -12,6 +12,7 @@ import { TextChannelView } from "@/components/TextChannelView";
 import { MemberList } from "@/components/MemberList";
 import { WorkObjectPanel } from "@/components/WorkObjectPanel";
 import { WorkObjectsListDialog } from "@/components/WorkObjectsListDialog";
+import { ScheduleCallDialog, MeetingsListDialog } from "@/components/ScheduleCallDialog";
 import { VectorLogo } from "@/components/VectorLogo";
 import type { ApiProject, ApiChannel, ApiMessage, ApiUser } from "@/types/api";
 
@@ -41,6 +42,14 @@ export default function Home() {
   const [workObjectsOpen, setWorkObjectsOpen] = useState(false);
   // Org-wide Work Objects list modal — launched from sidebar.
   const [workObjectsListOpen, setWorkObjectsListOpen] = useState(false);
+  // Phase 1.9.1 — Scheduled calls (Meetings) UI.
+  // scheduleOpen: the new-meeting modal. meetingsOpen: the upcoming/past list.
+  // scheduleHint/scheduleChannelId: pre-fill values when launched from the
+  // /schedule slash command in a channel.
+  const [scheduleOpen, setScheduleOpen] = useState(false);
+  const [meetingsOpen, setMeetingsOpen] = useState(false);
+  const [scheduleHint, setScheduleHint] = useState<string>("");
+  const [scheduleChannelId, setScheduleChannelId] = useState<number | null>(null);
 
   // Self-call state
   // Default to muted on iOS so we never fire getUserMedia({audio:true})
@@ -343,6 +352,7 @@ export default function Home() {
             onToggleDeafen={() => setMyDeafened((v) => !v)}
             onCreateChannel={() => setCreateChannelOpen(true)}
             onOpenWorkObjects={() => setWorkObjectsListOpen(true)}
+            onOpenMeetings={() => setMeetingsOpen(true)}
             allProjects={projects}
             orgMembers={members}
             activeDmId={activeDmId}
@@ -356,6 +366,31 @@ export default function Home() {
             me={user as ApiUser}
             orgMembers={members}
             activeProjectId={activeProjectId}
+          />
+        )}
+        {user && (
+          <ScheduleCallDialog
+            open={scheduleOpen}
+            onClose={() => setScheduleOpen(false)}
+            orgMembers={members}
+            channels={channels}
+            me={user as ApiUser}
+            defaultChannelId={scheduleChannelId}
+            defaultTitle={scheduleHint}
+          />
+        )}
+        {user && (
+          <MeetingsListDialog
+            open={meetingsOpen}
+            onClose={() => setMeetingsOpen(false)}
+            orgMembers={members}
+            me={user as ApiUser}
+            onOpenScheduler={() => {
+              setMeetingsOpen(false);
+              setScheduleHint("");
+              setScheduleChannelId(activeDmId ? null : activeChannelId);
+              setScheduleOpen(true);
+            }}
           />
         )}
         {activeProject && user && (
@@ -417,6 +452,11 @@ export default function Home() {
               onToggleMembers={() => setMembersOpen((v) => !v)}
               workObjectsOpen={false}
               onToggleWorkObjects={() => {}}
+              onSlashSchedule={(hint) => {
+                setScheduleHint(hint);
+                setScheduleChannelId(dmChannelQ.data?.id ?? null);
+                setScheduleOpen(true);
+              }}
             />
           )
         ) : channelsQ.isLoading ? (
@@ -448,6 +488,11 @@ export default function Home() {
             onToggleMembers={() => setMembersOpen((v) => !v)}
             workObjectsOpen={workObjectsOpen}
             onToggleWorkObjects={() => setWorkObjectsOpen((v) => !v)}
+            onSlashSchedule={(hint) => {
+              setScheduleHint(hint);
+              setScheduleChannelId(activeChannelId);
+              setScheduleOpen(true);
+            }}
           />
         )}
       </main>

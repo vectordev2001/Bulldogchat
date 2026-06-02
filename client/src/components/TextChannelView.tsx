@@ -1,10 +1,10 @@
-import { Hash, Pin, Plus, Smile, Paperclip, Send, Users, Search, Loader2, MessageSquare, X, Reply, Phone, Video, ClipboardList, MapPin, FileText, AlertTriangle, Link2, Unlink, Lock, Unlock, UserCog, PenLine, CheckCircle2, Trash2 } from "lucide-react";
+import { Hash, Pin, Plus, Smile, Paperclip, Send, Users, Search, Loader2, MessageSquare, X, Reply, Phone, Video, ClipboardList, MapPin, FileText, AlertTriangle, Link2, Unlink, Lock, Unlock, UserCog, PenLine, CheckCircle2, Trash2, Calendar as CalendarIcon, Mic, Ban, Check, HelpCircle } from "lucide-react";
 import { ChannelCallDialog } from "@/components/ChannelCallDialog";
 import { useCalls } from "@/lib/CallContext";
 import { Avatar } from "./Avatar";
 import { useState, useRef, useEffect, KeyboardEvent, useCallback, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import type { ApiChannel, ApiMessage, ApiUser, UserRole, ApiAttachment, ApiSystemMessageMeta } from "@/types/api";
+import type { ApiChannel, ApiMessage, ApiUser, UserRole, ApiAttachment, ApiSystemMessageMeta, ApiWorkObjectSystemMessageMeta, ApiScheduledCallSystemMessageMeta } from "@/types/api";
 import { useMutation } from "@tanstack/react-query";
 import { apiRequest, apiUpload, queryClient } from "@/lib/queryClient";
 import { ThreadPanel } from "./ThreadPanel";
@@ -21,6 +21,7 @@ interface Props {
   onToggleMembers?: () => void;
   workObjectsOpen?: boolean;
   onToggleWorkObjects?: () => void;
+  onSlashSchedule?: (titleHint: string) => void;
 }
 
 const ROLE_COLOR: Record<UserRole, string> = {
@@ -54,7 +55,7 @@ interface MentionMatch {
   startIdx: number;
 }
 
-export function TextChannelView({ channel, messages, loading, me, orgMembers, membersOpen, onToggleMembers, workObjectsOpen, onToggleWorkObjects }: Props) {
+export function TextChannelView({ channel, messages, loading, me, orgMembers, membersOpen, onToggleMembers, workObjectsOpen, onToggleWorkObjects, onSlashSchedule }: Props) {
   const [draft, setDraft] = useState("");
   const [pendingAtts, setPendingAtts] = useState<ApiAttachment[]>([]);
   const [uploading, setUploading] = useState(false);
@@ -614,22 +615,29 @@ function ChannelIntro({ channel }: { channel: ApiChannel }) {
 }
 
 function SystemMessageRow({ meta, content, createdAt }: { meta: ApiSystemMessageMeta; content: string; createdAt: string }) {
+  // Scheduled-call cards get their own rich row with RSVP buttons + .ics link
+  // instead of the compact work-object banner.
+  if (meta.kind.startsWith("scheduled_call.")) {
+    return <ScheduledCallCard meta={meta as ApiScheduledCallSystemMessageMeta} createdAt={createdAt} />;
+  }
+  // Below here, meta must be a work-object kind. Narrow the type so TS knows.
+  const wo = meta as ApiWorkObjectSystemMessageMeta;
   // Map system-message kind → lucide icon. Falls back to the work-object kind
   // icon if the event itself doesn't have a strong shape.
   const KindIcon =
-    meta.kind === "work_object.linked"          ? Link2 :
-    meta.kind === "work_object.unlinked"        ? Unlink :
-    meta.kind === "work_object.status_changed"  ? CheckCircle2 :
-    meta.kind === "work_object.owner_changed"   ? UserCog :
-    meta.kind === "work_object.title_changed"   ? PenLine :
-    meta.kind === "work_object.closed"          ? Lock :
-    meta.kind === "work_object.reopened"        ? Unlock :
+    wo.kind === "work_object.linked"          ? Link2 :
+    wo.kind === "work_object.unlinked"        ? Unlink :
+    wo.kind === "work_object.status_changed"  ? CheckCircle2 :
+    wo.kind === "work_object.owner_changed"   ? UserCog :
+    wo.kind === "work_object.title_changed"   ? PenLine :
+    wo.kind === "work_object.closed"          ? Lock :
+    wo.kind === "work_object.reopened"        ? Unlock :
     /* work_object.created */                     ClipboardList;
 
   const WoIcon =
-    meta.woKind === "job_site"        ? MapPin :
-    meta.woKind === "work_project"    ? ClipboardList :
-    meta.woKind === "change_order"    ? FileText :
+    wo.woKind === "job_site"        ? MapPin :
+    wo.woKind === "work_project"    ? ClipboardList :
+    wo.woKind === "change_order"    ? FileText :
     /* safety_incident */               AlertTriangle;
 
   // Render content with **bold** markdown stripped to spans. Keep it light
@@ -642,7 +650,7 @@ function SystemMessageRow({ meta, content, createdAt }: { meta: ApiSystemMessage
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
       className="flex items-center justify-center gap-2 my-1 py-1 px-3 mx-12 border-l-2 border-[hsl(232_40%_22%)] text-[11px] text-[hsl(0_0%_55%)] italic text-center"
-      data-testid={`system-message-${meta.kind}`}
+      data-testid={`system-message-${wo.kind}`}
       title={fmtTime(createdAt)}
     >
       <KindIcon className="w-3 h-3 shrink-0 opacity-70" />
@@ -913,4 +921,99 @@ function renderInline(text: string, mentions: ApiMessage["mentions"] | undefined
     }
     return <span key={i}>{p}</span>;
   });
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// ScheduledCallCard — in-channel card for scheduled_call.* system messages.
+// Shows title, when, organizer, kind badge, RSVP buttons, .ics download.
+// Renders inside the message stream like a work-object banner but bigger.
+// ─────────────────────────────────────────────────────────────────────────
+
+function ScheduledCallCard({ meta, createdAt }: { meta: ApiScheduledCallSystemMessageMeta; createdAt: string }) {
+  const startDate = new Date(meta.startAt);
+  const whenLabel = startDate.toLocaleString(undefined, {
+    weekday: "short", month: "short", day: "numeric",
+    hour: "numeric", minute: "2-digit",
+  });
+  const cancelled = meta.kind === "scheduled_call.cancelled";
+  const started = meta.kind === "scheduled_call.started";
+
+  const rsvpMut = useMutation({
+    mutationFn: async (response: "yes" | "no" | "maybe") =>
+      apiRequest("POST", `/api/scheduled-calls/${meta.scheduledCallId}/rsvp`, { response }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/scheduled-calls"] });
+    },
+  });
+
+  const Icon = meta.callKind === "video" ? Video : Mic;
+  const accent = meta.callKind === "video" ? "vs-blue-light" : "vs-green";
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 6 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+      className={`mx-2 md:mx-12 my-2 border rounded-lg p-3 ${cancelled ? "opacity-60 border-[hsl(232_40%_22%)]" : `border-${accent}/40 bg-${accent}/5`}`}
+      data-testid={`scheduled-call-card-${meta.scheduledCallId}`}
+    >
+      <div className="flex items-start gap-3">
+        <div className={`w-10 h-10 rounded-full bg-${accent}/15 border border-${accent}/40 flex items-center justify-center shrink-0`}>
+          <Icon className={`w-5 h-5 text-${accent}`} />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-[10px] font-mono uppercase tracking-wider text-[hsl(0_0%_55%)]">
+              {cancelled ? "Cancelled" : started ? "Started" : meta.kind === "scheduled_call.updated" ? "Updated" : "Scheduled"}
+            </span>
+            <CalendarIcon className="w-3 h-3 text-[hsl(0_0%_55%)]" />
+            <span className="text-[11px] text-[hsl(0_0%_75%)]">{whenLabel}</span>
+          </div>
+          <div className="text-sm font-semibold text-white mt-0.5">{meta.callTitle}</div>
+          {!cancelled && (
+            <div className="flex items-center gap-1.5 mt-2 flex-wrap">
+              <span className="text-[10px] uppercase tracking-wider text-[hsl(0_0%_55%)] font-mono">RSVP:</span>
+              <button
+                type="button"
+                onClick={() => rsvpMut.mutate("yes")}
+                disabled={rsvpMut.isPending}
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-semibold uppercase tracking-wider border border-vs-green/40 bg-vs-green/10 hover:bg-vs-green/20 text-white disabled:opacity-50"
+                data-testid={`button-card-rsvp-${meta.scheduledCallId}-yes`}
+              >
+                <Check className="w-3 h-3" /> Yes
+              </button>
+              <button
+                type="button"
+                onClick={() => rsvpMut.mutate("no")}
+                disabled={rsvpMut.isPending}
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-semibold uppercase tracking-wider border border-vs-red/40 bg-vs-red/10 hover:bg-vs-red/20 text-white disabled:opacity-50"
+                data-testid={`button-card-rsvp-${meta.scheduledCallId}-no`}
+              >
+                <Ban className="w-3 h-3" /> No
+              </button>
+              <button
+                type="button"
+                onClick={() => rsvpMut.mutate("maybe")}
+                disabled={rsvpMut.isPending}
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-semibold uppercase tracking-wider border border-vs-blue-light/40 bg-vs-blue-light/10 hover:bg-vs-blue-light/20 text-white disabled:opacity-50"
+                data-testid={`button-card-rsvp-${meta.scheduledCallId}-maybe`}
+              >
+                <HelpCircle className="w-3 h-3" /> Maybe
+              </button>
+              <a
+                href={`/api/scheduled-calls/${meta.scheduledCallId}/ics`}
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-semibold uppercase tracking-wider border border-[hsl(232_40%_25%)] bg-[hsl(232_50%_18%)] hover:bg-[hsl(232_50%_22%)] text-white ml-auto"
+                data-testid={`link-card-ics-${meta.scheduledCallId}`}
+              >
+                <CalendarIcon className="w-3 h-3" /> .ics
+              </a>
+            </div>
+          )}
+        </div>
+      </div>
+      <div className="text-[10px] text-[hsl(0_0%_45%)] mt-2 text-right font-mono uppercase tracking-wider">
+        {fmtTime(createdAt)}
+      </div>
+    </motion.div>
+  );
 }

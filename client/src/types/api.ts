@@ -108,7 +108,7 @@ export interface ApiMessage {
   meta?: ApiSystemMessageMeta | null;
 }
 
-export type SystemMessageKind =
+export type WorkObjectSystemMessageKind =
   | "work_object.created"
   | "work_object.linked"
   | "work_object.unlinked"
@@ -118,15 +118,40 @@ export type SystemMessageKind =
   | "work_object.closed"
   | "work_object.reopened";
 
-export interface ApiSystemMessageMeta {
+export type ScheduledCallSystemMessageKind =
+  | "scheduled_call.created"
+  | "scheduled_call.updated"
+  | "scheduled_call.cancelled"
+  | "scheduled_call.started";
+
+export type SystemMessageKind =
+  | WorkObjectSystemMessageKind
+  | ScheduledCallSystemMessageKind;
+
+export interface ApiWorkObjectSystemMessageMeta {
   system: true;
-  kind: SystemMessageKind;
+  kind: WorkObjectSystemMessageKind;
   workObjectId: number;
   ref: string;
   woKind: "job_site" | "work_project" | "change_order" | "safety_incident";
   woTitle: string;
   fields?: Record<string, { from?: unknown; to?: unknown }>;
 }
+
+export interface ApiScheduledCallSystemMessageMeta {
+  system: true;
+  kind: ScheduledCallSystemMessageKind;
+  scheduledCallId: number;
+  callTitle: string;
+  callKind: "voice" | "video";
+  startAt: number;
+  endAt: number;
+  organizerId: number;
+}
+
+export type ApiSystemMessageMeta =
+  | ApiWorkObjectSystemMessageMeta
+  | ApiScheduledCallSystemMessageMeta;
 
 export interface ApiRecording {
   id: number;

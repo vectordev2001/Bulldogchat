@@ -78,6 +78,12 @@ interface CallCtxValue {
     /** Raw phone numbers (E.164 or US digits) to phone-bridge into the
      *  room. SIP From is branded as "Bulldog · #channel". */
     phoneNumbers?: string[];
+    /** Chat user IDs to ALSO send an SMS join-link to (e.g. hybrid: ring
+     *  cell via SIP and text them a video-join URL). Recipient SSO-logs
+     *  in and joins the same LiveKit room from the link. */
+    smsInviteeIds?: number[];
+    /** Raw phone numbers to send an SMS join-link to (no SIP dial). */
+    smsPhoneNumbers?: string[];
     kind?: "voice" | "video";
   }): Promise<void>;
   acceptIncoming(): Promise<void>;
@@ -96,6 +102,13 @@ interface CallCtxValue {
     phoneInviteeIds?: number[];
     phoneNumbers?: string[];
   }): Promise<{ invitedUserIds: number[]; dialedUserIds: number[]; dialedPhones: string[]; dialWarnings: string[] }>;
+  /**
+   * Join a call via an SMS-link join token. Posts to /api/call-join/redeem
+   * which mints a LiveKit token for the signed-in user (NOT the token's
+   * userId). On success the call becomes active and the LiveKit overlay
+   * mounts. Used by the /call-join SPA route when someone taps an SMS link.
+   */
+  joinByToken(token: string): Promise<void>;
 }
 
 const CallCtx = createContext<CallCtxValue | null>(null);
@@ -274,12 +287,13 @@ export function CallProvider({ children }: { children: ReactNode }) {
   // joins the LiveKit room immediately so they don't sit on a "calling…"
   // screen while waiting for the first accept.
   const startGroupCall = useCallback<CallCtxValue["startGroupCall"]>(async ({
-    channelId, channelName, inviteeIds, phoneInviteeIds = [], phoneNumbers = [], kind = "voice",
+    channelId, channelName, inviteeIds, phoneInviteeIds = [], phoneNumbers = [],
+    smsInviteeIds = [], smsPhoneNumbers = [], kind = "voice",
   }) => {
     if (outgoing || active) return;
     const resp = await apiRequest<StartGroupCallResponse>(
       "POST", `/api/channels/${channelId}/group-call/start`,
-      { inviteeIds, phoneInviteeIds, phoneNumbers, kind },
+      { inviteeIds, phoneInviteeIds, phoneNumbers, smsInviteeIds, smsPhoneNumbers, kind },
     );
     setActive({
       // No single callId for a group call — we use 0 as a sentinel and
@@ -363,11 +377,35 @@ export function CallProvider({ children }: { children: ReactNode }) {
 
   const clearLastEnded = useCallback(() => setLastEnded(null), []);
 
+  const joinByToken = useCallback<CallCtxValue["joinByToken"]>(async (token) => {
+    if (active || outgoing) return;
+    const resp = await apiRequest<{
+      roomName: string;
+      token: string;
+      ws_url: string;
+      callerName: string;
+      kind: "voice" | "video";
+      userName: string;
+      userHue: number;
+    }>("POST", "/api/call-join/redeem", { token });
+    setActive({
+      callId: 0,
+      roomName: resp.roomName,
+      token: resp.token,
+      wsUrl: resp.ws_url,
+      otherName: resp.callerName,
+      otherHue: 215,
+      kind: resp.kind,
+      iAmCaller: false,
+      active: true,
+    });
+  }, [active, outgoing]);
+
   return (
     <CallCtx.Provider value={{
       incoming, outgoing, active, lastEnded,
       startCall, startGroupCall, acceptIncoming, declineIncoming, endActive, cancelOutgoing, clearLastEnded,
-      inviteToActiveCall,
+      inviteToActiveCall, joinByToken,
     }}>
       {children}
     </CallCtx.Provider>

@@ -10,6 +10,7 @@ import Login from "@/pages/Login";
 import Signup from "@/pages/Signup";
 import AcceptInvite from "@/pages/AcceptInvite";
 import AdminPanel from "@/pages/AdminPanel";
+import CallJoin from "@/pages/CallJoin";
 import { AuthProvider, useAuth } from "@/lib/auth";
 import { PresenceProvider } from "@/hooks/use-presence";
 import { CallProvider } from "@/lib/CallContext";
@@ -62,6 +63,7 @@ function AppRouter() {
       <Route path="/signup" component={Signup} />
       <Route path="/accept-invite/:token" component={AcceptInvite} />
       <Route path="/admin">{() => <ProtectedRoute><AdminPanel /></ProtectedRoute>}</Route>
+      <Route path="/call-join/:token">{() => <ProtectedRoute><CallJoin /></ProtectedRoute>}</Route>
       <Route path="/">{() => <ProtectedRoute><Home /></ProtectedRoute>}</Route>
       <Route component={NotFound} />
     </Switch>
