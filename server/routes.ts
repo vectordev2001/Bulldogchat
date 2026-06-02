@@ -17,6 +17,8 @@ import { registerWorkObjectRoutes } from "./routes-work-objects";
 import { registerIntegrationRoutes } from "./routes-integrations";
 import { bulldogSsoBridge } from "./bulldog-sso";
 import { dialPhoneIntoRoom, sipConfigured } from "./sip";
+import { signCallJoinToken, verifyCallJoinToken, sendSms, smsAvailable, buildCallInviteSmsBody } from "./sms";
+import { registerScheduledCallRoutes, startReminderLoop } from "./scheduled-calls";
 
 const APP_VERSION = "1.0.0";
 
@@ -102,10 +104,95 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
   registerV2Routes(app);
   registerWorkObjectRoutes(app);
   registerIntegrationRoutes(app);
+  registerScheduledCallRoutes(app);
+  // Kick off the in-process reminder loop. Cheap (60s tick), idempotent.
+  startReminderLoop();
 
   // Health
   app.get("/api/health", (_req, res) => {
     res.json({ ok: true, version: APP_VERSION, db: "connected", livekit: livekitConfigured(), push: pushConfigured() });
+  });
+
+  // ── CALL JOIN LINK (SMS deep-link) ──
+  // SMS contains: https://chat.bulldogops.com/call-join?t=<JWT>
+  //
+  // Flow:
+  //   1. User taps the SMS link. Server checks for a bulldog_access cookie.
+  //   2. If signed-in, the SSO bridge will mint the chat JWT downstream;
+  //      we redirect to the SPA hash route /#/call-join/<t> which calls
+  //      /api/call-join/redeem to get a LiveKit token and joins.
+  //   3. If NOT signed-in, we bounce to auth.bulldogops.com/?next=<url>
+  //      which loops back here after login.
+  //
+  // The JWT carries: userId (the invitee), roomName, callerName, kind.
+  // We force SSO login (per Josh's spec) so the user has a real chat
+  // identity before joining — the token only identifies WHICH user we
+  // expect, not WHO is on the device.
+  app.get("/call-join", (req, res) => {
+    const t = String(req.query.t || "");
+    if (!t) return res.status(400).send("Missing token");
+    // Quick validation: reject obviously-bad tokens before bouncing through
+    // auth so we don't waste a login round-trip.
+    const payload = verifyCallJoinToken(t);
+    if (!payload) return res.status(401).send("This call link has expired. Ask the organizer to resend.");
+    // Detect an existing chat session OR bulldog-auth session via cookies.
+    const cookieHeader = req.headers.cookie || "";
+    const hasAuthCookie =
+      /(?:^|;\s*)bulldog_access=/.test(cookieHeader) ||
+      new RegExp(`(?:^|;\\s*)${AUTH_COOKIE}=`).test(cookieHeader);
+    if (hasAuthCookie) {
+      // SSO bridge will resolve the chat JWT on the way to the SPA. Hash
+      // route survives any further redirects the SPA does.
+      return res.redirect(`/#/call-join/${encodeURIComponent(t)}`);
+    }
+    // Bounce through auth, asking auth to send us back here.
+    const back = `${process.env.CHAT_BASE_URL || "https://chat.bulldogops.com"}/call-join?t=${encodeURIComponent(t)}`;
+    const authBase = process.env.BULLDOG_AUTH_URL || "https://auth.bulldogops.com";
+    return res.redirect(`${authBase}/?next=${encodeURIComponent(back)}`);
+  });
+
+  // POST /api/call-join/redeem: client posts the SMS token here AFTER
+  // they're logged in via SSO. We confirm the logged-in chat user matches
+  // the token's userId, then mint a LiveKit token for the room. If the
+  // device-side user is different from the token's userId (e.g. shared
+  // phone, organizer forwarded the link), we accept it but tag the
+  // participant identity as the actual signed-in user so accountability
+  // is preserved.
+  app.post("/api/call-join/redeem", requireAuth, async (req, res) => {
+    const u = (req as AuthedRequest).user;
+    const t = String((req.body ?? {}).token || "");
+    if (!t) return res.status(400).json({ message: "token required" });
+    const payload = verifyCallJoinToken(t);
+    if (!payload) return res.status(401).json({ message: "Invalid or expired join link" });
+    if (!livekitConfigured()) {
+      return res.status(503).json({ message: "Calling unavailable: LiveKit not configured" });
+    }
+    const me = storage.getUser(u.id);
+    if (!me || me.deactivated) return res.status(403).json({ message: "User inactive" });
+    try {
+      // Always use the SIGNED-IN user's identity for the LiveKit join —
+      // never the token's userId. The token only authorizes 'this room
+      // is open to this person'; the actual identity must reflect who
+      // is on the device.
+      const lkToken = await generateLivekitToken({
+        userId: me.id,
+        userName: me.name,
+        roomName: payload.roomName,
+        canPublish: true,
+      });
+      res.json({
+        roomName: payload.roomName,
+        token: lkToken,
+        ws_url: process.env.LIVEKIT_WS_URL,
+        callerName: payload.callerName,
+        kind: payload.kind,
+        userName: me.name,
+        userHue: me.hue,
+      });
+    } catch (e: any) {
+      console.error("[call-join/redeem] failed:", e);
+      res.status(500).json({ message: "Failed to issue call token" });
+    }
   });
 
   // ── AUTH ──
@@ -1244,6 +1331,11 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     // user's saved cell number instead of an in-app push. We look up the
     // phone server-side so the client never has to read or transmit it.
     const rawPhoneInvitees: unknown = req.body?.phoneInviteeIds;
+    // smsInviteeIds: chat users who receive a join-link SMS (NOT a SIP dial).
+    // Recipient taps link, SSO logs in, joins LiveKit room as themselves.
+    const rawSmsInvitees: unknown = req.body?.smsInviteeIds;
+    // smsPhoneNumbers: external raw phone numbers that receive join-link SMS.
+    const rawSmsPhones: unknown = req.body?.smsPhoneNumbers;
     const inviteeIds: number[] = Array.isArray(rawInvitees)
       ? Array.from(
           new Set(
@@ -1259,6 +1351,30 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
             (rawPhoneInvitees as unknown[])
               .map((x) => Number(x))
               .filter((n) => Number.isFinite(n) && n > 0 && n !== u.id),
+          ),
+        )
+      : [];
+    const smsInviteeIds: number[] = Array.isArray(rawSmsInvitees)
+      ? Array.from(
+          new Set(
+            (rawSmsInvitees as unknown[])
+              .map((x) => Number(x))
+              .filter((n) => Number.isFinite(n) && n > 0 && n !== u.id),
+          ),
+        )
+      : [];
+    const smsPhoneNumbers: string[] = Array.isArray(rawSmsPhones)
+      ? Array.from(
+          new Set(
+            (rawSmsPhones as unknown[])
+              .map((x) => String(x).trim())
+              .filter((s) => s.length > 0)
+              .map((raw) =>
+                raw.startsWith("+")
+                  ? "+" + raw.slice(1).replace(/\D/g, "")
+                  : "+1" + raw.replace(/\D/g, ""),
+              )
+              .filter((p) => /^\+\d{8,15}$/.test(p)),
           ),
         )
       : [];
@@ -1279,8 +1395,14 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
           ),
         )
       : [];
-    if (inviteeIds.length === 0 && phoneNumbers.length === 0 && phoneInviteeIds.length === 0) {
-      return res.status(400).json({ message: "inviteeIds[], phoneInviteeIds[], or phoneNumbers[] required" });
+    if (
+      inviteeIds.length === 0 &&
+      phoneNumbers.length === 0 &&
+      phoneInviteeIds.length === 0 &&
+      smsInviteeIds.length === 0 &&
+      smsPhoneNumbers.length === 0
+    ) {
+      return res.status(400).json({ message: "inviteeIds[], phoneInviteeIds[], smsInviteeIds[], phoneNumbers[], or smsPhoneNumbers[] required" });
     }
 
     const access = userCanAccessChannel(u.id, u.orgId, channelId);
@@ -1428,6 +1550,85 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
       }
     }
 
+    // ─── SMS-link invites (hybrid: ring cell + send video join URL) ───────
+    // For each smsInviteeId, look up phone, mint a join token, send SMS.
+    // For each smsPhoneNumber, mint a guest token under the organizer's
+    // namespace (no chat user known yet — they'll resolve via SSO login).
+    const smsResults: Array<{ userId?: number; phone: string; ok: boolean; error?: string }> = [];
+    if (smsAvailable() && (smsInviteeIds.length > 0 || smsPhoneNumbers.length > 0)) {
+      const channelLabelForSms = access.channel?.name ? `#${access.channel.name}` : "call";
+      // Resolve smsInviteeIds -> {userId, name, phone}
+      const smsInviteeRecords = smsInviteeIds
+        .map((id) => ({ id, user: storage.getUser(id) }))
+        .filter((x) => x.user && x.user.orgId === u.orgId && !x.user.deactivated)
+        .map((x) => ({
+          id: x.id,
+          name: x.user!.name,
+          phone: (x.user as { phone?: string | null }).phone ?? null,
+        }));
+      for (const rec of smsInviteeRecords) {
+        if (!rec.phone) {
+          smsResults.push({ userId: rec.id, phone: "", ok: false, error: "no phone on file" });
+          continue;
+        }
+        // Normalize phone to E.164
+        const e164 = rec.phone.startsWith("+")
+          ? "+" + rec.phone.slice(1).replace(/\D/g, "")
+          : "+1" + rec.phone.replace(/\D/g, "");
+        if (!/^\+\d{8,15}$/.test(e164)) {
+          smsResults.push({ userId: rec.id, phone: rec.phone, ok: false, error: "invalid phone" });
+          continue;
+        }
+        const joinToken = signCallJoinToken({
+          userId: rec.id,
+          roomName: groupRoomName,
+          callerName: u.name,
+          kind,
+        });
+        const baseUrl = process.env.CHAT_BASE_URL || "https://chat.bulldogops.com";
+        const joinUrl = `${baseUrl}/call-join?t=${encodeURIComponent(joinToken)}`;
+        const body = buildCallInviteSmsBody({
+          callerName: u.name,
+          channelLabel: channelLabelForSms,
+          joinUrl,
+          kind,
+        });
+        try {
+          const r = await sendSms({ to: e164, body });
+          smsResults.push({ userId: rec.id, phone: e164, ok: r.ok, error: r.ok ? undefined : r.error });
+        } catch (err) {
+          const msg = (err as { message?: string })?.message ?? "send failed";
+          smsResults.push({ userId: rec.id, phone: e164, ok: false, error: msg });
+        }
+      }
+      // External phone numbers — no userId; bound to organizer for guest-ish access.
+      for (const phone of smsPhoneNumbers) {
+        const joinToken = signCallJoinToken({
+          userId: u.id,
+          roomName: groupRoomName,
+          callerName: u.name,
+          kind,
+        });
+        const baseUrl = process.env.CHAT_BASE_URL || "https://chat.bulldogops.com";
+        const joinUrl = `${baseUrl}/call-join?t=${encodeURIComponent(joinToken)}`;
+        const body = buildCallInviteSmsBody({
+          callerName: u.name,
+          channelLabel: channelLabelForSms,
+          joinUrl,
+          kind,
+        });
+        try {
+          const r = await sendSms({ to: phone, body });
+          smsResults.push({ phone, ok: r.ok, error: r.ok ? undefined : r.error });
+        } catch (err) {
+          const msg = (err as { message?: string })?.message ?? "send failed";
+          smsResults.push({ phone, ok: false, error: msg });
+        }
+      }
+    } else if (smsInviteeIds.length > 0 || smsPhoneNumbers.length > 0) {
+      dialWarnings.push("SMS not configured — join-link invites were not sent");
+    }
+
     // Mint the caller's token for the shared room and return.
     const token = await generateLivekitToken({
       userId: u.id, userName: u.name, roomName: groupRoomName, canPublish: true,
@@ -1440,6 +1641,7 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
       dialedUserIds,
       dialedPhones,
       dialWarnings,
+      smsResults,
       kind,
     });
   });

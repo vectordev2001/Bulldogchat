@@ -10,13 +10,15 @@
 
 import { storage } from "./storage";
 import { emitMessageNew } from "./events";
-import type { SystemMessageMeta, WorkObject, SystemMessageKind } from "@shared/schema";
+import type { WorkObjectSystemMessageMeta, WorkObject } from "@shared/schema";
+
+type WorkObjectSystemMessageKind = WorkObjectSystemMessageMeta["kind"];
 
 interface PostSystemMessageInput {
   channelId: number;
   actorUserId: number | null;
   workObject: Pick<WorkObject, "id" | "ref" | "kind" | "title">;
-  kind: SystemMessageKind;
+  kind: WorkObjectSystemMessageKind;
   content: string;
   fields?: Record<string, { from?: unknown; to?: unknown }>;
   orgId: number; // for event fan-out
@@ -33,7 +35,7 @@ function fallbackUserId(_orgId: number, actorUserId: number | null, workObject: 
 }
 
 export function postWorkObjectSystemMessage(input: PostSystemMessageInput) {
-  const meta: SystemMessageMeta = {
+  const meta: WorkObjectSystemMessageMeta = {
     system: true,
     kind: input.kind,
     workObjectId: input.workObject.id,
@@ -88,7 +90,7 @@ export function broadcastWorkObjectEvent(input: {
   workObjectId: number;
   actorUserId: number | null;
   orgId: number;
-  kind: SystemMessageKind;
+  kind: WorkObjectSystemMessageKind;
   content: string;
   fields?: Record<string, { from?: unknown; to?: unknown }>;
   // Optional: restrict to a single channel (e.g. for link/unlink events).

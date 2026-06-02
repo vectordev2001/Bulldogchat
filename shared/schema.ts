@@ -174,17 +174,42 @@ export const systemMessageKinds = [
   "work_object.title_changed",
   "work_object.closed",
   "work_object.reopened",
+  // Phase 1.9.1: scheduled-call lifecycle. These render as an in-channel
+  // RSVP card (frontend looks at meta.scheduledCallId).
+  "scheduled_call.created",
+  "scheduled_call.updated",
+  "scheduled_call.cancelled",
+  "scheduled_call.started",
 ] as const;
 export type SystemMessageKind = typeof systemMessageKinds[number];
-export interface SystemMessageMeta {
+// Work-object system messages keep their original shape. Scheduled-call
+// system messages use a different field set. The frontend discriminates
+// on `kind` to pick the renderer.
+export interface WorkObjectSystemMessageMeta {
   system: true;
-  kind: SystemMessageKind;
+  kind: "work_object.created" | "work_object.linked" | "work_object.unlinked"
+    | "work_object.status_changed" | "work_object.owner_changed"
+    | "work_object.title_changed" | "work_object.closed" | "work_object.reopened";
   workObjectId: number;
   ref: string;
   woKind: WorkObjectKind;
   woTitle: string;
   fields?: Record<string, { from?: unknown; to?: unknown }>;
 }
+export interface ScheduledCallSystemMessageMeta {
+  system: true;
+  kind: "scheduled_call.created" | "scheduled_call.updated"
+    | "scheduled_call.cancelled" | "scheduled_call.started";
+  scheduledCallId: number;
+  title: string;
+  startAt: number;          // unix ms
+  endAt: number;            // unix ms
+  callKind: "voice" | "video";
+  organizerId: number;
+  inviteeCount: number;
+  joinUrl: string;          // absolute, already token-bearing for /call-join
+}
+export type SystemMessageMeta = WorkObjectSystemMessageMeta | ScheduledCallSystemMessageMeta;
 export const insertMessageSchema = createInsertSchema(messages).omit({
   id: true, createdAt: true, editedAt: true, isPinned: true, userId: true,
 }).extend({
@@ -324,6 +349,86 @@ export const directCalls = sqliteTable("direct_calls", {
   endedAt: integer("ended_at", { mode: "timestamp" }),
 });
 export type DirectCall = typeof directCalls.$inferSelect;
+
+/* ─────────────── SCHEDULED CALLS (Phase 1.9.1) ────────────── */
+// A scheduled_call is a future Bulldog call (voice or video) with an
+// organizer, a title, a start/end window, and a set of invitees.
+// Invitees are either chat users (by id) or external phone numbers
+// (free-form), so a foreman can schedule a call with a customer who
+// isn't in the app yet. We materialize one row per invitee in
+// scheduled_call_invitees so RSVP state (Y/N/M, code, channel) is
+// addressable per-person without rewriting a JSON blob on every reply.
+export const scheduledCallKinds = ["voice", "video"] as const;
+export type ScheduledCallKind = typeof scheduledCallKinds[number];
+
+export const scheduledCallStatuses = ["scheduled", "started", "ended", "cancelled"] as const;
+export type ScheduledCallStatus = typeof scheduledCallStatuses[number];
+
+export const scheduledCalls = sqliteTable("scheduled_calls", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  orgId: integer("org_id").notNull().references(() => organizations.id),
+  // Optional channel binding — when set, RSVP cards and join-link posts
+  // surface in that channel. A standalone scheduled call (no channel)
+  // works too; it just only shows up in the organizer's UI + invitee SMS.
+  channelId: integer("channel_id").references(() => channels.id),
+  organizerId: integer("organizer_id").notNull().references(() => users.id),
+  title: text("title").notNull(),
+  // Optional free-form notes shown in the calendar invite body.
+  notes: text("notes"),
+  kind: text("kind", { enum: scheduledCallKinds }).notNull().default("video"),
+  startAt: integer("start_at", { mode: "timestamp" }).notNull(),
+  endAt: integer("end_at", { mode: "timestamp" }).notNull(),
+  // LiveKit room name; pre-allocated at create time as `sched-<id>-<ts>`
+  // so join links are stable even before the call starts.
+  roomName: text("room_name").notNull(),
+  status: text("status", { enum: scheduledCallStatuses }).notNull().default("scheduled"),
+  // Reminder bookkeeping — the in-process scheduler sweeps this and
+  // skips rows where the reminder already fired.
+  reminderSentAt: integer("reminder_sent_at", { mode: "timestamp" }),
+  // ICS sequence number; bump on each edit so calendar clients update
+  // the existing event rather than creating a duplicate.
+  icsSequence: integer("ics_sequence").notNull().default(0),
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
+  updatedAt: integer("updated_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
+});
+export type ScheduledCall = typeof scheduledCalls.$inferSelect;
+
+export const rsvpResponses = ["pending", "yes", "no", "maybe"] as const;
+export type RsvpResponse = typeof rsvpResponses[number];
+
+export const scheduledCallInvitees = sqliteTable("scheduled_call_invitees", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  scheduledCallId: integer("scheduled_call_id").notNull().references(() => scheduledCalls.id),
+  // Exactly one of (userId, externalPhone, externalEmail) is set. The
+  // dispatch loop fans out via whichever channel applies: in-app +
+  // SMS for users with phones, SMS-only for external phone-only invitees,
+  // email-only for external email-only invitees.
+  userId: integer("user_id").references(() => users.id),
+  externalPhone: text("external_phone"),         // E.164
+  externalEmail: text("external_email"),
+  // Short code used in SMS RSVP replies ("#A4F9 Y"). Stable per invitee.
+  rsvpCode: text("rsvp_code").notNull(),
+  response: text("response", { enum: rsvpResponses }).notNull().default("pending"),
+  respondedAt: integer("responded_at", { mode: "timestamp" }),
+  // "sms" | "in_app" | "email" | "web" — how the RSVP was captured.
+  responseChannel: text("response_channel"),
+  // Track that we've actually sent the invite SMS / email so we don't
+  // resend on every server restart.
+  inviteSentAt: integer("invite_sent_at", { mode: "timestamp" }),
+  inviteError: text("invite_error"),
+  reminderSentAt: integer("reminder_sent_at", { mode: "timestamp" }),
+});
+export type ScheduledCallInvitee = typeof scheduledCallInvitees.$inferSelect;
+
+export const insertScheduledCallSchema = createInsertSchema(scheduledCalls).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+  reminderSentAt: true,
+  icsSequence: true,
+  status: true,
+  roomName: true,
+});
 
 /* ─────────────────── WORK OBJECTS ─────────────────── */
 // A work_object is a domain entity (job_site, work_project, change_order,

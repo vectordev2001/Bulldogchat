@@ -1,0 +1,280 @@
+/**
+ * Twilio SMS helper for Bulldog Chat.
+ *
+ * Uses Twilio's REST API directly (no SDK) to keep the dependency
+ * footprint small. Required env:
+ *   TWILIO_ACCOUNT_SID      — account SID
+ *   TWILIO_AUTH_TOKEN       — account auth token
+ *   TWILIO_FROM_NUMBER      — E.164 sender (e.g. +15551234567); must be SMS-capable
+ *
+ * Best-effort: failures are logged and surfaced to the caller as warnings
+ * but never throw past the call site. SMS is a nice-to-have alongside the
+ * SIP voice ring.
+ */
+import jwt from "jsonwebtoken";
+
+function smsConfigured(): boolean {
+  return !!(
+    process.env.TWILIO_ACCOUNT_SID &&
+    process.env.TWILIO_AUTH_TOKEN &&
+    process.env.TWILIO_FROM_NUMBER
+  );
+}
+
+export function smsAvailable(): boolean {
+  return smsConfigured();
+}
+
+interface SendSmsParams {
+  to: string;            // E.164
+  body: string;          // <= 1600 chars; Twilio segments automatically
+}
+
+interface SendSmsResult {
+  ok: boolean;
+  sid?: string;
+  error?: string;
+}
+
+export async function sendSms({ to, body }: SendSmsParams): Promise<SendSmsResult> {
+  if (!smsConfigured()) {
+    return { ok: false, error: "SMS not configured (missing TWILIO_ACCOUNT_SID/AUTH_TOKEN/FROM_NUMBER)" };
+  }
+  const accountSid = process.env.TWILIO_ACCOUNT_SID!;
+  const authToken = process.env.TWILIO_AUTH_TOKEN!;
+  const from = process.env.TWILIO_FROM_NUMBER!;
+  const url = `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`;
+  const form = new URLSearchParams();
+  form.set("To", to);
+  form.set("From", from);
+  form.set("Body", body);
+  const basic = Buffer.from(`${accountSid}:${authToken}`).toString("base64");
+  try {
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Authorization": `Basic ${basic}`,
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: form.toString(),
+    });
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => "");
+      return { ok: false, error: `Twilio ${resp.status}: ${text.slice(0, 200)}` };
+    }
+    const data = (await resp.json()) as { sid?: string };
+    return { ok: true, sid: data.sid };
+  } catch (e: any) {
+    return { ok: false, error: e?.message ?? "unknown" };
+  }
+}
+
+/**
+ * Mint a short-lived JWT that grants the bearer permission to join a
+ * specific LiveKit room as a specific user. 60 minutes is the maximum
+ * useful window — anything longer is a security smell. We sign with the
+ * chat JWT_SECRET so the redeem endpoint can verify without sharing keys.
+ */
+export interface CallJoinTokenPayload {
+  userId: number;
+  roomName: string;
+  callerName: string;
+  kind: "voice" | "video";
+}
+
+export function signCallJoinToken(p: CallJoinTokenPayload): string {
+  const secret = process.env.JWT_SECRET || "dev-secret";
+  return jwt.sign(
+    {
+      cj: 1, // type marker so we can distinguish from regular vc_token
+      uid: p.userId,
+      room: p.roomName,
+      cn: p.callerName,
+      k: p.kind,
+    },
+    secret,
+    { expiresIn: "60m" },
+  );
+}
+
+export function verifyCallJoinToken(token: string): CallJoinTokenPayload | null {
+  try {
+    const secret = process.env.JWT_SECRET || "dev-secret";
+    const payload = jwt.verify(token, secret) as {
+      cj?: number;
+      uid?: number;
+      room?: string;
+      cn?: string;
+      k?: "voice" | "video";
+    };
+    if (payload.cj !== 1 || !payload.uid || !payload.room) return null;
+    return {
+      userId: payload.uid,
+      roomName: payload.room,
+      callerName: payload.cn || "Someone",
+      kind: payload.k === "video" ? "video" : "voice",
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Build the SMS body for an immediate call invite. Kept terse — most
+ * carriers split at 160 chars and we want a single segment when possible.
+ * The link is the join-token URL which auto-redirects into the LiveKit
+ * room (after SSO login).
+ */
+export function buildCallInviteSmsBody(p: {
+  callerName: string;
+  channelLabel: string;
+  joinUrl: string;
+  kind: "voice" | "video";
+}): string {
+  const verb = p.kind === "video" ? "video call" : "call";
+  return `${p.callerName} is starting a ${verb} on Bulldog (${p.channelLabel}). Tap to join: ${p.joinUrl}`;
+}
+
+/**
+ * Build the SMS body for a scheduled-call invite. Includes the time in
+ * the recipient's-likely timezone (we render as 'h:mm a TZ' — we don't
+ * know their TZ for sure, so we pass the organizer's). RSVP via reply
+ * Y / N / M (maybe), or tap the link to open the in-app RSVP card.
+ */
+export function buildScheduledCallSmsBody(p: {
+  organizerName: string;
+  title: string;
+  whenLabel: string;       // pre-formatted, e.g. "Tue Jun 2 at 3:00 PM PDT"
+  joinUrl: string;
+  rsvpCode: string;        // short code, e.g. "#A4F9" — user can reply with this + Y/N/M
+}): string {
+  return `${p.organizerName} invited you to a Bulldog call: "${p.title}" on ${p.whenLabel}. RSVP: reply ${p.rsvpCode} Y, ${p.rsvpCode} N, or ${p.rsvpCode} M. Details: ${p.joinUrl}`;
+}
+
+/**
+ * Build the reminder SMS sent ~5 min before a scheduled call. Short and
+ * actionable.
+ */
+export function buildReminderSmsBody(p: {
+  title: string;
+  minutesUntilStart: number;
+  joinUrl: string;
+}): string {
+  const m = Math.max(1, Math.round(p.minutesUntilStart));
+  return `Reminder: "${p.title}" starts in ${m} min on Bulldog. Tap to join: ${p.joinUrl}`;
+}
+
+/**
+ * Parse an inbound SMS body for an RSVP. Twilio webhook hands us the raw
+ * Body field; users may reply in many shapes:
+ *   "#A4F9 Y"  "#a4f9 yes"  "A4F9 maybe"  "yes #A4F9"  etc.
+ * We extract the 4-hex RSVP code and a Y/N/M response. Returns null if we
+ * can't confidently parse both pieces.
+ */
+export function parseRsvpSms(body: string): { code: string; response: "yes" | "no" | "maybe" } | null {
+  if (!body) return null;
+  const codeMatch = body.match(/#?([A-Za-z0-9]{4,8})/);
+  if (!codeMatch) return null;
+  const code = codeMatch[1].toUpperCase();
+  const low = body.toLowerCase();
+  // Order matters: "maybe" before "m" before "yes" so we don't false-match.
+  let response: "yes" | "no" | "maybe" | null = null;
+  if (/\b(yes|y|going|in|attending|accept|ok|okay)\b/.test(low)) response = "yes";
+  else if (/\b(no|n|out|decline|cannot|can't|cant|skip)\b/.test(low)) response = "no";
+  else if (/\b(maybe|m|tentative|tent|unsure)\b/.test(low)) response = "maybe";
+  if (!response) return null;
+  return { code, response };
+}
+
+/**
+ * Generate a short RSVP code from a scheduled-call id + a salt. Format:
+ * "A4F9" (4 hex). Collision risk is acceptable: we scope lookup by phone
+ * number + a 7-day window, so even a 4-hex collision is recoverable.
+ */
+export function generateRsvpCode(scheduledCallId: number): string {
+  const seed = `${scheduledCallId}:${process.env.JWT_SECRET || "dev"}`;
+  let hash = 0;
+  for (let i = 0; i < seed.length; i++) {
+    hash = ((hash << 5) - hash + seed.charCodeAt(i)) | 0;
+  }
+  // 4-hex uppercase, padded.
+  const hex = (Math.abs(hash) % 0xffff).toString(16).toUpperCase().padStart(4, "0");
+  return hex;
+}
+
+/**
+ * Twilio signature verification for inbound webhooks. Twilio signs each
+ * request with HMAC-SHA1 over the full URL + sorted POST params, using
+ * the account auth token. We use this to verify the inbound SMS webhook
+ * isn't spoofed. Returns true on valid signature OR when no auth token
+ * is configured (dev mode).
+ */
+export function verifyTwilioSignature(p: {
+  signature: string | undefined;
+  url: string;
+  params: Record<string, string>;
+}): boolean {
+  const authToken = process.env.TWILIO_AUTH_TOKEN;
+  if (!authToken) return true; // dev mode, no verification
+  if (!p.signature) return false;
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const crypto = require("crypto") as typeof import("crypto");
+  const sortedKeys = Object.keys(p.params).sort();
+  let data = p.url;
+  for (const k of sortedKeys) data += k + p.params[k];
+  const expected = crypto.createHmac("sha1", authToken).update(data).digest("base64");
+  return expected === p.signature;
+}
+
+/**
+ * Build a minimal iCalendar (.ics) string for a scheduled call. Designed
+ * to be a single .ics attachment that imports cleanly into Outlook,
+ * Google Calendar, and Apple Calendar.
+ */
+export function buildIcsForScheduledCall(p: {
+  uid: string;            // stable across invites; "<id>@bulldogops.com"
+  title: string;
+  description: string;    // include join URL in the body
+  startUtc: Date;
+  endUtc: Date;
+  organizerEmail: string;
+  organizerName: string;
+  attendeeEmails: string[];
+  joinUrl: string;
+  location?: string;
+  sequence?: number;      // bump on updates; default 0
+  method?: "REQUEST" | "CANCEL";
+}): string {
+  const fmt = (d: Date): string =>
+    d.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
+  const esc = (s: string): string =>
+    s.replace(/\\/g, "\\\\").replace(/;/g, "\\;").replace(/,/g, "\\,").replace(/\n/g, "\\n");
+  const lines = [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "PRODID:-//Bulldog Ops//Bulldog Chat//EN",
+    `METHOD:${p.method || "REQUEST"}`,
+    "CALSCALE:GREGORIAN",
+    "BEGIN:VEVENT",
+    `UID:${p.uid}`,
+    `DTSTAMP:${fmt(new Date())}`,
+    `DTSTART:${fmt(p.startUtc)}`,
+    `DTEND:${fmt(p.endUtc)}`,
+    `SUMMARY:${esc(p.title)}`,
+    `DESCRIPTION:${esc(p.description)}`,
+    p.location ? `LOCATION:${esc(p.location)}` : `LOCATION:${esc(p.joinUrl)}`,
+    `URL:${p.joinUrl}`,
+    `ORGANIZER;CN=${esc(p.organizerName)}:mailto:${p.organizerEmail}`,
+    ...p.attendeeEmails.map(
+      (e) => `ATTENDEE;CUTYPE=INDIVIDUAL;ROLE=REQ-PARTICIPANT;PARTSTAT=NEEDS-ACTION;RSVP=TRUE:mailto:${e}`,
+    ),
+    `SEQUENCE:${p.sequence ?? 0}`,
+    "STATUS:CONFIRMED",
+    "TRANSP:OPAQUE",
+    "END:VEVENT",
+    "END:VCALENDAR",
+  ];
+  // RFC5545: lines must be CRLF-delimited and <= 75 octets (we ignore the
+  // 75-octet rule for simplicity — modern parsers tolerate longer lines).
+  return lines.join("\r\n") + "\r\n";
+}

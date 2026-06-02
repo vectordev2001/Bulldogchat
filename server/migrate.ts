@@ -664,4 +664,64 @@ export function runMigrations() {
   } catch (e) {
     console.warn("[migrate] v14 message soft-delete columns skipped:", e);
   }
+
+  // v15: Scheduled calls. Phase 1.9.1 introduces calendar-style call
+  // scheduling with SMS + ICS invites and RSVP tracking. Two tables —
+  // scheduled_calls (one row per meeting) and scheduled_call_invitees
+  // (one row per invitee, carrying RSVP state). Idempotent: skip if
+  // tables already exist.
+  try {
+    const rows = rawDb.prepare(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('scheduled_calls','scheduled_call_invitees')",
+    ).all() as Array<{ name: string }>;
+    const have = new Set(rows.map((r) => r.name));
+    if (!have.has("scheduled_calls")) {
+      rawDb.exec(`
+        CREATE TABLE scheduled_calls (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          org_id INTEGER NOT NULL REFERENCES organizations(id),
+          channel_id INTEGER REFERENCES channels(id),
+          organizer_id INTEGER NOT NULL REFERENCES users(id),
+          title TEXT NOT NULL,
+          notes TEXT,
+          kind TEXT NOT NULL DEFAULT 'video',
+          start_at INTEGER NOT NULL,
+          end_at INTEGER NOT NULL,
+          room_name TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'scheduled',
+          reminder_sent_at INTEGER,
+          ics_sequence INTEGER NOT NULL DEFAULT 0,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        )
+      `);
+      rawDb.exec("CREATE INDEX idx_scheduled_calls_org_start ON scheduled_calls(org_id, start_at)");
+      rawDb.exec("CREATE INDEX idx_scheduled_calls_status_start ON scheduled_calls(status, start_at)");
+      console.log("[migrate] v15 created scheduled_calls table");
+    }
+    if (!have.has("scheduled_call_invitees")) {
+      rawDb.exec(`
+        CREATE TABLE scheduled_call_invitees (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          scheduled_call_id INTEGER NOT NULL REFERENCES scheduled_calls(id),
+          user_id INTEGER REFERENCES users(id),
+          external_phone TEXT,
+          external_email TEXT,
+          rsvp_code TEXT NOT NULL,
+          response TEXT NOT NULL DEFAULT 'pending',
+          responded_at INTEGER,
+          response_channel TEXT,
+          invite_sent_at INTEGER,
+          invite_error TEXT,
+          reminder_sent_at INTEGER
+        )
+      `);
+      rawDb.exec("CREATE INDEX idx_sci_call ON scheduled_call_invitees(scheduled_call_id)");
+      rawDb.exec("CREATE INDEX idx_sci_code ON scheduled_call_invitees(rsvp_code)");
+      rawDb.exec("CREATE INDEX idx_sci_user ON scheduled_call_invitees(user_id)");
+      console.log("[migrate] v15 created scheduled_call_invitees table");
+    }
+  } catch (e) {
+    console.warn("[migrate] v15 scheduled-calls tables skipped:", e);
+  }
 }
