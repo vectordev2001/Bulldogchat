@@ -173,9 +173,55 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
   });
 
   // ── ORG MEMBERS ──
-  app.get("/api/org/members", requireAuth, (req, res) => {
+  // Returns every user in the caller's org. For any member with a null
+  // `phone`, we opportunistically backfill from bulldog-auth using the
+  // caller's own bulldog_access cookie (works because the auth admin API
+  // is gated on admin role and Josh — the main caller — is admin). This
+  // closes the gap where a user's chat row was provisioned before their
+  // phone was set in auth and never re-synced (e.g. John Hotek).
+  app.get("/api/org/members", requireAuth, async (req, res) => {
     const u = (req as AuthedRequest).user;
-    const list = storage.listUsersByOrg(u.orgId).map(sanitize);
+    let list = storage.listUsersByOrg(u.orgId).map(sanitize);
+
+    // Only attempt the backfill if at least one member is missing a phone
+    // AND the caller is an admin (auth's admin API will 403 otherwise).
+    const me = storage.getUser(u.id);
+    const needsBackfill = list.some((m) => !m.phone);
+    if (needsBackfill && me?.role === "admin") {
+      try {
+        // Forward the caller's bulldog-auth cookie verbatim. If they don't
+        // have one (e.g. legacy HS256-only chat login) we silently skip.
+        const cookieHeader = req.headers.cookie || "";
+        const hasAuthCookie = /(?:^|;\s*)bulldog_access=/.test(cookieHeader);
+        if (hasAuthCookie) {
+          const authBase = process.env.BULLDOG_AUTH_URL || "https://auth.bulldogops.com";
+          const resp = await fetch(`${authBase}/api/admin/users`, {
+            headers: { Cookie: cookieHeader },
+          });
+          if (resp.ok) {
+            const authUsers = (await resp.json()) as Array<{ email?: string; phone?: string | null }>;
+            const phoneByEmail = new Map<string, string>();
+            for (const au of authUsers) {
+              if (au.email && au.phone) phoneByEmail.set(au.email.toLowerCase(), au.phone);
+            }
+            // Persist phones into chat DB so subsequent calls don't re-hit auth.
+            for (const m of list) {
+              if (m.phone) continue;
+              const fresh = phoneByEmail.get(m.email.toLowerCase());
+              if (fresh) {
+                try { storage.updateUser(m.id, { phone: fresh }); }
+                catch (e) { console.warn("[org/members] phone backfill update failed:", e); }
+              }
+            }
+            // Re-read so the response includes the freshly-backfilled phones.
+            list = storage.listUsersByOrg(u.orgId).map(sanitize);
+          }
+        }
+      } catch (e) {
+        console.warn("[org/members] phone backfill from auth failed:", e);
+      }
+    }
+
     res.json(list);
   });
 
