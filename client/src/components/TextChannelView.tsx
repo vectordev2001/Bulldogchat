@@ -399,7 +399,15 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers, me
         </AnimatePresence>
       </div>
 
-      <div className="px-4 pb-4 pt-2 shrink-0">
+      {/* Composer. On iOS Safari/PWA the body has safe-area-inset-bottom
+          padding, but mobile Safari's bottom toolbar can still overlap the
+          composer when it shows/hides. We add an additional env-based bottom
+          padding so the message box is never clipped by the home indicator
+          or Safari chrome. */}
+      <div
+        className="px-4 pt-2 shrink-0"
+        style={{ paddingBottom: "max(1rem, env(safe-area-inset-bottom))" }}
+      >
         {pendingAtts.length > 0 && (
           <div className="mb-2 flex flex-wrap gap-2" data-testid="row-pending-attachments">
             {pendingAtts.map((a) => (
