@@ -131,6 +131,8 @@ interface StartGroupCallResponse {
   token: string;
   ws_url: string;
   invitedUserIds: number[];
+  dialWarnings?: string[];
+  smsResults?: Array<{ userId?: number; phone: string; ok: boolean; error?: string }>;
   kind: "voice" | "video";
 }
 
@@ -295,6 +297,29 @@ export function CallProvider({ children }: { children: ReactNode }) {
       "POST", `/api/channels/${channelId}/group-call/start`,
       { inviteeIds, phoneInviteeIds, phoneNumbers, smsInviteeIds, smsPhoneNumbers, kind },
     );
+    // Surface SMS dispatch results so the caller actually knows whether
+    // the join link reached the recipient. Console log + window-level
+    // alert for any failures (better than silent drop — the user reported
+    // "text is not working" because they had no feedback).
+    if (resp.smsResults && resp.smsResults.length > 0) {
+      const failed = resp.smsResults.filter((r) => !r.ok);
+      const succeeded = resp.smsResults.filter((r) => r.ok);
+      // eslint-disable-next-line no-console
+      console.log("[startGroupCall] SMS results:", { succeeded, failed });
+      if (failed.length > 0 && typeof window !== "undefined") {
+        const msg = failed
+          .map((f) => `${f.phone || "unknown"}: ${f.error || "send failed"}`)
+          .join("\n");
+        // Defer so the call UI mounts first, then surface the issue.
+        setTimeout(() => {
+          window.alert(`Couldn't text the video join link to:\n${msg}`);
+        }, 250);
+      }
+    }
+    if (resp.dialWarnings && resp.dialWarnings.length > 0) {
+      // eslint-disable-next-line no-console
+      console.warn("[startGroupCall] dialWarnings:", resp.dialWarnings);
+    }
     setActive({
       // No single callId for a group call — we use 0 as a sentinel and
       // skip /api/calls/:id/end on hangup (per-invitee rows are cleaned

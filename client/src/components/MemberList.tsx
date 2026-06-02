@@ -218,18 +218,18 @@ function MemberRow({
     });
   };
 
-  // "Hybrid" — ring their cell AND text them a video-join link. The
-  // recipient can either pick up the cell (voice via SIP) OR tap the SMS
-  // link to join the same LiveKit room from the app with video. Both paths
-  // converge in the same shared room name.
-  const callHybrid = () => {
+  // "Text video join link" — send the member an SMS with a join URL that
+  // bounces them through SSO into the LiveKit room with video. NO SIP dial
+  // is fired here — this is the SMS-only path, separate from "Call their
+  // cell". The caller still lands in the room and waits for the recipient
+  // to tap the link.
+  const textVideoLink = () => {
     setChooserOpen(false);
     if (isMe || busy || !channelId || !memberPhone) return;
     void startGroupCall({
       channelId,
       channelName: channelName ?? "channel",
       inviteeIds: [],
-      phoneInviteeIds: [member.id],
       smsInviteeIds: [member.id],
       kind: "video",
     });
@@ -284,7 +284,7 @@ function MemberRow({
           onCallAppVoice={() => callInApp("voice")}
           onCallAppVideo={() => callInApp("video")}
           onCallCell={callCell}
-          onCallHybrid={callHybrid}
+          onTextVideoLink={textVideoLink}
         />
       )}
     </>
@@ -300,7 +300,7 @@ function MemberRow({
 
 function CallTargetDialog({
   memberName, memberPhone, channelLabel,
-  onClose, onCallAppVoice, onCallAppVideo, onCallCell, onCallHybrid,
+  onClose, onCallAppVoice, onCallAppVideo, onCallCell, onTextVideoLink,
 }: {
   memberName: string;
   memberPhone: string | null;
@@ -309,7 +309,7 @@ function CallTargetDialog({
   onCallAppVoice: () => void;
   onCallAppVideo: () => void;
   onCallCell: () => void;
-  onCallHybrid: () => void;
+  onTextVideoLink: () => void;
 }) {
   return (
     <div
@@ -394,22 +394,23 @@ function CallTargetDialog({
             </div>
           </button>
 
-          {/* Hybrid: ring cell + send video join link */}
+          {/* SMS-only: text the join link, no SIP dial. Separate from
+              "Call their cell" so the user picks one path per intent. */}
           <button
             type="button"
-            onClick={onCallHybrid}
+            onClick={onTextVideoLink}
             disabled={!memberPhone}
             className="flex items-center gap-3 px-3 py-3 rounded-xl bg-[hsl(232_50%_18%)] hover:bg-[hsl(232_50%_22%)] border border-[hsl(232_40%_25%)] transition-colors text-left disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-[hsl(232_50%_18%)]"
-            data-testid="button-call-target-hybrid"
+            data-testid="button-call-target-text-link"
           >
             <div className="w-10 h-10 rounded-full bg-vs-blue-light/15 border border-vs-blue-light/40 flex items-center justify-center shrink-0">
               <LinkIcon className="w-5 h-5 text-vs-blue-light" />
             </div>
             <div className="min-w-0 flex-1">
-              <div className="text-sm font-semibold text-white">Ring cell + text video link</div>
+              <div className="text-sm font-semibold text-white">Text video join link</div>
               <div className="text-[11px] text-[hsl(0_0%_65%)] truncate">
                 {memberPhone
-                  ? `Calls ${memberPhone} and texts a join link for video`
+                  ? `Texts ${memberPhone} a tap-to-join video link (no phone ring)`
                   : "No phone number on file"}
               </div>
             </div>
