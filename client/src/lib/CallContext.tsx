@@ -70,10 +70,13 @@ interface CallCtxValue {
   startGroupCall(opts: {
     channelId: number;
     channelName: string;
+    /** Chat user IDs to ring via in-app push (LiveKit). */
     inviteeIds: number[];
-    /** Raw phone numbers to phone-bridge into the room (E.164 preferred;
-     *  server normalizes US numbers as +1). Each is dialed via Twilio
-     *  with the SIP From branded as "Bulldog · #channel". */
+    /** Chat user IDs to ring via their saved cell phone. Server looks
+     *  up the phone from the user record and bridges through Twilio. */
+    phoneInviteeIds?: number[];
+    /** Raw phone numbers (E.164 or US digits) to phone-bridge into the
+     *  room. SIP From is branded as "Bulldog · #channel". */
     phoneNumbers?: string[];
     kind?: "voice" | "video";
   }): Promise<void>;
@@ -260,11 +263,12 @@ export function CallProvider({ children }: { children: ReactNode }) {
   // joins the LiveKit room immediately so they don't sit on a "calling…"
   // screen while waiting for the first accept.
   const startGroupCall = useCallback<CallCtxValue["startGroupCall"]>(async ({
-    channelId, channelName, inviteeIds, phoneNumbers = [], kind = "voice",
+    channelId, channelName, inviteeIds, phoneInviteeIds = [], phoneNumbers = [], kind = "voice",
   }) => {
     if (outgoing || active) return;
     const resp = await apiRequest<StartGroupCallResponse>(
-      "POST", `/api/channels/${channelId}/group-call/start`, { inviteeIds, phoneNumbers, kind },
+      "POST", `/api/channels/${channelId}/group-call/start`,
+      { inviteeIds, phoneInviteeIds, phoneNumbers, kind },
     );
     setActive({
       // No single callId for a group call — we use 0 as a sentinel and

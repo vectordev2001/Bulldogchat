@@ -125,15 +125,19 @@ export default function Home() {
     enabled: !!activeProjectId,
   });
 
-  // Default-select first text channel for the active project
+  // Default-select first text channel for the active project.
+  // Use sentinel value -1 when the project has no channels at all,
+  // so the render conditional can show an empty state instead of
+  // spinning forever waiting for an activeChannel that will never exist.
   useEffect(() => {
     if (!activeProjectId || !channelsQ.data) return;
     if (channelByProject[activeProjectId]) return;
     const sorted = [...channelsQ.data].sort((a, b) => a.position - b.position);
     const firstText = sorted.find((c) => c.type === "text") ?? sorted[0];
-    if (firstText) {
-      setChannelByProject((prev) => ({ ...prev, [activeProjectId]: firstText.id }));
-    }
+    setChannelByProject((prev) => ({
+      ...prev,
+      [activeProjectId]: firstText ? firstText.id : -1,
+    }));
   }, [activeProjectId, channelsQ.data, channelByProject]);
 
   const activeChannelId = activeProjectId ? channelByProject[activeProjectId] ?? null : null;
@@ -337,7 +341,16 @@ export default function Home() {
         </div>
 
         {/* Channel content */}
-        {!activeChannel || channelsQ.isLoading ? (
+        {channelsQ.isLoading ? (
+          <div className="flex-1 flex items-center justify-center">
+            <Loader2 className="w-5 h-5 animate-spin text-vs-blue" />
+          </div>
+        ) : channelsQ.data && channelsQ.data.length === 0 ? (
+          <div className="flex-1 flex flex-col items-center justify-center text-center px-6 gap-2">
+            <div className="text-sm text-white/70">No channels in this project yet.</div>
+            <div className="text-xs text-white/40">Create a channel from the sidebar to get started.</div>
+          </div>
+        ) : !activeChannel ? (
           <div className="flex-1 flex items-center justify-center">
             <Loader2 className="w-5 h-5 animate-spin text-vs-blue" />
           </div>
@@ -379,6 +392,7 @@ export default function Home() {
               meId={(user as ApiUser)?.id}
               orgMembers={members}
               channelId={activeChannel.id}
+              channelName={activeChannel.name}
               myRole={(user as ApiUser)?.role}
             />
           )}
@@ -395,6 +409,7 @@ export default function Home() {
             meId={(user as ApiUser)?.id}
             orgMembers={members}
             channelId={activeChannel.id}
+            channelName={activeChannel.name}
             myRole={(user as ApiUser)?.role}
             mobile
             onClose={() => setMembersOpen(false)}

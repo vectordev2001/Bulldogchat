@@ -40,6 +40,11 @@ export function ChannelCallDialog({ channel, fallbackMembers, meId, open, initia
   const { startGroupCall, active, outgoing } = useCalls();
   const [kind, setKind] = useState<"voice" | "video">(initialKind);
   const [selected, setSelected] = useState<Set<number>>(new Set());
+  // Per-member call route: 'app' (in-app push + LiveKit join) or 'phone'
+  // (server dials their saved cell via Twilio with 'Bulldog · #channel'
+  // as caller-id). Map only holds entries for currently-selected members.
+  // Defaults to 'app' when a row is first ticked.
+  const [route, setRoute] = useState<Map<number, "app" | "phone">>(new Map());
   // Free-form phone numbers the caller wants to dial in alongside chat
   // members. Stored raw here; server normalizes to E.164 (US +1 default).
   // The recipient sees "Bulldog · #channel" as SIP From-display.
@@ -58,6 +63,7 @@ export function ChannelCallDialog({ channel, fallbackMembers, meId, open, initia
       setPhoneNumbers([]);
       setPhoneInput("");
       setSelected(new Set());
+      setRoute(new Map());
     }
   }, [open, initialKind]);
 
@@ -100,16 +106,48 @@ export function ChannelCallDialog({ channel, fallbackMembers, meId, open, initia
   function toggleAll() {
     if (allSelected) {
       setSelected(new Set());
+      setRoute(new Map());
     } else {
-      setSelected(new Set(allMembers.map((m) => m.id)));
+      const next = new Set(allMembers.map((m) => m.id));
+      setSelected(next);
+      // Default everyone added through Ring-everyone to 'app'.
+      setRoute((prev) => {
+        const merged = new Map(prev);
+        for (const id of next) if (!merged.has(id)) merged.set(id, "app");
+        return merged;
+      });
     }
   }
 
   function toggleOne(id: number) {
     const next = new Set(selected);
-    if (next.has(id)) next.delete(id);
-    else next.add(id);
+    if (next.has(id)) {
+      next.delete(id);
+      setRoute((prev) => {
+        if (!prev.has(id)) return prev;
+        const m = new Map(prev);
+        m.delete(id);
+        return m;
+      });
+    } else {
+      next.add(id);
+      setRoute((prev) => {
+        if (prev.has(id)) return prev;
+        const m = new Map(prev);
+        m.set(id, "app");
+        return m;
+      });
+    }
     setSelected(next);
+  }
+
+  /** Switch a selected row between 'app' and 'phone'. */
+  function setMemberRoute(id: number, r: "app" | "phone") {
+    setRoute((prev) => {
+      const m = new Map(prev);
+      m.set(id, r);
+      return m;
+    });
   }
 
   const canSubmit = totalTargets > 0 && !submitting && !active && !outgoing;
@@ -119,10 +157,20 @@ export function ChannelCallDialog({ channel, fallbackMembers, meId, open, initia
     setSubmitting(true);
     setError(null);
     try {
+      // Split selected into app vs phone buckets. Default to 'app' if
+      // somehow no route was recorded (defensive — toggleOne/toggleAll
+      // both seed the map, but a future code path may not).
+      const appIds: number[] = [];
+      const phoneIds: number[] = [];
+      for (const id of selected) {
+        if ((route.get(id) ?? "app") === "phone") phoneIds.push(id);
+        else appIds.push(id);
+      }
       await startGroupCall({
         channelId: channel.id,
         channelName: channel.name,
-        inviteeIds: Array.from(selected),
+        inviteeIds: appIds,
+        phoneInviteeIds: phoneIds,
         phoneNumbers,
         kind,
       });
@@ -208,28 +256,71 @@ export function ChannelCallDialog({ channel, fallbackMembers, meId, open, initia
           ) : (
             allMembers.map((m) => {
               const checked = selected.has(m.id);
+              const memberRoute = route.get(m.id) ?? "app";
+              const hasPhone = !!(m as { phone?: string | null }).phone;
               return (
-                <label
+                <div
                   key={m.id}
-                  className="flex items-center gap-3 px-3 py-2 hover:bg-muted/40 cursor-pointer"
+                  className="flex items-center gap-3 px-3 py-2 hover:bg-muted/40"
                   data-testid={`row-invitee-${m.id}`}
                 >
-                  <Checkbox
-                    checked={checked}
-                    onCheckedChange={() => toggleOne(m.id)}
-                    data-testid={`checkbox-invitee-${m.id}`}
-                  />
-                  <div
-                    className="w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-semibold text-white shrink-0"
-                    style={{ backgroundColor: `hsl(${m.hue} 70% 45%)` }}
-                  >
-                    {m.name.split(" ").map((p) => p[0]).slice(0, 2).join("").toUpperCase() || "?"}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="text-sm truncate">{m.name}</div>
-                    <div className="text-xs text-muted-foreground truncate">{m.email}</div>
-                  </div>
-                </label>
+                  {/* Checkbox + identity click together to toggle selection. */}
+                  <label className="flex items-center gap-3 flex-1 min-w-0 cursor-pointer">
+                    <Checkbox
+                      checked={checked}
+                      onCheckedChange={() => toggleOne(m.id)}
+                      data-testid={`checkbox-invitee-${m.id}`}
+                    />
+                    <div
+                      className="w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-semibold text-white shrink-0"
+                      style={{ backgroundColor: `hsl(${m.hue} 70% 45%)` }}
+                    >
+                      {m.name.split(" ").map((p) => p[0]).slice(0, 2).join("").toUpperCase() || "?"}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm truncate">{m.name}</div>
+                      <div className="text-xs text-muted-foreground truncate">
+                        {hasPhone ? (m as { phone?: string | null }).phone : m.email}
+                      </div>
+                    </div>
+                  </label>
+
+                  {/* App / Phone segmented control — only shown when the
+                      row is selected, so the picker doesn't get noisy. If
+                      the member has no phone on file, the Phone option
+                      is disabled (tooltip explains why). */}
+                  {checked && (
+                    <div className="flex items-center rounded-md border border-border overflow-hidden text-[11px] font-mono uppercase tracking-wider shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => setMemberRoute(m.id, "app")}
+                        className={`px-2 py-1 flex items-center gap-1 transition-colors ${
+                          memberRoute === "app"
+                            ? "bg-vs-blue text-white"
+                            : "bg-transparent text-muted-foreground hover:bg-muted/60"
+                        }`}
+                        title="Ring them in the Bulldog app"
+                        data-testid={`button-route-app-${m.id}`}
+                      >
+                        <Video className="w-3 h-3" /> App
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => hasPhone && setMemberRoute(m.id, "phone")}
+                        disabled={!hasPhone}
+                        className={`px-2 py-1 flex items-center gap-1 transition-colors border-l border-border ${
+                          memberRoute === "phone"
+                            ? "bg-vs-red text-white"
+                            : "bg-transparent text-muted-foreground hover:bg-muted/60"
+                        } disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent`}
+                        title={hasPhone ? "Call their cell phone" : "No phone number on file"}
+                        data-testid={`button-route-phone-${m.id}`}
+                      >
+                        <Phone className="w-3 h-3" /> Phone
+                      </button>
+                    </div>
+                  )}
+                </div>
               );
             })
           )}

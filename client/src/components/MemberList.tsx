@@ -3,7 +3,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { Avatar } from "./Avatar";
 import type { ApiUser, UserRole } from "@/types/api";
 import { useCalls } from "@/lib/CallContext";
-import { Phone, Video, X, UserPlus, Loader2, Check, Search } from "lucide-react";
+import { Phone, Video, X, UserPlus, Loader2, Check, Search, PhoneCall } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 
 const ROLE_ORDER: UserRole[] = ["admin", "foreman", "safety", "office", "field"];
@@ -25,8 +25,12 @@ interface Props {
   meId?: number;
   /** Full org roster — needed for the "Add members" picker. */
   orgMembers?: ApiUser[];
-  /** Active channel id — needed to POST add-member. */
+  /** Active channel id — needed to POST add-member and for routing
+   *  per-row "call their cell" through the group-call/start endpoint. */
   channelId?: number;
+  /** Active channel name — surfaces as the SIP caller-id channel label
+   *  ("Bulldog · #channel-name") when ringing a member's cell phone. */
+  channelName?: string;
   /** Current user's role — admins see the Add Members button. */
   myRole?: UserRole;
   /** Mobile drawer mode: render as a slide-over overlay instead of a static sidebar. */
@@ -35,7 +39,7 @@ interface Props {
   onClose?: () => void;
 }
 
-export function MemberList({ members, meId, orgMembers, channelId, myRole, mobile, onClose }: Props) {
+export function MemberList({ members, meId, orgMembers, channelId, channelName, myRole, mobile, onClose }: Props) {
   const [addOpen, setAddOpen] = useState(false);
 
   const online = members.filter((m) => m.status !== "offline");
@@ -82,8 +86,8 @@ export function MemberList({ members, meId, orgMembers, channelId, myRole, mobil
       )}
 
       <div className="flex-1 overflow-y-auto px-2 py-3">
-        <RoleGroup label={`Online — ${online.length}`} members={online} meId={meId} />
-        {offline.length > 0 && <RoleGroup label={`Offline — ${offline.length}`} members={offline} meId={meId} dimmed />}
+        <RoleGroup label={`Online — ${online.length}`} members={online} meId={meId} channelId={channelId} channelName={channelName} />
+        {offline.length > 0 && <RoleGroup label={`Offline — ${offline.length}`} members={offline} meId={meId} channelId={channelId} channelName={channelName} dimmed />}
       </div>
     </>
   );
@@ -137,23 +141,48 @@ export function MemberList({ members, meId, orgMembers, channelId, myRole, mobil
   );
 }
 
-function RoleGroup({ label, members, meId, dimmed }: { label: string; members: ApiUser[]; meId?: number; dimmed?: boolean }) {
+function RoleGroup({
+  label, members, meId, channelId, channelName, dimmed,
+}: {
+  label: string;
+  members: ApiUser[];
+  meId?: number;
+  channelId?: number;
+  channelName?: string;
+  dimmed?: boolean;
+}) {
   return (
     <div className="mb-4">
       <div className="px-2 py-1 text-[10px] uppercase tracking-[0.16em] font-bold text-[hsl(0_0%_55%)]">{label}</div>
       <div className="space-y-0.5">
         {members.map((m) => (
-          <MemberRow key={m.id} member={m} meId={meId} dimmed={dimmed} />
+          <MemberRow
+            key={m.id}
+            member={m}
+            meId={meId}
+            channelId={channelId}
+            channelName={channelName}
+            dimmed={dimmed}
+          />
         ))}
       </div>
     </div>
   );
 }
 
-function MemberRow({ member, meId, dimmed }: { member: ApiUser; meId?: number; dimmed?: boolean }) {
-  const { startCall, active, outgoing } = useCalls();
+function MemberRow({
+  member, meId, channelId, channelName, dimmed,
+}: {
+  member: ApiUser;
+  meId?: number;
+  channelId?: number;
+  channelName?: string;
+  dimmed?: boolean;
+}) {
+  const { startCall, startGroupCall, active, outgoing } = useCalls();
   const isMe = meId != null && member.id === meId;
   const busy = !!active || !!outgoing;
+  const memberPhone = (member as { phone?: string | null }).phone ?? null;
 
   const onCall = (e: React.MouseEvent, kind: "voice" | "video") => {
     e.stopPropagation();
@@ -164,6 +193,24 @@ function MemberRow({ member, meId, dimmed }: { member: ApiUser; meId?: number; d
       calleeName: member.name,
       calleeHue: member.hue,
       kind,
+    });
+  };
+
+  // "Call their cell" — use the group-call/start endpoint with a single
+  // phoneInviteeId so the server looks up the member's saved phone and
+  // bridges the call via Twilio (caller-id 'Bulldog · #channel'). We
+  // route through startGroupCall so the caller still lands in the same
+  // LiveKit room and can be joined from the chat or web app too.
+  const onCallCell = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    e.preventDefault();
+    if (isMe || busy || !channelId || !memberPhone) return;
+    void startGroupCall({
+      channelId,
+      channelName: channelName ?? "channel",
+      inviteeIds: [],
+      phoneInviteeIds: [member.id],
+      kind: "voice",
     });
   };
 
@@ -197,14 +244,16 @@ function MemberRow({ member, meId, dimmed }: { member: ApiUser; meId?: number; d
 
       {!isMe && (
         // On mobile (touch, no hover) the call buttons stay visible; on
-        // desktop they fade in on row hover.
+        // desktop they fade in on row hover. Voice = in-app, Video =
+        // in-app, Cell = ring their phone via Twilio (only shown when
+        // the member has a phone number on file).
         <div className="flex items-center gap-0.5 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
           <button
             type="button"
             onClick={(e) => onCall(e, "voice")}
             disabled={busy}
-            title={busy ? "In a call" : `Voice call ${member.name}`}
-            aria-label={`Voice call ${member.name}`}
+            title={busy ? "In a call" : `Voice call ${member.name} in app`}
+            aria-label={`Voice call ${member.name} in app`}
             className="p-1.5 rounded-md text-vs-green hover:bg-black/30 disabled:opacity-40 disabled:cursor-not-allowed"
             data-testid={`button-call-voice-${member.id}`}
           >
@@ -214,13 +263,26 @@ function MemberRow({ member, meId, dimmed }: { member: ApiUser; meId?: number; d
             type="button"
             onClick={(e) => onCall(e, "video")}
             disabled={busy}
-            title={busy ? "In a call" : `Video call ${member.name}`}
-            aria-label={`Video call ${member.name}`}
+            title={busy ? "In a call" : `Video call ${member.name} in app`}
+            aria-label={`Video call ${member.name} in app`}
             className="p-1.5 rounded-md text-vs-blue-light hover:bg-black/30 disabled:opacity-40 disabled:cursor-not-allowed"
             data-testid={`button-call-video-${member.id}`}
           >
             <Video className="w-3.5 h-3.5" />
           </button>
+          {memberPhone && channelId && (
+            <button
+              type="button"
+              onClick={onCallCell}
+              disabled={busy}
+              title={busy ? "In a call" : `Ring ${member.name}'s cell phone (${memberPhone})`}
+              aria-label={`Ring ${member.name}'s cell phone`}
+              className="p-1.5 rounded-md text-vs-red hover:bg-black/30 disabled:opacity-40 disabled:cursor-not-allowed"
+              data-testid={`button-call-cell-${member.id}`}
+            >
+              <PhoneCall className="w-3.5 h-3.5" />
+            </button>
+          )}
         </div>
       )}
     </div>

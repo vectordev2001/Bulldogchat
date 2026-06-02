@@ -1020,10 +1020,23 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     const kind = (req.body?.kind === "video" ? "video" : "voice") as "voice" | "video";
     const rawInvitees: unknown = req.body?.inviteeIds;
     const rawPhones: unknown = req.body?.phoneNumbers;
+    // phoneInviteeIds: chat user IDs the caller wants to reach via the
+    // user's saved cell number instead of an in-app push. We look up the
+    // phone server-side so the client never has to read or transmit it.
+    const rawPhoneInvitees: unknown = req.body?.phoneInviteeIds;
     const inviteeIds: number[] = Array.isArray(rawInvitees)
       ? Array.from(
           new Set(
             (rawInvitees as unknown[])
+              .map((x) => Number(x))
+              .filter((n) => Number.isFinite(n) && n > 0 && n !== u.id),
+          ),
+        )
+      : [];
+    const phoneInviteeIds: number[] = Array.isArray(rawPhoneInvitees)
+      ? Array.from(
+          new Set(
+            (rawPhoneInvitees as unknown[])
               .map((x) => Number(x))
               .filter((n) => Number.isFinite(n) && n > 0 && n !== u.id),
           ),
@@ -1046,8 +1059,8 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
           ),
         )
       : [];
-    if (inviteeIds.length === 0 && phoneNumbers.length === 0) {
-      return res.status(400).json({ message: "inviteeIds[] or phoneNumbers[] required" });
+    if (inviteeIds.length === 0 && phoneNumbers.length === 0 && phoneInviteeIds.length === 0) {
+      return res.status(400).json({ message: "inviteeIds[], phoneInviteeIds[], or phoneNumbers[] required" });
     }
 
     const access = userCanAccessChannel(u.id, u.orgId, channelId);
@@ -1068,7 +1081,16 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
       .map((id) => ({ id, user: storage.getUser(id) }))
       .filter((x) => x.user && x.user.orgId === u.orgId && !x.user.deactivated)
       .map((x) => x.id);
-    if (validInvitees.length === 0 && phoneNumbers.length === 0) {
+    // Resolve phoneInviteeIds -> {userId, name, phone} for the SIP bridge.
+    // Same org-scope filter as app invitees. Drops users with no phone on
+    // file and surfaces that as a warning so the caller knows it didn't
+    // ring instead of silently dropping.
+    const phoneInviteeRecords = phoneInviteeIds
+      .map((id) => ({ id, user: storage.getUser(id) }))
+      .filter((x) => x.user && x.user.orgId === u.orgId && !x.user.deactivated)
+      .map((x) => ({ id: x.id, name: x.user!.name, phone: (x.user as { phone?: string | null }).phone ?? null }));
+
+    if (validInvitees.length === 0 && phoneNumbers.length === 0 && phoneInviteeRecords.filter((r) => r.phone).length === 0) {
       return res.status(400).json({ message: "No reachable invitees" });
     }
 
@@ -1123,16 +1145,51 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
       });
     }
 
-    // Phone-bridge any raw numbers the caller typed in. dialPhoneIntoRoom
-    // brands the SIP From as "Bulldog · #channel" so the recipient knows
-    // it's the app calling, not an unknown number.
+    // Phone-bridge any raw numbers the caller typed in, AND any chat users
+    // the caller chose to reach 'via Phone'. dialPhoneIntoRoom brands the
+    // SIP From as "Bulldog · #channel" so the recipient knows it's the app
+    // calling, not an unknown number.
     const dialedPhones: string[] = [];
+    const dialedUserIds: number[] = [];
     const dialWarnings: string[] = [];
+    const channelLabel = access.channel?.name ? `#${access.channel.name}` : "call";
+
+    // Resolve chat-user -> saved phone first so we can fail fast if SIP
+    // isn't configured but the caller picked 'via Phone' for someone.
+    if (phoneInviteeRecords.length > 0) {
+      if (!sipConfigured()) {
+        dialWarnings.push("SIP not configured — chat users picked 'via Phone' were not dialed");
+      } else {
+        for (const rec of phoneInviteeRecords) {
+          if (!rec.phone) {
+            dialWarnings.push(`${rec.name}: no phone on file`);
+            continue;
+          }
+          try {
+            const ident = await dialPhoneIntoRoom({
+              phone: rec.phone,
+              roomName: groupRoomName,
+              displayName: rec.name,
+              channelLabel,
+            });
+            if (ident) {
+              dialedUserIds.push(rec.id);
+              dialedPhones.push(rec.phone);
+            } else {
+              dialWarnings.push(`dial ${rec.name}: SIP trunk unavailable`);
+            }
+          } catch (err) {
+            const msg = (err as { message?: string })?.message ?? "failed";
+            dialWarnings.push(`dial ${rec.name}: ${msg}`);
+          }
+        }
+      }
+    }
+
     if (phoneNumbers.length > 0) {
       if (!sipConfigured()) {
         dialWarnings.push("SIP not configured — phone numbers were not dialed");
       } else {
-        const channelLabel = access.channel?.name ? `#${access.channel.name}` : "call";
         for (const phone of phoneNumbers) {
           try {
             const ident = await dialPhoneIntoRoom({
@@ -1160,6 +1217,7 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
       token,
       ws_url: process.env.LIVEKIT_WS_URL,
       invitedUserIds: validInvitees,
+      dialedUserIds,
       dialedPhones,
       dialWarnings,
       kind,

@@ -15,6 +15,7 @@ export interface ApiUser {
   status: string;
   presence?: UserPresence;
   phone?: string | null;
+  deactivated?: boolean;
   createdAt: string;
   lastSeenAt: string | null;
 }
