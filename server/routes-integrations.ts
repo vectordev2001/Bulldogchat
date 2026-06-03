@@ -213,6 +213,14 @@ export function registerIntegrationRoutes(app: Express) {
     const memberIds = Array.isArray(body.memberIds)
       ? (body.memberIds as unknown[]).map(n => Number(n)).filter(n => Number.isFinite(n) && n > 0)
       : [];
+    // Phase 1.9.3+ — the contracts UI picks members by email (canonical roster
+    // lives in bulldog-auth). Any email that doesn't yet have a chat row gets
+    // shadow-provisioned here, mirroring bulldog-sso's first-login behaviour.
+    const memberEmails = Array.isArray(body.memberEmails)
+      ? (body.memberEmails as unknown[])
+          .map(e => (typeof e === "string" ? e.trim().toLowerCase() : ""))
+          .filter(e => e.length > 0 && e.includes("@"))
+      : [];
     const channelNameOverride = typeof body.channelName === "string" ? body.channelName.trim() : "";
     const lc = body.linkedContract as Record<string, unknown> | undefined;
 
@@ -278,10 +286,45 @@ export function registerIntegrationRoutes(app: Express) {
       linkedContract: meta,
     } as any);
 
+    // Resolve email-based members: look up existing chat rows, shadow-
+    // provision missing ones, and seed them into the org's projects so the
+    // sidebar isn't empty when they first log in. Mirrors bulldog-sso.
+    const resolvedFromEmails: number[] = [];
+    for (const email of memberEmails) {
+      let local = storage.getUserByEmail(email);
+      if (!local) {
+        try {
+          local = storage.createUser({
+            orgId,
+            email,
+            passwordHash: "",
+            name: email,
+            role: "field", // default; real role syncs on first SSO bridge
+          });
+          // Seed into every project in the org — same behaviour as bulldog-sso
+          // first-login so they immediately see global channels.
+          try {
+            const orgProjects = storage.listProjectsByOrg(orgId);
+            for (const p of orgProjects) {
+              try { storage.addProjectMember(p.id, local.id, "member"); }
+              catch { /* duplicate is fine */ }
+            }
+          } catch (e) {
+            console.warn("[bridge create-channel] shadow project seed failed:", (e as Error).message);
+          }
+        } catch (e) {
+          console.warn("[bridge create-channel] shadow provision failed for", email, (e as Error).message);
+          continue;
+        }
+      }
+      if (local && local.orgId === orgId) resolvedFromEmails.push(local.id);
+    }
+
     // Seed private membership when scope=private. Always include the
     // attacher so they don't lock themselves out.
     if (scope === "private") {
       const ids = new Set<number>(memberIds);
+      for (const id of resolvedFromEmails) ids.add(id);
       ids.add(attachedByUserId);
       const orgUserIds = new Set(storage.listUsersByOrg(orgId).map(u => u.id));
       const filtered = Array.from(ids).filter(id => orgUserIds.has(id));
