@@ -3,9 +3,18 @@
  *
  * Uses Twilio's REST API directly (no SDK) to keep the dependency
  * footprint small. Required env:
- *   TWILIO_ACCOUNT_SID      — account SID
- *   TWILIO_AUTH_TOKEN       — account auth token
- *   TWILIO_FROM_NUMBER      — E.164 sender (e.g. +15551234567); must be SMS-capable
+ *   TWILIO_ACCOUNT_SID            — account SID
+ *   TWILIO_AUTH_TOKEN             — account auth token
+ *   One of:
+ *     TWILIO_MESSAGING_SERVICE_SID  — preferred: "MGxxxx" SID of a Messaging
+ *                                    Service. Use this when you have an A2P
+ *                                    10DLC campaign attached so Twilio picks
+ *                                    the right sender pool and you don't get
+ *                                    blocked by carrier filtering. When this
+ *                                    is set, TWILIO_FROM_NUMBER is ignored.
+ *     TWILIO_FROM_NUMBER            — E.164 sender (e.g. +15551234567);
+ *                                    must be SMS-capable. Used only when no
+ *                                    Messaging Service SID is configured.
  *
  * Best-effort: failures are logged and surfaced to the caller as warnings
  * but never throw past the call site. SMS is a nice-to-have alongside the
@@ -14,11 +23,9 @@
 import jwt from "jsonwebtoken";
 
 function smsConfigured(): boolean {
-  return !!(
-    process.env.TWILIO_ACCOUNT_SID &&
-    process.env.TWILIO_AUTH_TOKEN &&
-    process.env.TWILIO_FROM_NUMBER
-  );
+  if (!process.env.TWILIO_ACCOUNT_SID || !process.env.TWILIO_AUTH_TOKEN) return false;
+  // Either a Messaging Service SID OR a from-number is enough to send.
+  return !!(process.env.TWILIO_MESSAGING_SERVICE_SID || process.env.TWILIO_FROM_NUMBER);
 }
 
 export function smsAvailable(): boolean {
@@ -38,15 +45,24 @@ interface SendSmsResult {
 
 export async function sendSms({ to, body }: SendSmsParams): Promise<SendSmsResult> {
   if (!smsConfigured()) {
-    return { ok: false, error: "SMS not configured (missing TWILIO_ACCOUNT_SID/AUTH_TOKEN/FROM_NUMBER)" };
+    return { ok: false, error: "SMS not configured (need TWILIO_ACCOUNT_SID + TWILIO_AUTH_TOKEN + either TWILIO_MESSAGING_SERVICE_SID or TWILIO_FROM_NUMBER)" };
   }
   const accountSid = process.env.TWILIO_ACCOUNT_SID!;
   const authToken = process.env.TWILIO_AUTH_TOKEN!;
-  const from = process.env.TWILIO_FROM_NUMBER!;
+  const messagingServiceSid = process.env.TWILIO_MESSAGING_SERVICE_SID;
+  const fromNumber = process.env.TWILIO_FROM_NUMBER;
   const url = `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`;
   const form = new URLSearchParams();
   form.set("To", to);
-  form.set("From", from);
+  // Prefer MessagingServiceSid when configured: Twilio routes through the
+  // attached A2P 10DLC campaign sender pool which has much higher
+  // deliverability than an unverified toll-free or raw long code. Fall
+  // back to a single From number for dev/local setups.
+  if (messagingServiceSid) {
+    form.set("MessagingServiceSid", messagingServiceSid);
+  } else if (fromNumber) {
+    form.set("From", fromNumber);
+  }
   form.set("Body", body);
   const basic = Buffer.from(`${accountSid}:${authToken}`).toString("base64");
   try {
