@@ -10,6 +10,7 @@ import { apiRequest, apiUpload, queryClient } from "@/lib/queryClient";
 import { ThreadPanel } from "./ThreadPanel";
 import { SearchModal } from "./SearchModal";
 import { AttachmentList } from "./AttachmentRenderer";
+import { ContractBanner } from "./ContractBanner";
 
 interface Props {
   channel: ApiChannel;
@@ -348,6 +349,12 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers, me
           </button>
         </div>
       </header>
+
+      {/* Phase 1.9.3 — contract banner. Renders above the pinned-message
+          banner so the contract context is the first thing members see. */}
+      {channel.linkedContract && (
+        <ContractBanner channel={channel} contract={channel.linkedContract} me={me} />
+      )}
 
       {pinned && (
         <div ref={pinnedBannerRef} className="px-4 py-2 bg-[hsl(2_70%_55%/0.08)] border-b border-[hsl(2_70%_55%/0.25)] flex items-start gap-2 text-xs transition-shadow rounded-sm">

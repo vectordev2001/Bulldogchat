@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Mic, MicOff, Video, VideoOff, MonitorUp, Hand, Settings, PhoneOff,
   Volume2, MoreHorizontal, ScreenShareOff, Signal, Users, Loader2, AlertTriangle, Sparkles,
-  Circle, Square, Play, History, UserPlus, Phone, X, Search,
+  Circle, Square, Play, History, UserPlus, Phone, X, Search, FileText, ExternalLink,
 } from "lucide-react";
 import { Avatar } from "./Avatar";
 import { motion } from "framer-motion";
@@ -69,6 +69,10 @@ export function VoiceChannelView(props: Props) {
   const [livekitInfo, setLivekitInfo] = useState<{ token: string; wsUrl: string; roomName: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showInvite, setShowInvite] = useState(false);
+  // Phase 1.9.3 — in-call contract side panel (option 1). Defaults open
+  // when the channel has a linked contract so everyone in the call sees
+  // the document immediately on join.
+  const [showContractPanel, setShowContractPanel] = useState<boolean>(!!channel.linkedContract);
 
   const canRecord = me.role === "admin" || me.role === "foreman";
   const [showPast, setShowPast] = useState(false);
@@ -311,6 +315,23 @@ export function VoiceChannelView(props: Props) {
           <button type="button" onClick={() => setShowPast((v) => !v)} className="px-2 py-1 rounded-md text-xs bg-[hsl(232_50%_18%)] border border-[hsl(232_40%_25%)] hover:border-vs-blue hover:text-vs-blue-light text-[hsl(0_0%_80%)] flex items-center gap-1.5 whitespace-nowrap" title="Past recordings" data-testid="button-past-recordings">
             <History className="w-3 h-3" /> Past
           </button>
+          {/* Phase 1.9.3 — contract-panel toggle. Only rendered when a
+              contract is attached to this channel. */}
+          {channel.linkedContract && (
+            <button
+              type="button"
+              onClick={() => setShowContractPanel(v => !v)}
+              className={`px-2 py-1 rounded-md text-xs border flex items-center gap-1.5 whitespace-nowrap ${
+                showContractPanel
+                  ? "bg-[hsl(232_60%_22%)] border-[hsl(232_70%_45%)] text-vs-blue-light"
+                  : "bg-[hsl(232_50%_18%)] border-[hsl(232_40%_25%)] hover:border-vs-blue hover:text-vs-blue-light text-[hsl(0_0%_80%)]"
+              }`}
+              title={showContractPanel ? "Hide contract" : "Show contract"}
+              data-testid="button-toggle-contract-panel"
+            >
+              <FileText className="w-3 h-3" /> Contract
+            </button>
+          )}
         </div>
       </header>
 
@@ -470,6 +491,63 @@ export function VoiceChannelView(props: Props) {
             </div>
           )}
         </div>
+
+        {/* Phase 1.9.3 — contract side panel (option 1). Renders the
+            attached contract's PDF inline so call participants can read
+            it together without switching tabs. The PDF URL is the chat-
+            cached pdfUrl from linkedContract; bulldog-contracts is the
+            source of truth. Falls back to a "download / open" affordance
+            if pdfUrl is null (e.g. draft contracts without an uploaded
+            file yet). */}
+        {channel.linkedContract && showContractPanel && (
+          <aside
+            className="hidden md:flex w-[min(28rem,38vw)] shrink-0 flex-col border-l border-[hsl(232_40%_22%)] bg-[hsl(232_60%_10%)]"
+            data-testid="contract-side-panel"
+          >
+            <div className="flex items-center gap-2 px-3 py-2 border-b border-[hsl(232_40%_22%)] shrink-0">
+              <FileText className="h-4 w-4 text-vs-blue-light shrink-0" />
+              <div className="min-w-0 flex-1">
+                <div className="text-sm text-white truncate" data-testid="contract-panel-title">{channel.linkedContract.title}</div>
+                {channel.linkedContract.ref && (
+                  <div className="text-[10px] text-[hsl(0_0%_60%)] uppercase tracking-wider">{channel.linkedContract.ref}</div>
+                )}
+              </div>
+              <a
+                href={channel.linkedContract.appUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-vs-blue-light hover:bg-[hsl(232_40%_22%)]"
+                data-testid="contract-panel-open"
+                title="Open in Bulldog Contracts"
+              >
+                Open <ExternalLink className="h-3 w-3" />
+              </a>
+              <button
+                type="button"
+                onClick={() => setShowContractPanel(false)}
+                className="rounded p-1 text-[hsl(0_0%_55%)] hover:bg-[hsl(0_0%_15%)] hover:text-white"
+                title="Hide panel"
+                data-testid="contract-panel-close"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+            <div className="flex-1 min-h-0 bg-black">
+              {channel.linkedContract.pdfUrl ? (
+                <iframe
+                  src={channel.linkedContract.pdfUrl}
+                  title={channel.linkedContract.title}
+                  className="w-full h-full border-0"
+                  data-testid="contract-panel-iframe"
+                />
+              ) : (
+                <div className="flex h-full items-center justify-center px-6 text-center text-xs text-[hsl(0_0%_65%)]">
+                  No PDF uploaded for this contract yet. Open it in Bulldog Contracts to upload or generate one.
+                </div>
+              )}
+            </div>
+          </aside>
+        )}
 
         <CallSidebar fullCallList={callParticipants} screenSharerId={screenSharerId ?? null} previewMode={!!previewMode} />
       </div>

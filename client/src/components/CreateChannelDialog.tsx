@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { ApiChannel, ApiUser, ChannelScope, ChannelType, UserRole } from "@/types/api";
-import { Loader2, Hash, Globe, Building2, Users, Lock, Briefcase, Plus, X } from "lucide-react";
+import { Loader2, Hash, Globe, Building2, Users, Lock, Briefcase, Plus, X, FileText } from "lucide-react";
 
 interface ApiJob {
   id: number;
@@ -11,6 +11,17 @@ interface ApiJob {
   kind: string;
   status: string;
   projectId?: number | null;
+}
+
+// Phase 1.9.3 — contracts surfaced via the chat-side proxy at
+// GET /api/contracts/list. We only need a few fields here; the full
+// contract record stays in bulldog-contracts.
+interface ApiContract {
+  id: number;
+  title?: string | null;
+  contractNumber?: string | null;
+  documentType?: string | null;
+  fileUrl?: string | null;
 }
 
 interface Props {
@@ -51,6 +62,12 @@ export function CreateChannelDialog({ open, onClose, projectId, me, onCreated }:
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Phase 1.9.3 — optionally attach a contract to this new channel. When
+  // set, the create POST carries a linkedContract payload and the server
+  // posts a system message announcing the attach.
+  const [attachContractOpen, setAttachContractOpen] = useState(false);
+  const [linkedContractId, setLinkedContractId] = useState<string>("");
+
   // Inline "create a new job" mini-form so admins/foremen can add a job
   // without leaving this dialog. The user previously hit a blank screen
   // because the legacy setType() call crashed render — fixed by removing
@@ -80,12 +97,21 @@ export function CreateChannelDialog({ open, onClose, projectId, me, onCreated }:
       setNewJobKind("job_site");
       setNewJobSaving(false);
       setNewJobError(null);
+      setAttachContractOpen(false);
+      setLinkedContractId("");
     }
   }, [open]);
 
   const orgMembersQ = useQuery<ApiUser[]>({
     queryKey: ["/api/org/members"],
     enabled: open,
+  });
+
+  // Pull contracts (via chat-side proxy) only when the user expands the
+  // "Attach contract" panel — keeps the dialog snappy when they don't.
+  const contractsQ = useQuery<ApiContract[]>({
+    queryKey: ["/api/contracts/list"],
+    enabled: open && attachContractOpen,
   });
 
   // Jobs in the active company — used to optionally nest the channel under a job.
@@ -178,6 +204,26 @@ export function CreateChannelDialog({ open, onClose, projectId, me, onCreated }:
       // on top of the visibility rule.
       if (memberIds.size > 0) body.memberIds = Array.from(memberIds);
       if (workObjectId) body.workObjectId = Number(workObjectId);
+      // Phase 1.9.3 — nest a contract reference if the user picked one.
+      // Server validates the shape and adds attachedByUserId/attachedAt.
+      if (linkedContractId) {
+        const picked = (contractsQ.data ?? []).find(c => String(c.id) === linkedContractId);
+        if (picked) {
+          // The contracts app serves PDFs at /api/contracts/:id/file and
+          // the human view at /contracts/:id — mirror what the server-side
+          // bridge endpoint generates so behaviour is consistent across
+          // entry points (contracts UI vs chat UI).
+          const contractsBase = (window as any).BULLDOG_CONTRACTS_BASE
+            || "https://contracts.bulldogops.com";
+          body.linkedContract = {
+            contractId: picked.id,
+            title: picked.title || `Contract ${picked.id}`,
+            ref: picked.contractNumber || null,
+            appUrl: `${contractsBase}/contracts/${picked.id}`,
+            pdfUrl: `${contractsBase}/api/contracts/${picked.id}/file`,
+          };
+        }
+      }
       const created = await apiRequest<ApiChannel>("POST", `/api/projects/${projectId}/channels`, body);
       await queryClient.invalidateQueries({ queryKey: ["/api/projects", projectId, "channels"] });
       onCreated?.(created);
@@ -334,6 +380,70 @@ export function CreateChannelDialog({ open, onClose, projectId, me, onCreated }:
                     Create job
                   </button>
                 </div>
+              </div>
+            )}
+          </div>
+
+          {/* Phase 1.9.3 — Optional: attach a contract to this channel.
+              Collapsible so the dialog stays compact for the 95% case
+              where channels aren't contract-linked. */}
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between">
+              <label className="flex items-center gap-2 text-xs text-[hsl(0_0%_55%)]">
+                <FileText className="h-3.5 w-3.5" />
+                Attach contract (optional)
+              </label>
+              {!attachContractOpen && (
+                <button
+                  type="button"
+                  onClick={() => setAttachContractOpen(true)}
+                  className="inline-flex items-center gap-1 rounded-md border border-[hsl(232_70%_45%)] bg-[hsl(232_50%_18%)] px-2 py-0.5 text-[11px] font-medium text-vs-blue-light hover:bg-[hsl(232_50%_22%)]"
+                  data-testid="button-attach-contract"
+                >
+                  <Plus className="h-3 w-3" /> Attach
+                </button>
+              )}
+            </div>
+            {attachContractOpen && (
+              <div className="rounded-md border border-[hsl(232_40%_30%)] bg-[hsl(232_30%_12%)] p-3 space-y-2" data-testid="inline-attach-contract">
+                <div className="flex items-center justify-between">
+                  <div className="text-xs font-semibold text-vs-blue-light">Pick a contract</div>
+                  <button
+                    type="button"
+                    onClick={() => { setAttachContractOpen(false); setLinkedContractId(""); }}
+                    className="rounded p-0.5 text-[hsl(0_0%_55%)] hover:bg-[hsl(0_0%_15%)] hover:text-white"
+                    aria-label="Cancel attach contract"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+                <select
+                  value={linkedContractId}
+                  onChange={(e) => setLinkedContractId(e.target.value)}
+                  className="w-full rounded-md border border-[hsl(0_0%_18%)] bg-[hsl(0_0%_8%)] px-3 py-2 text-sm"
+                  data-testid="select-linked-contract"
+                  disabled={contractsQ.isLoading}
+                >
+                  <option value="">— None</option>
+                  {(contractsQ.data ?? []).map(c => (
+                    <option key={c.id} value={String(c.id)}>
+                      {c.contractNumber ? `${c.contractNumber} — ` : ""}{c.title || `Contract ${c.id}`}
+                    </option>
+                  ))}
+                </select>
+                {contractsQ.isLoading && (
+                  <div className="text-[11px] text-[hsl(0_0%_55%)]">Loading contracts…</div>
+                )}
+                {contractsQ.error && (
+                  <div className="text-[11px] text-[hsl(0_80%_75%)]">
+                    Could not load contracts. {(contractsQ.error as any)?.message ?? ""}
+                  </div>
+                )}
+                {linkedContractId && (
+                  <div className="text-[11px] text-[hsl(0_0%_70%)]">
+                    The contract will show as a banner at the top of the channel and as an in-call side panel.
+                  </div>
+                )}
               </div>
             )}
           </div>

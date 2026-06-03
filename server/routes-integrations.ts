@@ -5,12 +5,20 @@
 // caller must include the secret in the `x-suite-secret` header. Same
 // pattern that bulldog-auth uses for inter-app web-push fan-out.
 //
-// Phase 1.9 ships exactly one bridge:
+// Phase 1.9 ships two bridges:
 //   POST /api/integrations/contracts/create-meeting
 //     body: { contractRef, contractTitle, contractUrl?, orgId? }
 //     creates: a job (work_object kind=contract, ref=CONTRACT-<contractRef>)
 //              + a channel nested under it, named for the contract ref.
 //     returns: { jobId, channelId, deepLink: "/?channel=<id>" }
+//
+//   POST /api/integrations/contracts/create-channel  (Phase 1.9.3)
+//     body: { orgId?, projectId, attachedByUserId, channelName?, scope,
+//             memberIds?, linkedContract: { contractId, title, ref, appUrl, pdfUrl } }
+//     creates: a channel with the linkedContract metadata cached + posts a
+//              system message announcing the attachment. NOT idempotent —
+//              always creates a new channel (one channel per attach).
+//     returns: { channelId, projectId, deepLink }
 //
 // The deepLink points at chat.bulldogops.com — the caller prepends its own
 // host or uses it as-is depending on context. Idempotent: if a job with
@@ -50,6 +58,10 @@ function sanitizeChannelName(input: string): string {
     .replace(/^-|-$/g, "")
     .slice(0, 80) || "contract-meeting";
 }
+
+// Phase 1.9.3 — restricted channel scopes allowed via the bridge. Mirrors
+// shared/schema.ts channelScopes but excludes "private" handling differs.
+const ALLOWED_BRIDGE_SCOPES = new Set(["global", "private"]);
 
 export function registerIntegrationRoutes(app: Express) {
   // Bulldog Contracts → Chat bridge.
@@ -172,6 +184,132 @@ export function registerIntegrationRoutes(app: Express) {
       ok: true,
       jobId: job.id,
       jobRef: job.ref,
+      channelId: channel.id,
+      channelName: channel.name,
+      projectId,
+      deepLink: `/?channel=${channel.id}`,
+    });
+  });
+
+  // Phase 1.9.3 — Bulldog Contracts → Chat "create channel with contract attached".
+  //
+  // This is the rich-attach flow: the contracts UI lets Josh pick the
+  // company, channel name, scope (global/private), members, and which
+  // contract to attach. The contracts server forwards all of that here
+  // along with the verified attachedByUserId (the contracts user's id —
+  // it's the same id in the chat DB since both apps shadow-provision
+  // through bulldog-auth).
+  app.post("/api/integrations/contracts/create-channel", (req, res) => {
+    if (!requireSuiteSecret(req, res)) return;
+
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const orgId = Number.isFinite(Number(body.orgId)) && Number(body.orgId) > 0
+      ? Number(body.orgId)
+      : DEFAULT_ORG_ID;
+    const projectId = Number(body.projectId);
+    const attachedByUserId = Number(body.attachedByUserId);
+    const scopeRaw = typeof body.scope === "string" ? body.scope : "global";
+    const scope = ALLOWED_BRIDGE_SCOPES.has(scopeRaw) ? scopeRaw : "global";
+    const memberIds = Array.isArray(body.memberIds)
+      ? (body.memberIds as unknown[]).map(n => Number(n)).filter(n => Number.isFinite(n) && n > 0)
+      : [];
+    const channelNameOverride = typeof body.channelName === "string" ? body.channelName.trim() : "";
+    const lc = body.linkedContract as Record<string, unknown> | undefined;
+
+    if (!Number.isFinite(projectId) || projectId <= 0) {
+      return res.status(400).json({ message: "projectId required" });
+    }
+    if (!Number.isFinite(attachedByUserId) || attachedByUserId <= 0) {
+      return res.status(400).json({ message: "attachedByUserId required" });
+    }
+    if (!lc || typeof lc !== "object") {
+      return res.status(400).json({ message: "linkedContract required" });
+    }
+    const contractId = Number(lc.contractId);
+    const title = typeof lc.title === "string" ? lc.title.trim() : "";
+    const appUrl = typeof lc.appUrl === "string" ? lc.appUrl.trim() : "";
+    const ref = typeof lc.ref === "string" ? lc.ref.trim() : null;
+    const pdfUrl = typeof lc.pdfUrl === "string" ? lc.pdfUrl.trim() : null;
+    if (!Number.isFinite(contractId) || contractId <= 0) {
+      return res.status(400).json({ message: "linkedContract.contractId required" });
+    }
+    if (!title) return res.status(400).json({ message: "linkedContract.title required" });
+    if (!appUrl) return res.status(400).json({ message: "linkedContract.appUrl required" });
+
+    // Validate project belongs to org.
+    const project = storage.getProject(projectId);
+    if (!project || project.orgId !== orgId) {
+      return res.status(400).json({ message: "projectId does not belong to org" });
+    }
+
+    // Validate attaching user exists in the org. SSO shadow-provision keeps
+    // ids in sync between auth/contracts/chat, but defence-in-depth.
+    const attacher = storage.getUser(attachedByUserId);
+    if (!attacher || attacher.orgId !== orgId) {
+      return res.status(400).json({ message: "attachedByUserId not in org" });
+    }
+
+    // Build the linkedContract meta blob with the server-side audit fields.
+    const meta = {
+      contractId,
+      title: title.slice(0, 200),
+      ref: ref || null,
+      appUrl: appUrl.slice(0, 500),
+      pdfUrl: pdfUrl || null,
+      attachedByUserId,
+      attachedAt: Date.now(),
+    };
+
+    // Channel name: caller-provided or derived from contract title.
+    const nameCandidate = channelNameOverride || title;
+    const channelName = sanitizeChannelName(nameCandidate);
+
+    const existing = storage.listChannelsByProject(projectId);
+    const channel = storage.createChannel({
+      projectId,
+      workObjectId: null,
+      position: existing.length,
+      name: channelName,
+      type: "text",
+      topic: `Contract: ${title.slice(0, 400)}`,
+      scope: scope as any,
+      entityId: null,
+      teamRole: null,
+      linkedContract: meta,
+    } as any);
+
+    // Seed private membership when scope=private. Always include the
+    // attacher so they don't lock themselves out.
+    if (scope === "private") {
+      const ids = new Set<number>(memberIds);
+      ids.add(attachedByUserId);
+      const orgUserIds = new Set(storage.listUsersByOrg(orgId).map(u => u.id));
+      const filtered = Array.from(ids).filter(id => orgUserIds.has(id));
+      storage.addChannelMembers(channel.id, filtered);
+    }
+
+    // System message announcing the attach.
+    try {
+      storage.createMessage({
+        channelId: channel.id,
+        userId: attachedByUserId,
+        content: `📄 Contract attached: ${meta.title}`,
+        meta: JSON.stringify({
+          system: true,
+          kind: "contract_attached",
+          contractId: meta.contractId,
+          title: meta.title,
+          ref: meta.ref,
+          appUrl: meta.appUrl,
+          pdfUrl: meta.pdfUrl,
+        }),
+      });
+    } catch (e) {
+      console.warn("[bridge create-channel] system message skipped:", (e as Error).message);
+    }
+
+    res.json({
+      ok: true,
       channelId: channel.id,
       channelName: channel.name,
       projectId,

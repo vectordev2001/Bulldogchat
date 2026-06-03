@@ -724,4 +724,17 @@ export function runMigrations() {
   } catch (e) {
     console.warn("[migrate] v15 scheduled-calls tables skipped:", e);
   }
+
+  // v16 (Phase 1.9.3) — add channels.linked_contract for the
+  // contract-linked-channel feature. Stored as JSON text. Nullable so all
+  // existing channels remain valid.
+  try {
+    const chCols = rawDb.prepare(`PRAGMA table_info(channels)`).all() as Array<{ name: string }>;
+    if (!chCols.find(c => c.name === "linked_contract")) {
+      rawDb.exec(`ALTER TABLE channels ADD COLUMN linked_contract TEXT;`);
+      console.log("[migrate] v16 added channels.linked_contract column");
+    }
+  } catch (e) {
+    console.warn("[migrate] v16 channels.linked_contract add skipped:", e);
+  }
 }

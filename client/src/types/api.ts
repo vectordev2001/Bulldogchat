@@ -34,6 +34,19 @@ export interface ApiProject {
 export type ChannelType = "text" | "voice";
 export type ChannelScope = "global" | "entity" | "team" | "private" | "dm";
 
+// Phase 1.9.3 — contract metadata cached on a channel when one is
+// attached. Server is the source of truth; UI uses this for banner +
+// in-call PDF panel without round-tripping to bulldog-contracts.
+export interface ApiLinkedContract {
+  contractId: number;
+  title: string;
+  ref?: string | null;
+  appUrl: string;
+  pdfUrl?: string | null;
+  attachedByUserId: number;
+  attachedAt: number;
+}
+
 export interface ApiChannel {
   id: number;
   projectId: number;
@@ -47,6 +60,8 @@ export interface ApiChannel {
   scope?: ChannelScope;
   entityId?: string | null;
   teamRole?: UserRole | null;
+  // Phase 1.9.3 — attached contract metadata, when present.
+  linkedContract?: ApiLinkedContract | null;
   createdAt: string;
 }
 

@@ -21,6 +21,7 @@ import type {
   DirectCall, DirectCallStatus,
   WorkObject, WorkObjectKind, WorkObjectStatus,
   WorkObjectChannelLink, WorkObjectActivity, WorkObjectActivityType,
+  LinkedContractMeta,
 } from "@shared/schema";
 import { and, eq, desc, lt, asc, sql, inArray, isNull } from "drizzle-orm";
 
@@ -80,6 +81,7 @@ export interface IStorage {
   listChannelsByJob(workObjectId: number): Channel[];
   getChannel(id: number): Channel | undefined;
   createChannel(input: InsertChannel): Channel;
+  setChannelLinkedContract(channelId: number, meta: LinkedContractMeta | null): Channel | undefined;
   // Phase 1.8: admin "move channel" support. Lets admins re-home a channel
   // to a different company and/or nest it under a different job.
   updateChannel(id: number, patch: Partial<Pick<Channel, "name" | "topic" | "projectId" | "workObjectId" | "position">>): Channel | undefined;
@@ -335,7 +337,16 @@ class DatabaseStorage implements IStorage {
   }
   getChannel(id: number) { return db.select().from(channels).where(eq(channels.id, id)).get(); }
   createChannel(input: InsertChannel) {
-    return db.insert(channels).values({ ...input, createdAt: new Date() }).returning().get();
+    // Cast to any: InsertChannel's auto-generated linkedContract type is the
+    // widened `Json` from drizzle-zod, but the column is $type<LinkedContractMeta|null>.
+    // Channels are usually created without linkedContract; attach happens via
+    // setChannelLinkedContract or the create-route handler explicitly.
+    return db.insert(channels).values({ ...(input as any), createdAt: new Date() }).returning().get();
+  }
+  // Phase 1.9.3 — attach (or replace) a contract link on a channel. Pass
+  // null to detach. Returns the updated channel.
+  setChannelLinkedContract(channelId: number, meta: LinkedContractMeta | null) {
+    return db.update(channels).set({ linkedContract: meta }).where(eq(channels.id, channelId)).returning().get();
   }
   // Admin-only "move channel" support. Caller validates that the target
   // workObjectId (if set) belongs to the target projectId.

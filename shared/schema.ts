@@ -103,11 +103,47 @@ export const channels = sqliteTable("channels", {
   scope: text("scope", { enum: channelScopes }).notNull().default("global"),
   entityId: text("entity_id"),
   teamRole: text("team_role", { enum: userRoles }),
+  // Phase 1.9.3 — contract linkage. When a channel is created from a
+  // contract (or has one attached later), we cache its identity so chat
+  // can render the contract banner + in-call "View contract" panel
+  // without round-tripping to the contracts service every load. Stored
+  // as JSON-encoded text for SQLite portability.
+  linkedContract: text("linked_contract", { mode: "json" }).$type<LinkedContractMeta | null>(),
   createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
 });
+
+// Cached contract metadata stored on a channel. Only fields we need to
+// render the chat-side UI; the contracts app remains the source of truth.
+export type LinkedContractMeta = {
+  contractId: number;
+  // Human-readable title shown in the banner ("BOE Fiber 2026 — MSA")
+  title: string;
+  // Short stable reference, e.g. "VFD-2026-014"
+  ref?: string | null;
+  // URL into bulldog-contracts where users can view/edit the contract.
+  appUrl: string;
+  // Direct PDF URL for inline rendering in the call panel. Must be CORS-
+  // friendly or proxied by chat. May be null for drafts.
+  pdfUrl?: string | null;
+  // Who attached it (audit) and when.
+  attachedByUserId: number;
+  attachedAt: number;
+};
 export const insertChannelSchema = createInsertSchema(channels).omit({ id: true, createdAt: true });
 export type Channel = typeof channels.$inferSelect;
 export type InsertChannel = z.infer<typeof insertChannelSchema>;
+
+// Phase 1.9.3 — payload accepted on attach/create-from-contract endpoints.
+// All fields are needed because the contracts app is the source of truth
+// and chat just caches the data for fast UI render. Validated server-side.
+export const linkedContractAttachSchema = z.object({
+  contractId: z.number().int().positive(),
+  title: z.string().min(1).max(200),
+  ref: z.string().max(80).optional().nullable(),
+  appUrl: z.string().url().max(500),
+  pdfUrl: z.string().url().max(500).optional().nullable(),
+});
+export type LinkedContractAttachInput = z.infer<typeof linkedContractAttachSchema>;
 
 // Channel-create payload accepted on POST /api/projects/:id/channels.
 // We do scope-aware validation here to keep routes thin.
@@ -122,6 +158,10 @@ export const channelCreateSchema = z.object({
   // The job must belong to the same company (projectId) as the channel.
   workObjectId: z.number().int().positive().optional().nullable(),
   memberIds: z.array(z.number().int().positive()).optional(),
+  // Phase 1.9.3 — attach a contract at create time. When present, the
+  // channel will store linkedContract and post a system message announcing
+  // the attachment so members see the document in-thread immediately.
+  linkedContract: linkedContractAttachSchema.optional().nullable(),
 }).refine(
   (d) => d.scope !== "entity" || (typeof d.entityId === "string" && d.entityId.length > 0),
   { message: "entity scope requires entityId", path: ["entityId"] },

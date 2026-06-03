@@ -4,7 +4,7 @@ import { nanoid } from "nanoid";
 import { storage, sanitize } from "./storage";
 import {
   signupSchema, loginSchema, acceptInviteSchema, sendMessageSchema, reactionSchema,
-  insertProjectSchema, insertChannelSchema, insertInviteSchema, channelCreateSchema,
+  insertProjectSchema, insertChannelSchema, insertInviteSchema, channelCreateSchema, linkedContractAttachSchema,
 } from "@shared/schema";
 import { hashPassword, verifyPassword, signJwt, requireAuth, requireRole, setAuthCookie, clearAuthCookie, AuthedRequest, AUTH_COOKIE } from "./auth";
 import { addSubscriber, removeSubscriber, emitMessageNew, emitMessageDelete, emitMessageUpdate, emitReactionChange, emitChannelDelete, emitCallIncoming, emitCallAccepted, emitCallEnded, emitPresenceChange, type CallEventPayload, WireMessage } from "./events";
@@ -398,6 +398,20 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
       workObjectId = job.id;
     }
     const existing = storage.listChannelsByProject(id);
+    // Phase 1.9.3 — if the caller is attaching a contract at creation, the
+    // linkedContract payload carries the cached metadata. Validated by the
+    // schema; we add the audit fields (who/when) server-side.
+    const linkedContract = parsed.data.linkedContract
+      ? {
+          contractId: parsed.data.linkedContract.contractId,
+          title: parsed.data.linkedContract.title,
+          ref: parsed.data.linkedContract.ref ?? null,
+          appUrl: parsed.data.linkedContract.appUrl,
+          pdfUrl: parsed.data.linkedContract.pdfUrl ?? null,
+          attachedByUserId: u.id,
+          attachedAt: Date.now(),
+        }
+      : null;
     const channel = storage.createChannel({
       projectId: id,
       workObjectId,
@@ -408,6 +422,7 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
       scope: parsed.data.scope,
       entityId: parsed.data.scope === "entity" ? parsed.data.entityId ?? null : null,
       teamRole: parsed.data.scope === "team" ? parsed.data.teamRole ?? null : null,
+      linkedContract,
     });
     // Seed private membership. Caller is always added so they don't lose
     // access to the channel they just created.
@@ -419,7 +434,99 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
       const filtered = Array.from(ids).filter(id => orgMemberIds.has(id));
       storage.addChannelMembers(channel.id, filtered);
     }
+    // Phase 1.9.3 — announce the attached contract in the channel so
+    // members see it inline immediately (and the message becomes searchable).
+    if (linkedContract) {
+      try {
+        storage.createMessage({
+          channelId: channel.id,
+          userId: u.id,
+          content: `📄 Contract attached: ${linkedContract.title}`,
+          meta: JSON.stringify({ system: true, kind: "contract_attached", contractId: linkedContract.contractId, title: linkedContract.title, ref: linkedContract.ref ?? null, appUrl: linkedContract.appUrl, pdfUrl: linkedContract.pdfUrl ?? null }),
+        });
+      } catch (e) {
+        // Non-fatal — channel is created either way.
+        console.warn("[create-channel] contract-attached system message skipped:", (e as Error).message);
+      }
+    }
     res.json(channel);
+  });
+
+  // Phase 1.9.3 — attach (or replace) a contract on an existing channel.
+  // Admin/foreman only — same role as channel create. Posts a system
+  // message announcing the attachment.
+  app.post("/api/channels/:id/linked-contract", requireAuth, requireRole(["admin", "foreman"]), (req, res) => {
+    const u = (req as AuthedRequest).user;
+    const channelId = Number(req.params.id);
+    if (!Number.isFinite(channelId)) return res.status(400).json({ message: "Invalid channel id" });
+    const ch = storage.getChannel(channelId);
+    if (!ch) return res.status(404).json({ message: "Channel not found" });
+    const access = userCanAccessChannel(u.id, u.orgId, channelId);
+    if (!access) return res.status(404).json({ message: "Channel not found" });
+    // Empty body — detach.
+    if (!req.body || Object.keys(req.body).length === 0) {
+      const updated = storage.setChannelLinkedContract(channelId, null);
+      return res.json(updated);
+    }
+    const parsed = linkedContractAttachSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.issues[0]?.message ?? "Invalid input" });
+    const meta = {
+      contractId: parsed.data.contractId,
+      title: parsed.data.title,
+      ref: parsed.data.ref ?? null,
+      appUrl: parsed.data.appUrl,
+      pdfUrl: parsed.data.pdfUrl ?? null,
+      attachedByUserId: u.id,
+      attachedAt: Date.now(),
+    };
+    const updated = storage.setChannelLinkedContract(channelId, meta);
+    try {
+      storage.createMessage({
+        channelId,
+        userId: u.id,
+        content: `📄 Contract attached: ${meta.title}`,
+        meta: JSON.stringify({ system: true, kind: "contract_attached", contractId: meta.contractId, title: meta.title, ref: meta.ref, appUrl: meta.appUrl, pdfUrl: meta.pdfUrl }),
+      });
+    } catch (e) {
+      console.warn("[attach-contract] system message skipped:", (e as Error).message);
+    }
+    res.json(updated);
+  });
+
+  // Phase 1.9.3 — proxy: list contracts from bulldog-contracts so the chat
+  // UI can populate an "Attach contract" dropdown without dealing with
+  // cross-origin cookies. Forwards the user's bulldog_access cookie/header
+  // to contracts so its own JWT middleware authorizes the call.
+  app.get("/api/contracts/list", requireAuth, async (req, res) => {
+    const contractsBase = (process.env.CONTRACTS_BASE_URL || "https://bulldog-contracts.onrender.com").replace(/\/+$/, "");
+    // Pull the bearer token from the chat request — prefer Authorization
+    // header (mobile/API clients) but fall back to the cookie header.
+    const auth = req.headers.authorization;
+    const cookie = req.headers.cookie;
+    if (!auth && !cookie) return res.status(401).json({ message: "No auth" });
+    const search = typeof req.query.q === "string" ? `?q=${encodeURIComponent(req.query.q)}` : "";
+    try {
+      const upstream = await fetch(`${contractsBase}/api/contracts${search}`, {
+        headers: {
+          ...(auth ? { authorization: auth } : {}),
+          ...(cookie ? { cookie } : {}),
+        },
+      });
+      const text = await upstream.text();
+      let body: any = null;
+      try { body = text ? JSON.parse(text) : null; } catch { body = { raw: text }; }
+      if (!upstream.ok) {
+        return res.status(upstream.status).json({
+          message: (body && body.message) || `Contracts proxy failed (${upstream.status})`,
+          upstream: body,
+        });
+      }
+      // Pass through the list as-is; the UI only needs id/title/contractNumber.
+      res.json(body);
+    } catch (err) {
+      console.error("[contracts proxy]", err);
+      res.status(502).json({ message: "Failed to reach contracts service" });
+    }
   });
 
   // List members of a private channel (admin/creator visibility, but here
