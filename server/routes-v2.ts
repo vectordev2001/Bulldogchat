@@ -342,21 +342,15 @@ export function registerV2Routes(app: Express) {
     res.json({ ok: true });
   });
 
-  app.post("/api/admin/invites", requireAuth, requireRole(["admin"]), (req, res) => {
-    const u = (req as AuthedRequest).user;
-    const role = req.body?.role || "field";
-    if (!["admin","foreman","office","field","safety"].includes(role)) return res.status(400).json({ message: "Invalid role" });
-    const email = req.body?.email ? String(req.body.email).toLowerCase() : null;
-    const expiresIn = Number(req.body?.expiresInDays ?? 14) * 24 * 60 * 60 * 1000;
-    const token = nanoid(28);
-    const inv = storage.createInvite({
-      orgId: u.orgId, email, role, token,
-      invitedByUserId: u.id,
-      expiresAt: new Date(Date.now() + expiresIn),
+  // Phase 1.9.2 — admin-issued invites that mint local users are disabled.
+  // All user provisioning happens on auth.bulldogops.com so role assignment
+  // can't be forged via a stolen invite link.
+  app.post("/api/admin/invites", requireAuth, requireRole(["admin"]), (_req, res) => {
+    return res.status(410).json({
+      message: "Admin invites are disabled. Add users on auth.bulldogops.com instead.",
+      redirect: "https://auth.bulldogops.com/",
+      code: "admin_invites_disabled",
     });
-    const proto = (req.headers["x-forwarded-proto"] || (req.secure ? "https" : "http")) as string;
-    const host = (req.headers["x-forwarded-host"] || req.headers.host) as string;
-    res.json({ ...inv, url: `${proto}://${host}/#/accept-invite/${inv.token}` });
   });
 
   app.get("/api/admin/org", requireAuth, requireRole(["admin"]), (req, res) => {

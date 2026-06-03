@@ -196,43 +196,16 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
   });
 
   // ── AUTH ──
-  app.post("/api/auth/signup", (req, res) => {
-    const parsed = signupSchema.safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ message: parsed.error.issues[0]?.message ?? "Invalid input" });
-    const { orgName, name, email, password } = parsed.data;
-
-    if (storage.getUserByEmail(email)) {
-      return res.status(409).json({ message: "Email is already registered" });
-    }
-    let slug = slugify(orgName);
-    if (storage.getOrgBySlug(slug)) slug = `${slug}-${nanoid(6).toLowerCase()}`;
-    const org = storage.createOrg({ name: orgName, slug, plan: "starter" });
-
-    const user = storage.createUser({
-      orgId: org.id,
-      email,
-      passwordHash: hashPassword(password),
-      name,
-      title: "Owner",
-      avatarUrl: null,
-      hue: 232,
-      role: "admin",
-      status: "online",
+  // Phase 1.9.2 — user creation is centralized in bulldog-auth. Chat must
+  // not provision its own users, otherwise an unauthenticated attacker can
+  // POST here and become an org admin. Returns 410 Gone with a redirect
+  // hint so any stale client gets a clear error instead of silently failing.
+  app.post("/api/auth/signup", (_req, res) => {
+    res.status(410).json({
+      message: "Self-signup is disabled. Ask your admin to add you on auth.bulldogops.com.",
+      redirect: "https://auth.bulldogops.com/",
+      code: "signup_disabled",
     });
-
-    // Create starter project + channels
-    const project = storage.createProject({
-      orgId: org.id, name: "General", slug: "general",
-      short: "GEN", hue: 232, description: "Your team's first project.",
-    });
-    storage.addProjectMember(project.id, user.id, "owner");
-    storage.createChannel({ projectId: project.id, name: "general", type: "text", topic: "Team-wide chatter.", position: 0 });
-    storage.createChannel({ projectId: project.id, name: "announcements", type: "text", topic: "Important drops.", position: 1 });
-    storage.createChannel({ projectId: project.id, name: "Daily Standup", type: "voice", topic: null, position: 2 });
-
-    const token = signJwt(user.id);
-    setAuthCookie(res, token);
-    res.json({ token, user: sanitize(user), org });
   });
 
   app.post("/api/auth/login", (req, res) => {
@@ -955,26 +928,17 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
   });
 
   // ── INVITES ──
-  app.post("/api/projects/:id/invites", requireAuth, requireRole(["admin"]), (req, res) => {
-    const u = (req as AuthedRequest).user;
-    const projectId = Number(req.params.id);
-    if (!userCanAccessProject(u.id, u.orgId, projectId)) return res.status(404).json({ message: "Not found" });
-    const parsed = insertInviteSchema.omit({ orgId: true, projectId: true }).safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ message: "Invalid input" });
-    const token = nanoid(28);
-    const invite = storage.createInvite({
-      orgId: u.orgId,
-      projectId,
-      email: parsed.data.email ?? null,
-      role: parsed.data.role,
-      token,
-      invitedByUserId: u.id,
-      expiresAt: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
+  // Phase 1.9.2 — invite minting also moved to bulldog-auth. Returns 410
+  // with a redirect hint so any stale UI shows a clear path forward.
+  // Previously: this minted a project invite link that, when redeemed,
+  // created a brand-new local user with the role embedded in the link —
+  // bypassing bulldog-auth entirely. Locking down kills that lateral path.
+  app.post("/api/projects/:id/invites", requireAuth, requireRole(["admin"]), (_req, res) => {
+    return res.status(410).json({
+      message: "Project invites are disabled. Add users on auth.bulldogops.com and they'll see this project automatically.",
+      redirect: "https://auth.bulldogops.com/",
+      code: "project_invites_disabled",
     });
-    const proto = req.headers["x-forwarded-proto"] || (req.secure ? "https" : "http");
-    const host = req.headers["x-forwarded-host"] || req.headers.host;
-    const inviteUrl = `${proto}://${host}/#/accept-invite/${token}`;
-    res.json({ invite, url: inviteUrl });
   });
 
   app.get("/api/invites/:token", (req, res) => {
@@ -991,34 +955,16 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     });
   });
 
-  app.post("/api/auth/accept-invite", (req, res) => {
-    const parsed = acceptInviteSchema.safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ message: "Invalid input" });
-    const invite = storage.getInviteByToken(parsed.data.token);
-    if (!invite) return res.status(404).json({ message: "Invite not found" });
-    if (invite.acceptedAt) return res.status(410).json({ message: "Invite already used" });
-    if (new Date(invite.expiresAt).getTime() < Date.now()) return res.status(410).json({ message: "Invite expired" });
-
-    const email = invite.email ?? `${nanoid(8)}@vector-invite.local`;
-    if (storage.getUserByEmail(email)) return res.status(409).json({ message: "Email already registered" });
-
-    const user = storage.createUser({
-      orgId: invite.orgId,
-      email,
-      passwordHash: hashPassword(parsed.data.password),
-      name: parsed.data.name,
-      title: null,
-      avatarUrl: null,
-      hue: 218,
-      role: invite.role,
-      status: "online",
+  // Phase 1.9.2 — same lockdown as /signup. Invite-based user creation
+  // bypasses bulldog-auth and was used to mint admins. Direct people to
+  // the central auth app instead. Existing users sign in through SSO and
+  // get auto-provisioned via bulldog-sso.ts — no manual create needed.
+  app.post("/api/auth/accept-invite", (_req, res) => {
+    res.status(410).json({
+      message: "Invite-based signup is disabled. Ask your admin to add you on auth.bulldogops.com.",
+      redirect: "https://auth.bulldogops.com/",
+      code: "invite_signup_disabled",
     });
-    if (invite.projectId) storage.addProjectMember(invite.projectId, user.id, "member");
-    storage.markInviteAccepted(invite.id);
-
-    const token = signJwt(user.id);
-    setAuthCookie(res, token);
-    res.json({ token, user: sanitize(user), org: storage.getOrg(user.orgId) });
   });
 
   // ── VOICE / LIVEKIT ──
