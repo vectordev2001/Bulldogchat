@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { ApiChannel, ApiUser, ChannelScope, ChannelType, UserRole } from "@/types/api";
-import { Loader2, Hash, Globe, Building2, Users, Lock, Briefcase } from "lucide-react";
+import { Loader2, Hash, Globe, Building2, Users, Lock, Briefcase, Plus, X } from "lucide-react";
 
 interface ApiJob {
   id: number;
@@ -51,12 +51,23 @@ export function CreateChannelDialog({ open, onClose, projectId, me, onCreated }:
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Inline "create a new job" mini-form so admins/foremen can add a job
+  // without leaving this dialog. The user previously hit a blank screen
+  // because the legacy setType() call crashed render — fixed by removing
+  // that stale setter; this inline job creator addresses the deeper UX
+  // pain ("need an easier way to add jobs and channels to companies").
+  const [newJobOpen, setNewJobOpen] = useState(false);
+  const [newJobTitle, setNewJobTitle] = useState("");
+  const [newJobKind, setNewJobKind] = useState<"job_site" | "work_project">("job_site");
+  const [newJobSaving, setNewJobSaving] = useState(false);
+  const [newJobError, setNewJobError] = useState<string | null>(null);
+
   // Reset state whenever the dialog opens.
   useEffect(() => {
     if (open) {
       setName("");
       setTopic("");
-      setType("text");
+      // type is a const ("text") in Phase 1.9 unified channels — no setter.
       setScope("global");
       setEntityId("");
       setTeamRole("field");
@@ -64,6 +75,11 @@ export function CreateChannelDialog({ open, onClose, projectId, me, onCreated }:
       setWorkObjectId("");
       setError(null);
       setLoading(false);
+      setNewJobOpen(false);
+      setNewJobTitle("");
+      setNewJobKind("job_site");
+      setNewJobSaving(false);
+      setNewJobError(null);
     }
   }, [open]);
 
@@ -100,6 +116,45 @@ export function CreateChannelDialog({ open, onClose, projectId, me, onCreated }:
     const next = new Set(memberIds);
     if (next.has(id)) next.delete(id); else next.add(id);
     setMemberIds(next);
+  };
+
+  // Roles allowed to create jobs (mirrors server-side requireRole). Showing
+  // the inline creator to anyone else would just yield a 403, so hide it.
+  const canCreateJob = me?.role === "admin" || me?.role === "foreman";
+
+  // Generate a URL-safe ref from the title — the server requires one and we
+  // don't want to add another field. "BOE Fiber 2026" → "BOE-Fiber-2026".
+  // Append a 4-char suffix so the (org_id, kind, ref) unique index doesn't
+  // collide if the user creates two jobs with similar names.
+  const slugifyRef = (title: string): string => {
+    const base = title.trim().replace(/[^A-Za-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60) || "job";
+    const suffix = Math.random().toString(36).slice(2, 6).toUpperCase();
+    return `${base}-${suffix}`;
+  };
+
+  const submitNewJob = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setNewJobError(null);
+    const title = newJobTitle.trim();
+    if (!title) { setNewJobError("Job name is required."); return; }
+    setNewJobSaving(true);
+    try {
+      const created = await apiRequest<ApiJob>(
+        "POST",
+        `/api/work-objects?projectId=${projectId}`,
+        { kind: newJobKind, ref: slugifyRef(title), title, status: "active" },
+      );
+      // Optimistically refresh and select the new job.
+      await queryClient.invalidateQueries({ queryKey: ["/api/work-objects", { projectId }] });
+      setWorkObjectId(String(created.id));
+      setNewJobOpen(false);
+      setNewJobTitle("");
+      setNewJobKind("job_site");
+    } catch (err: any) {
+      setNewJobError(err?.body?.message ?? "Could not create job.");
+    } finally {
+      setNewJobSaving(false);
+    }
   };
 
   const onSubmit = async (e: React.FormEvent) => {
@@ -177,12 +232,25 @@ export function CreateChannelDialog({ open, onClose, projectId, me, onCreated }:
 
           {/* Optional job nesting. Leaving this blank keeps the channel as a
               company-wide channel; picking a job nests it under that job in
-              the sidebar. */}
+              the sidebar. Admins/foremen can also spin up a new job inline
+              without leaving the dialog. */}
           <div className="space-y-1.5">
-            <label className="flex items-center gap-2 text-xs text-[hsl(0_0%_55%)]">
-              <Briefcase className="h-3.5 w-3.5" />
-              Nest under job (optional)
-            </label>
+            <div className="flex items-center justify-between">
+              <label className="flex items-center gap-2 text-xs text-[hsl(0_0%_55%)]">
+                <Briefcase className="h-3.5 w-3.5" />
+                Nest under job (optional)
+              </label>
+              {canCreateJob && !newJobOpen && (
+                <button
+                  type="button"
+                  onClick={() => setNewJobOpen(true)}
+                  className="inline-flex items-center gap-1 rounded-md border border-[hsl(232_70%_45%)] bg-[hsl(232_50%_18%)] px-2 py-0.5 text-[11px] font-medium text-vs-blue-light hover:bg-[hsl(232_50%_22%)]"
+                  data-testid="button-new-job-inline"
+                >
+                  <Plus className="h-3 w-3" /> New job
+                </button>
+              )}
+            </div>
             <select
               value={workObjectId}
               onChange={(e) => setWorkObjectId(e.target.value)}
@@ -197,8 +265,76 @@ export function CreateChannelDialog({ open, onClose, projectId, me, onCreated }:
                 </option>
               ))}
             </select>
-            {openJobs.length === 0 && !jobsQ.isLoading && (
-              <div className="text-[11px] text-[hsl(0_0%_55%)]">No open jobs in this company yet.</div>
+            {openJobs.length === 0 && !jobsQ.isLoading && !newJobOpen && (
+              <div className="text-[11px] text-[hsl(0_0%_55%)]">
+                No open jobs in this company yet{canCreateJob ? " — tap “New job” above to add one." : "."}
+              </div>
+            )}
+
+            {/* Inline mini-form. Mounted as a sibling so the parent <form>'s
+                onSubmit doesn't fire when the user presses Enter here — we
+                bind submit on the inner <div role="group"> button instead. */}
+            {newJobOpen && (
+              <div className="rounded-md border border-[hsl(232_40%_30%)] bg-[hsl(232_30%_12%)] p-3 space-y-2" data-testid="inline-new-job">
+                <div className="flex items-center justify-between">
+                  <div className="text-xs font-semibold text-vs-blue-light">New job in this company</div>
+                  <button
+                    type="button"
+                    onClick={() => { setNewJobOpen(false); setNewJobError(null); }}
+                    className="rounded p-0.5 text-[hsl(0_0%_55%)] hover:bg-[hsl(0_0%_15%)] hover:text-white"
+                    aria-label="Cancel new job"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+                <input
+                  value={newJobTitle}
+                  onChange={(e) => setNewJobTitle(e.target.value)}
+                  onKeyDown={(e) => {
+                    // Enter triggers create instead of bubbling to the outer form.
+                    if (e.key === "Enter") { e.preventDefault(); void submitNewJob(e as unknown as React.FormEvent); }
+                  }}
+                  placeholder="Job name (e.g. BOE Fiber 2026)"
+                  className="w-full rounded-md border border-[hsl(0_0%_18%)] bg-[hsl(0_0%_8%)] px-3 py-2 text-sm outline-none placeholder:text-[hsl(0_0%_40%)]"
+                  data-testid="input-new-job-title"
+                  maxLength={200}
+                  autoFocus
+                />
+                <div className="flex items-center gap-2">
+                  <label className="text-[11px] text-[hsl(0_0%_55%)]">Kind</label>
+                  <select
+                    value={newJobKind}
+                    onChange={(e) => setNewJobKind(e.target.value as "job_site" | "work_project")}
+                    className="flex-1 rounded-md border border-[hsl(0_0%_18%)] bg-[hsl(0_0%_8%)] px-2 py-1.5 text-xs"
+                    data-testid="select-new-job-kind"
+                  >
+                    <option value="job_site">Job site (field crew location)</option>
+                    <option value="work_project">Work project (multi-site initiative)</option>
+                  </select>
+                </div>
+                {newJobError && (
+                  <div className="text-[11px] text-[hsl(0_80%_75%)]">{newJobError}</div>
+                )}
+                <div className="flex justify-end gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => { setNewJobOpen(false); setNewJobError(null); }}
+                    className="rounded-md border border-[hsl(0_0%_18%)] px-2 py-1 text-xs hover:bg-[hsl(0_0%_12%)]"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => void submitNewJob(e as unknown as React.FormEvent)}
+                    disabled={newJobSaving || !newJobTitle.trim()}
+                    className="inline-flex items-center gap-1 rounded-md bg-[hsl(232_70%_55%)] px-2 py-1 text-xs font-medium text-white hover:bg-[hsl(232_70%_60%)] disabled:opacity-60"
+                    data-testid="button-save-new-job"
+                  >
+                    {newJobSaving && <Loader2 className="h-3 w-3 animate-spin" />}
+                    Create job
+                  </button>
+                </div>
+              </div>
             )}
           </div>
 
