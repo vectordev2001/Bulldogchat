@@ -207,7 +207,16 @@ export function registerIntegrationRoutes(app: Express) {
       ? Number(body.orgId)
       : DEFAULT_ORG_ID;
     const projectId = Number(body.projectId);
-    const attachedByUserId = Number(body.attachedByUserId);
+    // Phase 1.9.3+: prefer email-based attacher resolution — numeric ids are
+    // NOT consistent across the contracts and chat DBs (each app holds its
+    // own primary keys). Email is the only stable cross-app handle.
+    const attachedByEmail = typeof body.attachedByEmail === "string"
+      ? body.attachedByEmail.trim().toLowerCase()
+      : "";
+    const attachedByName = typeof body.attachedByName === "string"
+      ? body.attachedByName.trim()
+      : "";
+    const attachedByUserIdRaw = Number(body.attachedByUserId);
     const scopeRaw = typeof body.scope === "string" ? body.scope : "global";
     const scope = ALLOWED_BRIDGE_SCOPES.has(scopeRaw) ? scopeRaw : "global";
     const memberIds = Array.isArray(body.memberIds)
@@ -227,8 +236,8 @@ export function registerIntegrationRoutes(app: Express) {
     if (!Number.isFinite(projectId) || projectId <= 0) {
       return res.status(400).json({ message: "projectId required" });
     }
-    if (!Number.isFinite(attachedByUserId) || attachedByUserId <= 0) {
-      return res.status(400).json({ message: "attachedByUserId required" });
+    if (!attachedByEmail && !(Number.isFinite(attachedByUserIdRaw) && attachedByUserIdRaw > 0)) {
+      return res.status(400).json({ message: "attachedByEmail or attachedByUserId required" });
     }
     if (!lc || typeof lc !== "object") {
       return res.status(400).json({ message: "linkedContract required" });
@@ -250,12 +259,43 @@ export function registerIntegrationRoutes(app: Express) {
       return res.status(400).json({ message: "projectId does not belong to org" });
     }
 
-    // Validate attaching user exists in the org. SSO shadow-provision keeps
-    // ids in sync between auth/contracts/chat, but defence-in-depth.
-    const attacher = storage.getUser(attachedByUserId);
-    if (!attacher || attacher.orgId !== orgId) {
-      return res.status(400).json({ message: "attachedByUserId not in org" });
+    // Resolve attacher: prefer email (cross-app stable). If only a numeric
+    // id was supplied, fall back to it. Shadow-provision the attacher row
+    // if the email is new to chat (e.g. user has been working in contracts
+    // but hasn't logged into chat yet).
+    let attacher: ReturnType<typeof storage.getUser>;
+    if (attachedByEmail) {
+      attacher = storage.getUserByEmail(attachedByEmail);
+      if (!attacher) {
+        try {
+          attacher = storage.createUser({
+            orgId,
+            email: attachedByEmail,
+            passwordHash: "",
+            name: attachedByName || attachedByEmail,
+            role: "field", // real role syncs on first SSO bridge
+          });
+          try {
+            const orgProjects = storage.listProjectsByOrg(orgId);
+            for (const p of orgProjects) {
+              try { storage.addProjectMember(p.id, attacher.id, "member"); }
+              catch { /* duplicate is fine */ }
+            }
+          } catch (e) {
+            console.warn("[bridge create-channel] attacher project seed failed:", (e as Error).message);
+          }
+        } catch (e) {
+          console.warn("[bridge create-channel] attacher shadow provision failed:", (e as Error).message);
+          return res.status(400).json({ message: "Could not resolve attacher in chat org" });
+        }
+      }
+    } else {
+      attacher = storage.getUser(attachedByUserIdRaw);
     }
+    if (!attacher || attacher.orgId !== orgId) {
+      return res.status(400).json({ message: "attacher not in org" });
+    }
+    const attachedByUserId = attacher.id;
 
     // Build the linkedContract meta blob with the server-side audit fields.
     const meta = {
