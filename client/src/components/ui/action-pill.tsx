@@ -32,24 +32,42 @@ const ICON_SIZE: Record<Size, string> = {
 
 export const ActionPill = React.forwardRef<HTMLButtonElement, ActionPillProps>(
   ({ variant = "neutral", size = "sm", icon, asChild = false, className, children, ...props }, ref) => {
-    const Comp = asChild ? Slot : "button";
+    const pillClasses = cn(
+      "inline-flex items-center gap-1.5 font-medium border border-transparent",
+      "active:scale-[0.97] transition-transform duration-100",
+      "disabled:opacity-50 disabled:cursor-not-allowed disabled:active:scale-100",
+      SIZE[size],
+      ICON_SIZE[size],
+      VARIANT[variant],
+      className,
+    );
+
+    // asChild mode: Slot requires EXACTLY ONE React child. The consumer passes a
+    // single wrapping element (e.g. <a>/<Link>) which may itself contain an icon
+    // + text. We clone that child and re-wrap its contents (plus any `icon`
+    // prop) in a single inline-flex span, so both Slot (one child) and the
+    // wrapper element (one child) are satisfied — no "expected a single child".
+    if (asChild) {
+      const child = React.Children.only(children) as React.ReactElement;
+      return (
+        <Slot ref={ref as any} className={cn(pillClasses, child.props.className)} {...props}>
+          {React.cloneElement(
+            child,
+            child.props,
+            <span className="inline-flex items-center gap-1.5">
+              {icon && <span className="inline-flex shrink-0">{icon}</span>}
+              {child.props.children}
+            </span>,
+          )}
+        </Slot>
+      );
+    }
+
     return (
-      <Comp
-        ref={ref as any}
-        className={cn(
-          "inline-flex items-center gap-1.5 font-medium border border-transparent",
-          "active:scale-[0.97] transition-transform duration-100",
-          "disabled:opacity-50 disabled:cursor-not-allowed disabled:active:scale-100",
-          SIZE[size],
-          ICON_SIZE[size],
-          VARIANT[variant],
-          className,
-        )}
-        {...props}
-      >
-        {icon}
+      <button ref={ref} className={pillClasses} {...props}>
+        {icon && <span className="inline-flex shrink-0">{icon}</span>}
         {children}
-      </Comp>
+      </button>
     );
   },
 );
