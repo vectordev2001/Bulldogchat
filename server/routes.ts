@@ -516,9 +516,10 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
   // against vectorcontracts.* fails: the auth cookie is scoped to the chat
   // origin and isn't sent on a cross-origin document load, so the file
   // endpoint 401s. Here we resolve the channel's stored pdfUrl, fetch it
-  // server-side forwarding the user's bearer/cookie, and stream the bytes
-  // back same-origin so the client can render it without CORS or auth
-  // headaches.
+  // server-side authenticating with the suite shared secret (contracts has
+  // its own session, so forwarding the chat cookie doesn't work), and stream
+  // the bytes back same-origin so the client can render it without CORS or
+  // auth headaches.
   app.get("/api/contracts-proxy/:channelId", requireAuth, async (req, res) => {
     const u = (req as AuthedRequest).user;
     const channelId = Number(req.params.channelId);
@@ -529,18 +530,30 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     const pdfUrl = (ch?.linkedContract as { pdfUrl?: string | null } | null | undefined)?.pdfUrl;
     if (!pdfUrl) return res.status(404).json({ message: "No contract PDF linked to this channel" });
 
-    const auth = req.headers.authorization;
-    const cookie = req.headers.cookie;
+    // Don't forward the user's chat-origin cookie/bearer — the contracts
+    // server (vectorcontracts.*) has its own session on a different cookie
+    // domain, so those creds 401 there. Authenticate service-to-service with
+    // the suite shared secret instead, sent both as the X-Suite-Secret header
+    // and a ?secret= query param so either server-side check is satisfied.
+    const secret = process.env.SUITE_INTERNAL_SECRET;
     try {
-      const upstream = await fetch(pdfUrl, {
+      let upstreamUrl = pdfUrl;
+      if (secret) {
+        upstreamUrl += (pdfUrl.includes("?") ? "&" : "?") + `secret=${encodeURIComponent(secret)}`;
+      }
+      const upstream = await fetch(upstreamUrl, {
         headers: {
-          ...(auth ? { authorization: auth } : {}),
-          ...(cookie ? { cookie } : {}),
+          ...(secret ? { "x-suite-secret": secret } : {}),
         },
       });
+      const maskedUrl = secret
+        ? pdfUrl + (pdfUrl.includes("?") ? "&" : "?") + "secret=***"
+        : pdfUrl;
+      console.log("[contracts pdf proxy] channel=%d pdfUrl=%s upstream=%d", channelId, maskedUrl, upstream.status);
       if (!upstream.ok || !upstream.body) {
         return res.status(upstream.status || 502).json({
-          message: `Contract PDF fetch failed (${upstream.status})`,
+          message: "Upstream contracts fetch failed",
+          upstreamStatus: upstream.status,
         });
       }
       res.setHeader("Content-Type", upstream.headers.get("content-type") || "application/pdf");

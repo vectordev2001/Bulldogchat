@@ -223,13 +223,19 @@ export async function stopClerk(noteId: number): Promise<{ ok: boolean; status: 
 
       const durationSec = Math.max(0, Math.round((ended.getTime() - startedAt.getTime()) / 1000));
 
+      // The summary card + email are the primary user-facing deliverables and
+      // succeed independently of Synology. A NAS upload failure should NOT mark
+      // the whole note "failed" — by this point the summary has already been
+      // generated. Keep the note in the success ("uploaded") state regardless;
+      // the Synology outcome is recorded in synology_status/synology_reason for
+      // debugging and the UI can surface it as a separate, non-fatal warning.
       updateNote(noteId, {
-        status: upload.status === "uploaded" ? "uploaded" : "failed",
+        status: "uploaded",
         synology_status: upload.status,
         synology_reason: upload.reason || null,
         synology_remote_path: upload.remotePath || null,
         duration_seconds: durationSec,
-        error_message: upload.status === "uploaded" ? null : `synology: ${upload.reason || upload.status}`,
+        error_message: null,
       });
 
       // 6) Notify: post a summary card to the channel and email attendees.

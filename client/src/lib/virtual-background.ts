@@ -34,25 +34,33 @@ interface SelfieSegmentationInstance {
   close(): void;
 }
 
+// Preset gradient backgrounds. Built onto an offscreen 1280x720 canvas at
+// processor init so they always fill the frame at the right resolution
+// (inline SVGs tiled / rendered at the wrong size).
+const PRESET_GRADIENTS: Record<string, [string, string]> = {
+  office: ["#4a5568", "#2d3748"],
+  library: ["#7c4a2d", "#5d3520"],
+  outdoor: ["#5b9bd5", "#3a7ca5"],
+  gradient: ["#667eea", "#764ba2"],
+};
+
 export class VirtualBackgroundProcessor {
   private inputVideo: HTMLVideoElement | null = null;
   private inputStream: MediaStream | null = null;
   private canvas: HTMLCanvasElement | null = null;
   private ctx: CanvasRenderingContext2D | null = null;
-  // Offscreen scratch canvas used to build the masked-person layer in
-  // isolation, so the compositing math on the visible canvas stays simple
-  // and we never accidentally leave a stale globalCompositeOperation/filter
-  // bleeding across frames.
-  private personCanvas: HTMLCanvasElement | null = null;
-  private personCtx: CanvasRenderingContext2D | null = null;
   private segmentation: SelfieSegmentationInstance | null = null;
-  private bgImage: HTMLImageElement | null = null;
+  // The background source painted behind the person. For presets this is an
+  // offscreen canvas built once; for custom uploads it's a loaded <img>.
+  private bgImage: CanvasImageSource | null = null;
   private mode: BackgroundMode = { kind: "blur", amount: 8 };
   private rafId: number | null = null;
   private running = false;
   private outputStream: MediaStream | null = null;
   private frameLoopActive = false;
-  private loggedMaskSize = false;
+  private frameCount = 0;
+  private sizedToVideo = false;
+  private gotFirstResult = false;
 
   /**
    * Start processing. Returns the processed MediaStreamTrack. Throws if
@@ -94,16 +102,10 @@ export class VirtualBackgroundProcessor {
     this.ctx = canvas.getContext("2d");
     if (!this.ctx) throw new Error("2D canvas context unavailable");
 
-    const personCanvas = document.createElement("canvas");
-    personCanvas.width = width;
-    personCanvas.height = height;
-    this.personCanvas = personCanvas;
-    this.personCtx = personCanvas.getContext("2d");
-    if (!this.personCtx) throw new Error("2D canvas context unavailable");
-
     const seg = new SelfieSegmentationCtor({
       locateFile: (file: string) => `${MEDIAPIPE_CDN}/${file}`,
     });
+    // modelSelection 1 = landscape model, better for laptop webcams.
     seg.setOptions({ modelSelection: 1, selfieMode: false });
     seg.onResults((results) => this.drawResults(results));
     this.segmentation = seg;
@@ -114,6 +116,23 @@ export class VirtualBackgroundProcessor {
 
     this.running = true;
     this.startFrameLoop();
+
+    // If MediaPipe never delivers a result within 3s (model load failed,
+    // unsupported browser), fall back to the raw camera track.
+    await new Promise<void>((resolve, reject) => {
+      const deadline = setTimeout(() => {
+        if (!this.gotFirstResult) {
+          console.warn("[virtual-bg] segmentation not initializing, falling back");
+          reject(new Error("segmentation did not initialize within 3s"));
+        }
+      }, 3000);
+      const check = () => {
+        if (!this.running) { clearTimeout(deadline); resolve(); return; }
+        if (this.gotFirstResult) { clearTimeout(deadline); resolve(); return; }
+        setTimeout(check, 100);
+      };
+      check();
+    });
 
     // captureStream throws on very old browsers — that's a hard fallback.
     const out = (canvas as HTMLCanvasElement & { captureStream?(fps?: number): MediaStream }).captureStream?.(24);
@@ -135,6 +154,24 @@ export class VirtualBackgroundProcessor {
   }
 
   private async loadBackgroundImage(src: string): Promise<void> {
+    // Preset gradients are drawn onto an offscreen canvas rather than loaded
+    // as an image, so they fill the frame at full resolution.
+    if (src.startsWith("preset:")) {
+      const id = src.slice("preset:".length);
+      const stops = PRESET_GRADIENTS[id] ?? PRESET_GRADIENTS.gradient;
+      const c = document.createElement("canvas");
+      c.width = 1280;
+      c.height = 720;
+      const cctx = c.getContext("2d");
+      if (!cctx) throw new Error("2D canvas context unavailable");
+      const grad = cctx.createLinearGradient(0, 0, c.width, c.height);
+      grad.addColorStop(0, stops[0]);
+      grad.addColorStop(1, stops[1]);
+      cctx.fillStyle = grad;
+      cctx.fillRect(0, 0, c.width, c.height);
+      this.bgImage = c;
+      return;
+    }
     await new Promise<void>((resolve, reject) => {
       const img = new Image();
       img.crossOrigin = "anonymous";
@@ -164,73 +201,76 @@ export class VirtualBackgroundProcessor {
     void pump();
   }
 
-  // Composite the segmented person over the chosen background.
-  //
-  // The previous build composited everything on a single canvas and could
-  // leave the background covering the whole tile when the mask semantics
-  // weren't what `source-in` expected. We now build the masked person on a
-  // dedicated offscreen canvas first (mask → source-in → camera frame), then
-  // paint background + person onto the visible canvas. This keeps each
-  // composite op isolated so the person is always preserved with only the
-  // area *behind* them replaced — like a green screen.
+  // Composite the segmented person over the chosen background, single-canvas:
+  //   1. draw the mask, 2. `source-in` keeps the camera frame only where the
+  //   mask is opaque (the person), 3. `destination-over` paints the background
+  //   behind the already-drawn person. globalCompositeOperation is reset every
+  //   frame via save()/restore() so a previous frame's op never leaks.
   private drawResults(results: SelfieSegmentationResults): void {
     const ctx = this.ctx;
     const canvas = this.canvas;
-    const pctx = this.personCtx;
-    const pcanvas = this.personCanvas;
-    if (!ctx || !canvas || !pctx || !pcanvas) return;
+    if (!ctx || !canvas) return;
+
+    // Size the output canvas to the actual video on the first usable frame.
+    if (!this.sizedToVideo && this.inputVideo && this.inputVideo.videoWidth > 0) {
+      canvas.width = this.inputVideo.videoWidth;
+      canvas.height = this.inputVideo.videoHeight;
+      this.sizedToVideo = true;
+    }
+
+    this.gotFirstResult = true;
+    if (this.frameCount < 3) {
+      console.log(
+        "[virtual-bg] frame",
+        this.frameCount,
+        "mask?",
+        !!results.segmentationMask,
+        "mode",
+        this.mode.kind,
+      );
+    }
+    this.frameCount++;
+
     const w = canvas.width;
     const h = canvas.height;
 
-    if (!this.loggedMaskSize) {
-      this.loggedMaskSize = true;
-      const mw = (results.segmentationMask as { width?: number }).width;
-      const mh = (results.segmentationMask as { height?: number }).height;
-      console.debug("[virtual-bg] segmentationMask", mw, "x", mh);
-    }
-
-    // 1) Build the cut-out person on the offscreen canvas: draw the mask,
-    //    then keep the camera frame only where the mask is opaque (the
-    //    person). `source-in` clips the frame to the mask's alpha.
-    pctx.save();
-    pctx.globalCompositeOperation = "source-over";
-    pctx.clearRect(0, 0, w, h);
-    pctx.drawImage(results.segmentationMask, 0, 0, w, h);
-    pctx.globalCompositeOperation = "source-in";
-    pctx.drawImage(results.image, 0, 0, w, h);
-    pctx.restore();
-
-    // 2) On the visible canvas: draw the background first, then drop the
-    //    cut-out person on top.
     ctx.save();
-    ctx.globalCompositeOperation = "source-over";
-    ctx.filter = "none";
     ctx.clearRect(0, 0, w, h);
 
+    // 1) Draw segmentation mask.
+    ctx.drawImage(results.segmentationMask, 0, 0, w, h);
+
+    // 2) Keep only the person (where the mask is opaque).
+    ctx.globalCompositeOperation = "source-in";
+    ctx.drawImage(results.image, 0, 0, w, h);
+
+    // 3) Draw the background behind the person.
+    ctx.globalCompositeOperation = "destination-over";
     if (this.mode.kind === "blur") {
-      const blur = this.mode.amount ?? 8;
+      const blur = this.mode.amount ?? 12;
       ctx.filter = `blur(${blur}px)`;
       ctx.drawImage(results.image, 0, 0, w, h);
       ctx.filter = "none";
     } else if (this.mode.kind === "image" && this.bgImage) {
       this.drawCover(ctx, this.bgImage, w, h);
     } else {
-      // "none" → original frame as the background (effectively passthrough).
+      // "none" → original frame behind (effectively passthrough).
       ctx.drawImage(results.image, 0, 0, w, h);
     }
 
-    ctx.drawImage(pcanvas, 0, 0, w, h);
     ctx.restore();
   }
 
-  // object-fit: cover for the background image.
-  private drawCover(ctx: CanvasRenderingContext2D, img: HTMLImageElement, w: number, h: number): void {
-    const ir = img.width / img.height;
+  // object-fit: cover for the background source (preset canvas or uploaded img).
+  private drawCover(ctx: CanvasRenderingContext2D, src: CanvasImageSource, w: number, h: number): void {
+    const sw = (src as { width?: number }).width ?? w;
+    const sh = (src as { height?: number }).height ?? h;
+    const ir = sw / sh;
     const cr = w / h;
     let dw = w, dh = h, dx = 0, dy = 0;
     if (ir > cr) { dh = h; dw = h * ir; dx = (w - dw) / 2; }
     else { dw = w; dh = w / ir; dy = (h - dh) / 2; }
-    ctx.drawImage(img, dx, dy, dw, dh);
+    ctx.drawImage(src, dx, dy, dw, dh);
   }
 
   stop(): void {
@@ -251,9 +291,9 @@ export class VirtualBackgroundProcessor {
     this.outputStream = null;
     this.canvas = null;
     this.ctx = null;
-    this.personCanvas = null;
-    this.personCtx = null;
     this.bgImage = null;
-    this.loggedMaskSize = false;
+    this.frameCount = 0;
+    this.sizedToVideo = false;
+    this.gotFirstResult = false;
   }
 }

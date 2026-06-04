@@ -1,8 +1,9 @@
 /**
  * VirtualBackgroundPicker — popover for choosing a call virtual background.
- * Options: None / Blur / four preset gradient scenes (inline SVG data URIs)
- * / upload a custom image. The chosen selection is persisted to localStorage
- * and reported to the parent via onSelect.
+ * Options: None / Blur / four preset gradient scenes (rendered onto an
+ * offscreen canvas by the processor) / upload a custom image. The chosen
+ * selection is persisted to localStorage and reported to the parent via
+ * onSelect.
  */
 import { useRef } from "react";
 import { X, Upload, CircleSlash, Aperture } from "lucide-react";
@@ -14,41 +15,15 @@ export interface BgSelection {
   id: string;
 }
 
-// Inline SVG gradient "scenes" so we ship no binary assets. Encoded as
-// data URIs the processor can load as an <img> background.
-function svgDataUri(svg: string): string {
-  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
-}
-
-const PRESETS: Array<{ id: string; label: string; src: string }> = [
-  {
-    id: "office",
-    label: "Office",
-    src: svgDataUri(
-      `<svg xmlns='http://www.w3.org/2000/svg' width='640' height='480'><defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'><stop offset='0' stop-color='#3b4a6b'/><stop offset='1' stop-color='#1a2238'/></linearGradient></defs><rect width='640' height='480' fill='url(#g)'/><rect x='40' y='60' width='220' height='140' rx='8' fill='#ffffff14'/><rect x='380' y='90' width='220' height='120' rx='8' fill='#ffffff10'/></svg>`,
-    ),
-  },
-  {
-    id: "library",
-    label: "Library",
-    src: svgDataUri(
-      `<svg xmlns='http://www.w3.org/2000/svg' width='640' height='480'><defs><linearGradient id='g' x1='0' y1='0' x2='0' y2='1'><stop offset='0' stop-color='#5a3d2b'/><stop offset='1' stop-color='#2b1d14'/></linearGradient></defs><rect width='640' height='480' fill='url(#g)'/><g fill='#ffffff12'><rect x='30' y='40' width='30' height='400'/><rect x='80' y='40' width='30' height='400'/><rect x='130' y='40' width='30' height='400'/><rect x='480' y='40' width='30' height='400'/><rect x='530' y='40' width='30' height='400'/></g></svg>`,
-    ),
-  },
-  {
-    id: "outdoor",
-    label: "Outdoor",
-    src: svgDataUri(
-      `<svg xmlns='http://www.w3.org/2000/svg' width='640' height='480'><defs><linearGradient id='s' x1='0' y1='0' x2='0' y2='1'><stop offset='0' stop-color='#7ec8e3'/><stop offset='1' stop-color='#c6e8f0'/></linearGradient></defs><rect width='640' height='480' fill='url(#s)'/><rect y='340' width='640' height='140' fill='#6aa84f'/><circle cx='520' cy='110' r='50' fill='#fff4b8'/></svg>`,
-    ),
-  },
-  {
-    id: "gradient",
-    label: "Gradient",
-    src: svgDataUri(
-      `<svg xmlns='http://www.w3.org/2000/svg' width='640' height='480'><defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'><stop offset='0' stop-color='#7b2ff7'/><stop offset='1' stop-color='#f107a3'/></linearGradient></defs><rect width='640' height='480' fill='url(#g)'/></svg>`,
-    ),
-  },
+// Preset "scenes" are gradient backgrounds. The src is a `preset:<id>`
+// sentinel — the processor builds the actual gradient onto an offscreen
+// canvas at the video resolution (avoids SVG-tiling/dimension issues).
+// `swatchStyle` is the matching CSS gradient used to render the picker swatch.
+const PRESETS: Array<{ id: string; label: string; src: string; swatchStyle: string }> = [
+  { id: "office", label: "Office", src: "preset:office", swatchStyle: "linear-gradient(135deg, #4a5568, #2d3748)" },
+  { id: "library", label: "Library", src: "preset:library", swatchStyle: "linear-gradient(135deg, #7c4a2d, #5d3520)" },
+  { id: "outdoor", label: "Outdoor", src: "preset:outdoor", swatchStyle: "linear-gradient(135deg, #5b9bd5, #3a7ca5)" },
+  { id: "gradient", label: "Gradient", src: "preset:gradient", swatchStyle: "linear-gradient(135deg, #667eea, #764ba2)" },
 ];
 
 const STORAGE_KEY = "bulldog.call.virtualBackground";
@@ -142,7 +117,7 @@ export function VirtualBackgroundPicker({
           swatch(
             p.id,
             p.label,
-            <img src={p.src} alt={p.label} className="absolute inset-0 w-full h-full object-cover" />,
+            <span className="absolute inset-0" style={{ background: p.swatchStyle }} />,
             { id: p.id, mode: { kind: "image", src: p.src } },
           ),
         )}

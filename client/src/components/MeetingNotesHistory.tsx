@@ -164,6 +164,12 @@ export function MeetingNotesHistory({ channelId, open, onClose }: Props) {
                         <div className="text-[11px]">{row.errorMessage || row.synologyReason}</div>
                       </div>
                     )}
+                    {row.status === "uploaded" && row.synologyStatus && row.synologyStatus !== "uploaded" && (
+                      <div className="text-[hsl(40_85%_75%)]">
+                        <div className="text-[10px] uppercase tracking-wider mb-0.5">NAS upload failed</div>
+                        <div className="text-[11px]">Notes are ready — only the Synology upload didn't complete.{row.synologyReason ? ` (${row.synologyReason})` : ""}</div>
+                      </div>
+                    )}
                     {row.attendees && row.attendees.length > 0 && (
                       <div>
                         <div className="text-[10px] uppercase tracking-wider text-[hsl(0_0%_55%)] mb-0.5">Attendees</div>
