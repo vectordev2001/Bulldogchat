@@ -28,6 +28,21 @@ function channelIdFromRoomName(roomName: string | undefined | null): number | nu
   return m ? Number(m[1]) : null;
 }
 
+// Detect iOS in-app browsers (Messages, Mail, Slack, Instagram, etc.) that
+// frequently block getUserMedia / WebRTC. These browsers omit "Safari" from
+// the UA string even though they're WebKit-based. When detected we show a
+// banner asking the user to tap the share/Safari icon and open in real Safari.
+// (Phase 1.9.26 — user reported camera doesn't work in the in-app browser.)
+function detectIOSInAppBrowser(): boolean {
+  if (typeof navigator === "undefined") return false;
+  const ua = navigator.userAgent;
+  const isIOS = /iPad|iPhone|iPod/.test(ua) || (ua.includes("Mac") && (navigator as { maxTouchPoints?: number }).maxTouchPoints! > 1);
+  if (!isIOS) return false;
+  // Real Safari includes "Safari/" + "Version/" in UA. In-app WKWebViews omit one or both.
+  const isRealSafari = /Safari\//.test(ua) && /Version\//.test(ua) && !/CriOS|FxiOS|EdgiOS/.test(ua);
+  return !isRealSafari;
+}
+
 const LAYOUT_STORAGE_KEY = "bulldog.call.layout";
 function loadSavedLayout(): CallLayout {
   try {
@@ -168,6 +183,10 @@ function ActiveCallOverlay() {
   const [bgSel, setBgSel] = useState<BgSelection>(() => loadSavedSelection());
   const processorRef = useRef<VirtualBackgroundProcessor | null>(null);
 
+  // iOS in-app browser warning (Phase 1.9.26). Calculated once at mount.
+  const isInAppBrowser = useMemo(() => detectIOSInAppBrowser(), []);
+  const [inAppDismissed, setInAppDismissed] = useState(false);
+
   // Reset toggles when the call changes.
   useEffect(() => {
     setMicMuted(false);
@@ -253,21 +272,37 @@ function ActiveCallOverlay() {
   const effectiveLayout: CallLayout = contractOpen && layout === "grid" ? "sidebar" : layout;
 
   return (
-    <div className="fixed inset-0 z-[100] flex flex-col bg-[hsl(232_65%_8%)] text-white" data-testid="overlay-active-call">
+    <div
+      className="fixed inset-0 z-[100] flex flex-col bg-[hsl(232_65%_8%)] text-white"
+      style={{
+        // Honor iOS safe areas when running as a native app / standalone PWA so
+        // the system status bar (clock, battery, dynamic island) doesn't overlap
+        // the toolbar. (Phase 1.9.26 — user reported overlap in app.)
+        paddingTop: "env(safe-area-inset-top)",
+        paddingBottom: "env(safe-area-inset-bottom)",
+        paddingLeft: "env(safe-area-inset-left)",
+        paddingRight: "env(safe-area-inset-right)",
+      }}
+      data-testid="overlay-active-call"
+    >
 
-      {/* ── Teams-style top toolbar (Phase 1.9.24) ─────────────────────── */}
-      <div className="shrink-0 px-4 py-2 border-b border-[hsl(232_40%_22%)] bg-[hsl(232_60%_11%)] flex items-center gap-0">
-        {/* Call timer — upper left */}
-        <div className="flex items-center gap-1.5 mr-4 shrink-0">
+      {/* ── Teams-style top toolbar (Phase 1.9.24, mobile-responsive 1.9.26) ── */}
+      {/* On mobile the row becomes horizontally scrollable so every control
+          stays reachable (Effects/Clerk/More/Leave were being cut off on iPhone
+          per Phase 1.9.26 user report). The Leave button is rendered OUTSIDE
+          the scroll container so it's always pinned on the right edge. */}
+      <div className="shrink-0 px-2 sm:px-4 py-2 border-b border-[hsl(232_40%_22%)] bg-[hsl(232_60%_11%)] flex items-center gap-0">
+        {/* Call timer — upper left, compact on mobile */}
+        <div className="flex items-center gap-1 sm:gap-1.5 mr-2 sm:mr-4 shrink-0">
           <Volume2 className="w-4 h-4 text-vs-blue" />
-          <span className="font-mono text-sm text-white tabular-nums">{formatCallTimer(timerSecs)}</span>
+          <span className="font-mono text-xs sm:text-sm text-white tabular-nums">{formatCallTimer(timerSecs)}</span>
         </div>
 
-        {/* Spacer — pushes buttons to center */}
-        <div className="flex-1" />
-
-        {/* Toolbar buttons row */}
-        <div className="flex items-center gap-1">
+        {/* Toolbar buttons row — scrolls horizontally on narrow screens so
+            nothing is hidden. The flex-1 lets it consume remaining width;
+            min-w-0 + overflow-x-auto enables the scroll. */}
+        <div className="flex-1 min-w-0 overflow-x-auto no-scrollbar">
+        <div className="flex items-center gap-1 w-max mx-auto">
 
           {/* Chat — no-op indicator if no side panel wired here */}
           <TopBarBtn
@@ -398,32 +433,45 @@ function ActiveCallOverlay() {
             )}
           </div>
 
-          {/* Divider */}
-          <div className="w-px h-8 bg-[hsl(232_40%_22%)] mx-1" />
+        </div>
+        </div>
 
-          {/* Leave — red */}
+        {/* Leave — ALWAYS pinned on the right (outside scroll container) so the
+            user can always hang up regardless of screen size. */}
+        <button
+          type="button"
+          onClick={endCallWithClerkStop}
+          className="ml-1 sm:ml-2 shrink-0 flex flex-col items-center gap-0.5 px-2 sm:px-3 py-1.5 rounded-md bg-vs-red hover:bg-[hsl(2_75%_60%)] text-white transition-colors min-w-[44px]"
+          data-testid="button-end-call"
+          title="Leave call"
+        >
+          <PhoneOff className="w-5 h-5" />
+          <span className="text-[10px] font-medium">Leave</span>
+        </button>
+      </div>
+
+      {/* iOS in-app browser banner (Phase 1.9.26) — surfaces when the user
+          opened the link from Messages/Mail/Slack/etc, which blocks the
+          camera. Dismissable but persistent until tapped. */}
+      {isInAppBrowser && !inAppDismissed && (
+        <div className="shrink-0 px-3 py-2 bg-[hsl(2_70%_55%/0.18)] border-b border-[hsl(2_70%_55%/0.4)] text-xs text-[hsl(2_85%_85%)] flex items-start gap-2">
+          <VideoOff className="w-4 h-4 shrink-0 mt-0.5" />
+          <div className="flex-1 min-w-0">
+            <div className="font-semibold">Camera blocked in this browser</div>
+            <div className="text-[11px] opacity-90 leading-snug mt-0.5">
+              You're in an in-app browser (Messages/Mail/Slack). Tap the share icon at the bottom of the screen, then “Open in Safari” — or copy <span className="font-mono">chat.bulldogops.com</span> into Safari directly. Camera and microphone only work in real Safari (or the Bulldog iOS app).
+            </div>
+          </div>
           <button
             type="button"
-            onClick={endCallWithClerkStop}
-            className="flex flex-col items-center gap-0.5 px-3 py-1.5 rounded-md bg-vs-red hover:bg-[hsl(2_75%_60%)] text-white transition-colors min-w-[48px]"
-            data-testid="button-end-call"
-            title="Leave call"
+            onClick={() => setInAppDismissed(true)}
+            className="shrink-0 p-1 rounded hover:bg-black/20"
+            aria-label="Dismiss"
           >
-            <PhoneOff className="w-5 h-5" />
-            <span className="text-[10px] font-medium">Leave</span>
+            <X className="w-3.5 h-3.5" />
           </button>
         </div>
-
-        {/* Spacer */}
-        <div className="flex-1" />
-
-        {/* Connection status — right side */}
-        <div className="ml-4 shrink-0 text-xs font-mono text-[hsl(0_0%_65%)] whitespace-nowrap">
-          {lk.status === "connecting" || lk.status === "reconnecting" ? "Connecting…"
-            : lk.status === "failed" ? <span className="text-vs-red">Failed</span>
-            : null}
-        </div>
-      </div>
+      )}
 
       {/* Status warning bar (shown only when not connected) */}
       {lk.status !== "connected" && (

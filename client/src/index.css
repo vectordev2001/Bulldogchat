@@ -273,4 +273,9 @@
       radial-gradient(circle at 1px 1px, hsl(232 30% 25% / 0.4) 1px, transparent 0);
     background-size: 24px 24px;
   }
+
+  /* Used by the in-call toolbar so the horizontal-scroll row stays clean on
+     mobile (Phase 1.9.26). Hides the scrollbar but keeps the scroll behavior. */
+  .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+  .no-scrollbar::-webkit-scrollbar { display: none; }
 }
