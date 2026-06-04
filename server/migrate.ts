@@ -737,4 +737,44 @@ export function runMigrations() {
   } catch (e) {
     console.warn("[migrate] v16 channels.linked_contract add skipped:", e);
   }
+
+  // v17 (Phase 1.9.4) — AI clerk meeting notes. One row per clerk session.
+  // Lifecycle: 'recording' → 'transcribing' → 'summarizing' → 'uploaded' /
+  // 'failed'. Transcript is appended-to as Deepgram streams deltas. PDF is
+  // rendered once at the end and pushed to Synology.
+  try {
+    const tables = rawDb.prepare(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='meeting_notes'"
+    ).all() as Array<{ name: string }>;
+    if (tables.length === 0) {
+      rawDb.exec(`
+        CREATE TABLE meeting_notes (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          channel_id INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+          started_by_user_id INTEGER NOT NULL REFERENCES users(id),
+          started_at INTEGER NOT NULL,
+          ended_at INTEGER,
+          status TEXT NOT NULL DEFAULT 'recording',
+          title TEXT,
+          transcript_text TEXT NOT NULL DEFAULT '',
+          summary_text TEXT,
+          attendees_json TEXT,
+          synology_remote_path TEXT,
+          synology_status TEXT,
+          synology_reason TEXT,
+          pdf_size_bytes INTEGER,
+          duration_seconds INTEGER,
+          deepgram_session_id TEXT,
+          error_message TEXT,
+          created_at INTEGER NOT NULL DEFAULT (strftime('%s','now') * 1000),
+          updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now') * 1000)
+        );
+      `);
+      rawDb.exec("CREATE INDEX idx_meeting_notes_channel ON meeting_notes(channel_id)");
+      rawDb.exec("CREATE INDEX idx_meeting_notes_status ON meeting_notes(status)");
+      console.log("[migrate] v17 created meeting_notes table");
+    }
+  } catch (e) {
+    console.warn("[migrate] v17 meeting_notes skipped:", e);
+  }
 }

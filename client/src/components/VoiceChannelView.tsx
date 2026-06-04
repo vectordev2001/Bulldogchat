@@ -4,6 +4,8 @@ import {
   Volume2, MoreHorizontal, ScreenShareOff, Signal, Users, Loader2, AlertTriangle, Sparkles,
   Circle, Square, Play, History, UserPlus, Phone, X, Search, FileText, ExternalLink,
 } from "lucide-react";
+import { MeetingClerkButton, MeetingClerkBanner } from "./MeetingClerkButton";
+import { MeetingNotesHistory } from "./MeetingNotesHistory";
 import { Avatar } from "./Avatar";
 import { motion } from "framer-motion";
 import type { ApiChannel, ApiUser, ApiRecording, VoiceTokenResponse } from "@/types/api";
@@ -73,6 +75,8 @@ export function VoiceChannelView(props: Props) {
   // when the channel has a linked contract so everyone in the call sees
   // the document immediately on join.
   const [showContractPanel, setShowContractPanel] = useState<boolean>(!!channel.linkedContract);
+  // Phase 1.9.4 — meeting notes history popover.
+  const [showNotesHistory, setShowNotesHistory] = useState(false);
 
   const canRecord = me.role === "admin" || me.role === "foreman";
   const [showPast, setShowPast] = useState(false);
@@ -312,6 +316,20 @@ export function VoiceChannelView(props: Props) {
               </button>
             )
           )}
+          {/* Phase 1.9.4 — AI clerk start/stop. Same role gate as recording
+              (admin + foreman). Renders inline status for everyone while a
+              session is active. */}
+          <MeetingClerkButton channelId={channel.id} canControl={canRecord} />
+          {/* Phase 1.9.4 — past meeting notes for this channel. */}
+          <button
+            type="button"
+            onClick={() => setShowNotesHistory(true)}
+            className="px-2 py-1 rounded-md text-xs bg-[hsl(232_50%_18%)] border border-[hsl(232_40%_25%)] hover:border-vs-blue hover:text-vs-blue-light text-[hsl(0_0%_80%)] flex items-center gap-1.5 whitespace-nowrap"
+            title="Past meeting notes"
+            data-testid="button-meeting-notes-history"
+          >
+            <FileText className="w-3 h-3" /> Notes
+          </button>
           <button type="button" onClick={() => setShowPast((v) => !v)} className="px-2 py-1 rounded-md text-xs bg-[hsl(232_50%_18%)] border border-[hsl(232_40%_25%)] hover:border-vs-blue hover:text-vs-blue-light text-[hsl(0_0%_80%)] flex items-center gap-1.5 whitespace-nowrap" title="Past recordings" data-testid="button-past-recordings">
             <History className="w-3 h-3" /> Past
           </button>
@@ -334,6 +352,15 @@ export function VoiceChannelView(props: Props) {
           )}
         </div>
       </header>
+
+      {/* Phase 1.9.4 — visible "clerk recording" banner for every participant
+          while a session is active (two-party-consent disclosure in WA). */}
+      <MeetingClerkBanner channelId={channel.id} />
+      <MeetingNotesHistory
+        channelId={channel.id}
+        open={showNotesHistory}
+        onClose={() => setShowNotesHistory(false)}
+      />
 
       {/* Preview banner */}
       {previewMode && (

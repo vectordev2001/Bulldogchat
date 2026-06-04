@@ -19,6 +19,16 @@ import { bulldogSsoBridge } from "./bulldog-sso";
 import { dialPhoneIntoRoom, sipConfigured } from "./sip";
 import { signCallJoinToken, verifyCallJoinToken, sendSms, smsAvailable, buildCallInviteSmsBody } from "./sms";
 import { registerScheduledCallRoutes, startReminderLoop } from "./scheduled-calls";
+import {
+  startClerk,
+  stopClerk,
+  ingestAudioChunk,
+  listNotesForChannel,
+  getNote,
+  publicNoteShape,
+  getClerkConfigSummary,
+} from "./meeting-clerk";
+import express from "express";
 
 const APP_VERSION = "1.0.0";
 
@@ -527,6 +537,127 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
       console.error("[contracts proxy]", err);
       res.status(502).json({ message: "Failed to reach contracts service" });
     }
+  });
+
+  // ═══════════════════════════════════════════════════════════════════
+  // Phase 1.9.4 — AI clerk (meeting notes)
+  // ═══════════════════════════════════════════════════════════════════
+  // Lifecycle: start → stream audio chunks → stop → background pipeline
+  // (transcribe → summarize → PDF → Synology). FE polls GET /notes for
+  // status updates. Audio chunks come in as raw binary (audio/webm-opus)
+  // — we register express.raw() locally so the global JSON parser doesn't
+  // try to parse them.
+
+  app.get("/api/meeting-clerk/config", requireAuth, (_req, res) => {
+    res.json(getClerkConfigSummary());
+  });
+
+  app.post("/api/channels/:id/meeting-notes/start", requireAuth, async (req, res) => {
+    const u = (req as AuthedRequest).user;
+    const channelId = Number(req.params.id);
+    if (!Number.isFinite(channelId)) return res.status(400).json({ message: "Invalid channel id" });
+    const access = userCanAccessChannel(u.id, u.orgId, channelId);
+    if (!access || !access.channel) return res.status(404).json({ message: "Channel not found" });
+    try {
+      const result = await startClerk({ channelId, startedByUserId: u.id });
+      // Drop a system message into the channel so everyone knows the clerk
+      // is recording. Required for two-party consent (WA is two-party).
+      try {
+        storage.createMessage({
+          channelId,
+          userId: u.id,
+          content: `🤖 AI clerk started — this meeting is being transcribed and summarized.`,
+          meta: JSON.stringify({
+            system: true,
+            kind: "clerk_started",
+            noteId: result.noteId,
+            startedByUserId: u.id,
+          }),
+        });
+      } catch (e) {
+        console.warn("[clerk] start system message skipped:", (e as Error).message);
+      }
+      res.json({ noteId: result.noteId, status: result.status, config: result.config });
+    } catch (err) {
+      console.error("[clerk] start failed:", err);
+      res.status(500).json({ message: (err as Error).message || "Failed to start clerk" });
+    }
+  });
+
+  // Raw audio chunk ingestion. Limit per chunk = 5MB which is generous for
+  // a few seconds of opus. We use express.raw() inline so this single
+  // route bypasses the JSON body parser.
+  app.post(
+    "/api/meeting-notes/:id/audio",
+    requireAuth,
+    express.raw({ type: "*/*", limit: "5mb" }) as any,
+    (req, res) => {
+      const u = (req as AuthedRequest).user;
+      const noteId = Number(req.params.id);
+      if (!Number.isFinite(noteId)) return res.status(400).json({ message: "Invalid note id" });
+      const note = getNote(noteId);
+      if (!note) return res.status(404).json({ message: "Note not found" });
+      const access = userCanAccessChannel(u.id, u.orgId, note.channel_id);
+      if (!access) return res.status(404).json({ message: "Channel not found" });
+      const buf: Buffer | undefined = Buffer.isBuffer(req.body) ? (req.body as Buffer) : undefined;
+      if (!buf || buf.length === 0) return res.status(400).json({ message: "No audio bytes" });
+      const result = ingestAudioChunk(noteId, buf);
+      if (!result.ok) return res.status(409).json({ message: result.reason || "Session closed" });
+      res.json({ ok: true, bytes: buf.length });
+    },
+  );
+
+  app.post("/api/meeting-notes/:id/stop", requireAuth, async (req, res) => {
+    const u = (req as AuthedRequest).user;
+    const noteId = Number(req.params.id);
+    if (!Number.isFinite(noteId)) return res.status(400).json({ message: "Invalid note id" });
+    const note = getNote(noteId);
+    if (!note) return res.status(404).json({ message: "Note not found" });
+    const access = userCanAccessChannel(u.id, u.orgId, note.channel_id);
+    if (!access) return res.status(404).json({ message: "Channel not found" });
+    try {
+      const result = await stopClerk(noteId);
+      try {
+        storage.createMessage({
+          channelId: note.channel_id,
+          userId: u.id,
+          content: `🤖 AI clerk stopped — notes will appear shortly.`,
+          meta: JSON.stringify({
+            system: true,
+            kind: "clerk_stopped",
+            noteId,
+            stoppedByUserId: u.id,
+          }),
+        });
+      } catch (e) {
+        console.warn("[clerk] stop system message skipped:", (e as Error).message);
+      }
+      res.json({ ok: result.ok, status: result.status });
+    } catch (err) {
+      res.status(500).json({ message: (err as Error).message || "Failed to stop clerk" });
+    }
+  });
+
+  // List notes for a channel (for the channel header dropdown / history).
+  app.get("/api/channels/:id/meeting-notes", requireAuth, (req, res) => {
+    const u = (req as AuthedRequest).user;
+    const channelId = Number(req.params.id);
+    if (!Number.isFinite(channelId)) return res.status(400).json({ message: "Invalid channel id" });
+    const access = userCanAccessChannel(u.id, u.orgId, channelId);
+    if (!access) return res.status(404).json({ message: "Channel not found" });
+    const rows = listNotesForChannel(channelId);
+    res.json(rows.map(publicNoteShape));
+  });
+
+  app.get("/api/meeting-notes/:id", requireAuth, (req, res) => {
+    const u = (req as AuthedRequest).user;
+    const noteId = Number(req.params.id);
+    if (!Number.isFinite(noteId)) return res.status(400).json({ message: "Invalid note id" });
+    const note = getNote(noteId);
+    if (!note) return res.status(404).json({ message: "Note not found" });
+    const access = userCanAccessChannel(u.id, u.orgId, note.channel_id);
+    if (!access) return res.status(404).json({ message: "Channel not found" });
+    res.json(publicNoteShape(note));
   });
 
   // List members of a private channel (admin/creator visibility, but here

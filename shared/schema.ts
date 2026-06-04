@@ -361,6 +361,48 @@ export const recordings = sqliteTable("recordings", {
 });
 export type Recording = typeof recordings.$inferSelect;
 
+/* ─────────────────── MEETING NOTES (Phase 1.9.4 AI clerk) ─────────────────── */
+export const meetingNoteStatuses = [
+  "recording",     // Deepgram streaming session is live
+  "transcribing",  // call ended, waiting for final deepgram flush
+  "summarizing",   // calling Claude with the transcript
+  "rendering",     // generating PDF
+  "uploading",     // pushing to Synology WebDAV
+  "uploaded",      // PDF safely stored on Synology, notes available in chat
+  "failed",        // any step failed; error_message has detail
+] as const;
+export type MeetingNoteStatus = typeof meetingNoteStatuses[number];
+
+export interface MeetingNoteAttendee {
+  userId: number;
+  email: string;
+  name: string;
+  joinedAt?: number;
+}
+
+export const meetingNotes = sqliteTable("meeting_notes", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  channelId: integer("channel_id").notNull().references(() => channels.id),
+  startedByUserId: integer("started_by_user_id").notNull().references(() => users.id),
+  startedAt: integer("started_at", { mode: "timestamp" }).notNull(),
+  endedAt: integer("ended_at", { mode: "timestamp" }),
+  status: text("status", { enum: meetingNoteStatuses }).notNull().default("recording"),
+  title: text("title"),
+  transcriptText: text("transcript_text").notNull().default(""),
+  summaryText: text("summary_text"),
+  attendeesJson: text("attendees_json", { mode: "json" }).$type<MeetingNoteAttendee[] | null>(),
+  synologyRemotePath: text("synology_remote_path"),
+  synologyStatus: text("synology_status"),
+  synologyReason: text("synology_reason"),
+  pdfSizeBytes: integer("pdf_size_bytes"),
+  durationSeconds: integer("duration_seconds"),
+  deepgramSessionId: text("deepgram_session_id"),
+  errorMessage: text("error_message"),
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+});
+export type MeetingNote = typeof meetingNotes.$inferSelect;
+
 /* ─────────────────── EXPO PUSH TOKENS ─────────────────── */
 export const expoPushTokens = sqliteTable("expo_push_tokens", {
   id: integer("id").primaryKey({ autoIncrement: true }),
