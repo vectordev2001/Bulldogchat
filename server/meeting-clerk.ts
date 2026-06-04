@@ -18,6 +18,9 @@ import { summarizeMeeting, isAnthropicConfigured } from "./meeting-clerk-summari
 import { renderMeetingNotesPdf } from "./meeting-clerk-pdf";
 import { startTranscriptionSession, getActiveSession, isDeepgramConfigured } from "./meeting-clerk-transcription";
 import { storage } from "./storage";
+import { emitMessageNew, type WireMessage } from "./events";
+import { sendEmail } from "./email";
+import { marked } from "marked";
 
 export interface StartClerkOpts {
   channelId: number;
@@ -229,6 +232,29 @@ export async function stopClerk(noteId: number): Promise<{ ok: boolean; status: 
         error_message: upload.status === "uploaded" ? null : `synology: ${upload.reason || upload.status}`,
       });
 
+      // 6) Notify: post a summary card to the channel and email attendees.
+      // Both steps are independently wrapped so one failure never kills the
+      // other, and neither blocks the (already-finished) status update.
+      await postSummaryToChannel({
+        noteId,
+        channelId: row.channel_id,
+        startedByUserId: row.started_by_user_id,
+        title: summary.title,
+        markdown: summary.markdown,
+        durationSec,
+        attendeeCount: attendees.length,
+        pdfPath: upload.remotePath || null,
+      });
+
+      await emailAttendeesSummary({
+        attendees,
+        title: summary.title,
+        markdown: summary.markdown,
+        channelName,
+        durationSec,
+        contractAppUrl,
+      });
+
       // Cleanup the local tmp PDF whether the upload succeeded or not.
       try { fs.unlinkSync(pdf.filePath); } catch { /* ignore */ }
     } catch (err) {
@@ -240,6 +266,141 @@ export async function stopClerk(noteId: number): Promise<{ ok: boolean; status: 
   });
 
   return { ok: true, status: "transcribing" };
+}
+
+// Post a "Meeting notes ready" system card into the channel and broadcast it
+// over SSE so anyone with the channel open sees it appear live. Mirrors what
+// routes.ts does after storage.createMessage: build a wire shape + emit.
+async function postSummaryToChannel(opts: {
+  noteId: number;
+  channelId: number;
+  startedByUserId: number;
+  title: string;
+  markdown: string;
+  durationSec: number;
+  attendeeCount: number;
+  pdfPath: string | null;
+}): Promise<void> {
+  try {
+    const msg = storage.createMessage({
+      channelId: opts.channelId,
+      userId: opts.startedByUserId,
+      content: "📝 Meeting notes ready",
+      meta: JSON.stringify({
+        system: true,
+        kind: "meeting_summary",
+        noteId: opts.noteId,
+        title: opts.title,
+        summaryPreview: opts.markdown.slice(0, 400),
+        durationSeconds: opts.durationSec,
+        attendeeCount: opts.attendeeCount,
+        pdfPath: opts.pdfPath,
+      }),
+    } as any);
+
+    // Resolve org for SSE fan-out: channel → project → orgId.
+    const channel = storage.getChannel(opts.channelId);
+    const project = channel ? storage.getProject(channel.projectId) : undefined;
+    const author = storage.getUser(opts.startedByUserId);
+    const initials = author
+      ? author.name.split(/\s+/).slice(0, 2).map(s => s[0] ?? "").join("").toUpperCase()
+      : "?";
+    if (project) {
+      const wire: WireMessage = {
+        ...(msg as any),
+        meta: (() => { try { return JSON.parse((msg as any).meta); } catch { return null; } })(),
+        authorName: author?.name ?? "AI Clerk",
+        authorHue: author?.hue ?? 215,
+        authorRole: author?.role ?? "field",
+        authorInitials: initials,
+        reactions: [],
+      } as any;
+      emitMessageNew(project.orgId, wire);
+    }
+    console.log(`[meeting-clerk] posted summary card to channel ${opts.channelId} (note ${opts.noteId})`);
+  } catch (err) {
+    console.warn("[meeting-clerk] channel post failed:", (err as Error).message);
+  }
+}
+
+// Email each attendee with an email the rendered summary. Gated on
+// SENDGRID_API_KEY so we don't spin up sends when email isn't configured.
+// Per-recipient try/catch so a single bad address doesn't drop the rest.
+async function emailAttendeesSummary(opts: {
+  attendees: Array<{ name: string; email: string }>;
+  title: string;
+  markdown: string;
+  channelName: string;
+  durationSec: number;
+  contractAppUrl: string | null;
+}): Promise<void> {
+  if (!process.env.SENDGRID_API_KEY || !process.env.SENDGRID_API_KEY.trim()) {
+    console.log("[meeting-clerk] SENDGRID_API_KEY not set — skipping attendee email");
+    return;
+  }
+  const recipients = opts.attendees.filter(a => a.email && a.email.includes("@"));
+  if (recipients.length === 0) return;
+
+  const mins = Math.round(opts.durationSec / 60);
+  const durationLabel = mins >= 1 ? `${mins} min` : `${opts.durationSec}s`;
+  const attendeeList = opts.attendees.map(a => a.name || a.email).join(", ");
+
+  let summaryHtml: string;
+  try {
+    summaryHtml = await marked.parse(opts.markdown);
+  } catch {
+    summaryHtml = `<pre style="white-space:pre-wrap;font-family:inherit">${escapeHtml(opts.markdown)}</pre>`;
+  }
+
+  const contractLink = opts.contractAppUrl
+    ? `<p><a href="${escapeHtml(opts.contractAppUrl)}">View linked contract</a></p>`
+    : "";
+
+  const html = `
+    <div style="font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;color:#1a1a2e;max-width:640px;margin:0 auto">
+      <h2 style="margin-bottom:4px">${escapeHtml(opts.title)}</h2>
+      <p style="color:#666;font-size:13px;margin-top:0">
+        Channel: <strong>${escapeHtml(opts.channelName)}</strong> · Duration: ${durationLabel} · Attendees: ${escapeHtml(attendeeList)}
+      </p>
+      ${contractLink}
+      <hr style="border:none;border-top:1px solid #e0e0e0;margin:16px 0" />
+      ${summaryHtml}
+      <hr style="border:none;border-top:1px solid #e0e0e0;margin:16px 0" />
+      <p style="color:#999;font-size:11px">Generated by Bulldog Chat AI Clerk.</p>
+    </div>`;
+
+  const text = `${opts.title}\n\nChannel: ${opts.channelName}\nDuration: ${durationLabel}\nAttendees: ${attendeeList}\n${opts.contractAppUrl ? `Contract: ${opts.contractAppUrl}\n` : ""}\n${opts.markdown}`;
+
+  const results = await Promise.all(
+    recipients.map(async (a) => {
+      try {
+        const r = await sendEmail({
+          to: a.email,
+          subject: `Meeting notes: ${opts.title}`,
+          text,
+          html,
+          fromEmail: "meetings@bulldogops.com",
+        });
+        return { email: a.email, ok: r.sent, reason: r.reason };
+      } catch (err) {
+        return { email: a.email, ok: false, reason: (err as Error).message };
+      }
+    }),
+  );
+  const sent = results.filter(r => r.ok).length;
+  console.log(`[meeting-clerk] emailed summary to ${sent}/${recipients.length} attendees`);
+  const failed = results.filter(r => !r.ok);
+  if (failed.length > 0) {
+    console.warn("[meeting-clerk] email failures:", failed.map(f => `${f.email}: ${f.reason}`).join("; "));
+  }
+}
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }
 
 export function listNotesForChannel(channelId: number): MeetingNoteRow[] {

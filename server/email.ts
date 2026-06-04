@@ -43,13 +43,16 @@ export async function sendEmail(opts: {
   text: string;
   html?: string;
   attachments?: EmailAttachment[];
+  /** Override the default From address (e.g. meetings@bulldogops.com). */
+  fromEmail?: string;
+  fromName?: string;
 }): Promise<{ sent: boolean; reason?: string }> {
   const apiKey = process.env.SENDGRID_API_KEY?.trim();
   if (!apiKey) {
     return { sent: false, reason: "SENDGRID_API_KEY is not set" };
   }
 
-  const fromEmail = emailFromAddress();
+  const fromEmail = opts.fromEmail?.trim() || emailFromAddress();
   const recipients = (Array.isArray(opts.to) ? opts.to : [opts.to]).filter(Boolean);
   if (recipients.length === 0) {
     return { sent: false, reason: "No recipient email" };
@@ -57,7 +60,7 @@ export async function sendEmail(opts: {
 
   const payload: Record<string, unknown> = {
     personalizations: [{ to: recipients.map((email) => ({ email })) }],
-    from: { email: fromEmail, name: emailFromName() },
+    from: { email: fromEmail, name: opts.fromName?.trim() || emailFromName() },
     subject: opts.subject,
     content: [
       { type: "text/plain", value: opts.text },

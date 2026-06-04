@@ -170,9 +170,21 @@ export interface ApiScheduledCallSystemMessageMeta {
   }>;
 }
 
+export interface ApiMeetingSummarySystemMessageMeta {
+  system: true;
+  kind: "meeting_summary";
+  noteId: number;
+  title: string;
+  summaryPreview: string;
+  durationSeconds: number;
+  attendeeCount: number;
+  pdfPath?: string | null;
+}
+
 export type ApiSystemMessageMeta =
   | ApiWorkObjectSystemMessageMeta
-  | ApiScheduledCallSystemMessageMeta;
+  | ApiScheduledCallSystemMessageMeta
+  | ApiMeetingSummarySystemMessageMeta;
 
 export interface ApiRecording {
   id: number;

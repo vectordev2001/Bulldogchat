@@ -12,7 +12,7 @@ import { useCalls } from "@/lib/CallContext";
 import { Avatar } from "./Avatar";
 import { useState, useRef, useEffect, KeyboardEvent, useCallback, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import type { ApiChannel, ApiMessage, ApiUser, UserRole, ApiAttachment, ApiSystemMessageMeta, ApiWorkObjectSystemMessageMeta, ApiScheduledCallSystemMessageMeta } from "@/types/api";
+import type { ApiChannel, ApiMessage, ApiUser, UserRole, ApiAttachment, ApiSystemMessageMeta, ApiWorkObjectSystemMessageMeta, ApiScheduledCallSystemMessageMeta, ApiMeetingSummarySystemMessageMeta } from "@/types/api";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, apiUpload, queryClient } from "@/lib/queryClient";
@@ -20,6 +20,7 @@ import { ThreadPanel } from "./ThreadPanel";
 import { SearchModal } from "./SearchModal";
 import { AttachmentList } from "./AttachmentRenderer";
 import { ContractBanner } from "./ContractBanner";
+import { MeetingNotesHistory } from "./MeetingNotesHistory";
 
 interface Props {
   channel: ApiChannel;
@@ -75,6 +76,7 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers, me
   const [mentionMatch, setMentionMatch] = useState<MentionMatch | null>(null);
   const [mentionSelectedIdx, setMentionSelectedIdx] = useState(0);
   const [callDialog, setCallDialog] = useState<null | "voice" | "video">(null);
+  const [notesOpen, setNotesOpen] = useState(false);
   const { active: activeCall, outgoing: outgoingCall } = useCalls();
   const callBusy = !!activeCall || !!outgoingCall;
 
@@ -482,6 +484,7 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers, me
                 myRole={me.role}
                 onOpenThread={() => setThreadParent(msg)}
                 onJoinMeeting={(kind) => setCallDialog(kind)}
+                onOpenNotes={() => setNotesOpen(true)}
               />
             );
           })}
@@ -649,6 +652,7 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers, me
         initialKind={callDialog || "voice"}
         onClose={() => setCallDialog(null)}
       />
+      <MeetingNotesHistory channelId={channel.id} open={notesOpen} onClose={() => setNotesOpen(false)} />
     </section>
   );
 }
@@ -701,12 +705,16 @@ function ChannelIntro({ channel }: { channel: ApiChannel }) {
   );
 }
 
-function SystemMessageRow({ meta, content, createdAt, meId, myRole, onJoinMeeting }: { meta: ApiSystemMessageMeta; content: string; createdAt: string; meId: number; myRole: UserRole; onJoinMeeting?: (kind: "voice" | "video") => void }) {
+function SystemMessageRow({ meta, content, createdAt, meId, myRole, onJoinMeeting, onOpenNotes }: { meta: ApiSystemMessageMeta; content: string; createdAt: string; meId: number; myRole: UserRole; onJoinMeeting?: (kind: "voice" | "video") => void; onOpenNotes?: () => void }) {
   // Scheduled-call cards get their own rich row with RSVP buttons + .ics link
   // instead of the compact work-object banner.
   if (meta.kind.startsWith("scheduled_call.")) {
     const smeta = meta as ApiScheduledCallSystemMessageMeta;
     return <ScheduledCallCard meta={smeta} createdAt={createdAt} meId={meId} myRole={myRole} onJoin={onJoinMeeting ? () => onJoinMeeting(smeta.callKind) : undefined} />;
+  }
+  // Meeting-summary cards: title + preview + "View full notes".
+  if (meta.kind === "meeting_summary") {
+    return <MeetingSummaryCard meta={meta as ApiMeetingSummarySystemMessageMeta} createdAt={createdAt} onOpenNotes={onOpenNotes} />;
   }
   // Below here, meta must be a work-object kind. Narrow the type so TS knows.
   const wo = meta as ApiWorkObjectSystemMessageMeta;
@@ -758,10 +766,51 @@ function SystemMessageRow({ meta, content, createdAt, meId, myRole, onJoinMeetin
   );
 }
 
-function MessageRow({ msg, grouped, isMe, meId, myRole, onOpenThread, onJoinMeeting }: { msg: ApiMessage; grouped: boolean; isMe: boolean; meId: number; myRole: UserRole; onOpenThread: () => void; onJoinMeeting?: (kind: "voice" | "video") => void }) {
+// MeetingSummaryCard — in-channel card for meeting_summary system messages.
+// Shows the AI clerk title, a short preview, attendee/duration meta, and a
+// button that opens the full MeetingNotesHistory panel.
+function MeetingSummaryCard({ meta, createdAt, onOpenNotes }: { meta: ApiMeetingSummarySystemMessageMeta; createdAt: string; onOpenNotes?: () => void }) {
+  const mins = Math.round((meta.durationSeconds ?? 0) / 60);
+  const durationLabel = mins >= 1 ? `${mins} min` : `${meta.durationSeconds ?? 0}s`;
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 4 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+      className="my-2 mx-12 rounded-lg border border-[hsl(218_100%_68%/0.3)] bg-[hsl(218_100%_68%/0.08)] overflow-hidden"
+      data-testid="system-message-meeting_summary"
+      title={fmtTime(createdAt)}
+    >
+      <div className="px-3 py-2 flex items-center gap-2 border-b border-[hsl(218_100%_68%/0.2)]">
+        <FileText className="w-4 h-4 text-vs-blue-light shrink-0" />
+        <span className="text-sm font-semibold text-white truncate">{meta.title || "Meeting notes"}</span>
+        <span className="ml-auto text-[10px] font-mono text-[hsl(0_0%_60%)] whitespace-nowrap shrink-0">
+          {durationLabel} · {meta.attendeeCount ?? 0} attendee{(meta.attendeeCount ?? 0) === 1 ? "" : "s"}
+        </span>
+      </div>
+      {meta.summaryPreview && (
+        <div className="px-3 py-2 text-xs text-[hsl(0_0%_75%)] whitespace-pre-wrap line-clamp-4">
+          {meta.summaryPreview}
+        </div>
+      )}
+      <div className="px-3 py-2 border-t border-[hsl(218_100%_68%/0.2)]">
+        <button
+          type="button"
+          onClick={() => onOpenNotes?.()}
+          className="px-2.5 py-1 rounded-md text-xs bg-[hsl(232_50%_18%)] border border-[hsl(232_40%_25%)] hover:border-vs-blue hover:text-vs-blue-light text-[hsl(0_0%_80%)] flex items-center gap-1.5"
+          data-testid="button-view-full-notes"
+        >
+          <FileText className="w-3 h-3" /> View full notes
+        </button>
+      </div>
+    </motion.div>
+  );
+}
+
+function MessageRow({ msg, grouped, isMe, meId, myRole, onOpenThread, onJoinMeeting, onOpenNotes }: { msg: ApiMessage; grouped: boolean; isMe: boolean; meId: number; myRole: UserRole; onOpenThread: () => void; onJoinMeeting?: (kind: "voice" | "video") => void; onOpenNotes?: () => void }) {
   // System messages (work-object events) render as compact centered banners.
   if (msg.meta && msg.meta.system) {
-    return <SystemMessageRow meta={msg.meta} content={msg.content} createdAt={msg.createdAt} meId={meId} myRole={myRole} onJoinMeeting={onJoinMeeting} />;
+    return <SystemMessageRow meta={msg.meta} content={msg.content} createdAt={msg.createdAt} meId={meId} myRole={myRole} onJoinMeeting={onJoinMeeting} onOpenNotes={onOpenNotes} />;
   }
 
   // Tombstoned message — author or admin deleted it. We still render the

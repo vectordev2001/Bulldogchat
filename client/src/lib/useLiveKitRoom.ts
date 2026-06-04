@@ -111,6 +111,20 @@ export interface LiveKitHookResult {
    * so the screen-share button should be hidden or disabled there.
    */
   screenShareSupported: boolean;
+  /**
+   * Return the raw local camera MediaStreamTrack currently published, or
+   * null if the camera isn't on. Used by the virtual-background pipeline
+   * to feed frames into MediaPipe segmentation.
+   */
+  getRawCameraTrack: () => MediaStreamTrack | null;
+  /**
+   * Replace the published camera video with a processed MediaStreamTrack
+   * (e.g. a canvas-composited virtual background). Pass null to revert to
+   * the raw camera. No-ops if not connected or camera is off. Returns true
+   * on success. This does NOT touch the join/token flow — it only swaps the
+   * outbound camera track on the already-connected room.
+   */
+  replaceCameraTrack: (processed: MediaStreamTrack | null) => Promise<boolean>;
 }
 
 interface Args {
@@ -720,6 +734,64 @@ export function useLiveKitRoom(args: Args): LiveKitHookResult {
     }
   }, [refreshParticipants]);
 
+  // --- Virtual background track swap ------------------------------------
+  // Holds the processed track we published so we can unpublish it on revert.
+  const processedTrackRef = useRef<MediaStreamTrack | null>(null);
+
+  const getRawCameraTrack = useCallback((): MediaStreamTrack | null => {
+    const room = roomRef.current;
+    if (!room) return null;
+    const pub = room.localParticipant.getTrackPublication(Track.Source.Camera);
+    const mst = (pub?.track as { mediaStreamTrack?: MediaStreamTrack } | undefined)?.mediaStreamTrack;
+    return mst ?? null;
+  }, []);
+
+  const replaceCameraTrack = useCallback(async (processed: MediaStreamTrack | null): Promise<boolean> => {
+    const room = roomRef.current;
+    const roomConnected = !!room && (room as any).state === "connected";
+    if (!room || !roomConnected) return false;
+    const lp = room.localParticipant;
+
+    try {
+      if (processed) {
+        // Republish: drop the current camera publication, publish the
+        // processed MediaStreamTrack as the camera source.
+        const existing = lp.getTrackPublication(Track.Source.Camera);
+        if (existing?.track) {
+          try { await lp.unpublishTrack(existing.track as LocalVideoTrack); } catch { /* ignore */ }
+        }
+        const lkTrack = new LocalVideoTrack(processed);
+        await lp.publishTrack(lkTrack, { source: Track.Source.Camera, name: "camera" });
+        cameraTrackRef.current = lkTrack;
+        processedTrackRef.current = processed;
+        setCameraPublished(true);
+        refreshParticipants();
+        return true;
+      }
+
+      // Revert: unpublish the processed track and let the camera
+      // reconciliation effect re-enable the raw camera (videoOn stays true).
+      const existing = lp.getTrackPublication(Track.Source.Camera);
+      if (existing?.track) {
+        try { await lp.unpublishTrack(existing.track as LocalVideoTrack); } catch { /* ignore */ }
+      }
+      processedTrackRef.current = null;
+      cameraTrackRef.current = null;
+      // Re-acquire a fresh raw camera so the user still sees themselves.
+      try {
+        await lp.setCameraEnabled(true, { facingMode: "user" });
+        const pub = lp.getTrackPublication(Track.Source.Camera);
+        cameraTrackRef.current = (pub?.track as LocalVideoTrack | undefined) ?? null;
+        setCameraPublished(!!cameraTrackRef.current);
+      } catch { /* ignore — caller may toggle camera manually */ }
+      refreshParticipants();
+      return true;
+    } catch (err) {
+      onTrackError?.("camera", err);
+      return false;
+    }
+  }, [refreshParticipants, onTrackError]);
+
   // Quick capability check the UI uses to disable screen-share on
   // platforms that don't support getDisplayMedia (iOS Safari/PWA).
   const screenShareSupported = !isIOS &&
@@ -737,6 +809,8 @@ export function useLiveKitRoom(args: Args): LiveKitHookResult {
     toggleMic,
     setHandRaised,
     screenShareSupported,
+    getRawCameraTrack,
+    replaceCameraTrack,
   };
 }
 

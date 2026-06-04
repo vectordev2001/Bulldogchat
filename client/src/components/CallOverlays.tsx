@@ -4,16 +4,38 @@
  * which page the user is on when the phone rings.
  */
 import { useEffect, useMemo, useRef } from "react";
-import { Phone, PhoneOff, Mic, MicOff, Video, VideoOff, MonitorUp, Loader2, Volume2, UserPlus, X, Check, Search, PhoneCall } from "lucide-react";
+import { Phone, PhoneOff, Mic, MicOff, Video, VideoOff, MonitorUp, Loader2, Volume2, UserPlus, X, Check, Search, PhoneCall, FileText, Sparkles, LayoutGrid } from "lucide-react";
 import { useCalls } from "@/lib/CallContext";
 import { useLiveKitRoom, attachTrack } from "@/lib/useLiveKitRoom";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Avatar } from "./Avatar";
-import type { Track } from "livekit-client";
 import type { RoomParticipantState } from "@/lib/useLiveKitRoom";
-import type { ApiUser } from "@/types/api";
+import type { ApiUser, ApiChannel } from "@/types/api";
 import { useAuth } from "@/lib/auth";
+import { MeetingClerkButton, MeetingClerkBanner } from "./MeetingClerkButton";
+import { CallVideoStage, type CallLayout, type StageParticipant } from "./call/CallVideoStage";
+import { ContractPanel } from "./call/ContractPanel";
+import { VirtualBackgroundPicker, loadSavedSelection, type BgSelection } from "./call/VirtualBackgroundPicker";
+import { VirtualBackgroundProcessor } from "@/lib/virtual-background";
+
+// Group calls run in a room named `group-channel-<id>-<ts>` or
+// `vector-<org>-channel-<id>`. 1:1 calls use `direct-<callId>` and have no
+// channel. Returns the numeric channelId or null.
+function channelIdFromRoomName(roomName: string | undefined | null): number | null {
+  if (!roomName) return null;
+  const m = roomName.match(/(?:group-channel-|vector-\d+-channel-)(\d+)/);
+  return m ? Number(m[1]) : null;
+}
+
+const LAYOUT_STORAGE_KEY = "bulldog.call.layout";
+function loadSavedLayout(): CallLayout {
+  try {
+    const v = localStorage.getItem(LAYOUT_STORAGE_KEY);
+    if (v === "grid" || v === "speaker" || v === "sidebar") return v;
+  } catch { /* ignore */ }
+  return "grid";
+}
 
 export function CallOverlays() {
   const calls = useCalls();
@@ -112,17 +134,32 @@ function ActiveCallOverlay() {
   const [screenSharing, setScreenSharing] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
 
+  // ── In-call HUD upgrades (Phase 1.9.14) ───────────────────────────────
+  const channelId = useMemo(() => channelIdFromRoomName(active?.roomName), [active?.roomName]);
+  const hasChannel = typeof channelId === "number";
+
+  const [contractOpen, setContractOpen] = useState(false);
+  const [panelWidth, setPanelWidth] = useState(400);
+  const [layout, setLayout] = useState<CallLayout>(loadSavedLayout);
+  const [bgOpen, setBgOpen] = useState(false);
+  const [bgSel, setBgSel] = useState<BgSelection>(() => loadSavedSelection());
+  const processorRef = useRef<VirtualBackgroundProcessor | null>(null);
+
   // Reset toggles when the call changes.
   useEffect(() => {
     setMicMuted(false);
     setVideoOn(active?.kind === "video");
     setScreenSharing(false);
-  }, [active?.callId, active?.kind]);
+    setContractOpen(false);
+    setBgOpen(false);
+  }, [active?.callId, active?.kind, active?.roomName]);
 
   const lk = useLiveKitRoom({
     token: active?.token ?? null,
     wsUrl: active?.wsUrl ?? null,
-    roomKey: active ? `direct-${active.callId}` : null,
+    // roomKey must be unique per call AND per channel-group call (callId is 0
+    // for group calls), so fall back to the room name which is always unique.
+    roomKey: active ? (active.callId ? `direct-${active.callId}` : active.roomName) : null,
     micMuted,
     videoOn,
     screenSharing,
@@ -133,10 +170,43 @@ function ActiveCallOverlay() {
     },
   });
 
+  // Fetch channel details (for the linked contract). Only when we have a
+  // channel-scoped call and the room is up.
+  const channelQ = useQuery<ApiChannel>({
+    queryKey: ["/api/channels", channelId],
+    enabled: hasChannel,
+  });
+  const contract = channelQ.data?.linkedContract ?? null;
+  const contractPdfUrl = contract?.pdfUrl ?? null;
+
+  // ── Virtual background pipeline ───────────────────────────────────────
+  const applyBackground = useCallbackApplyBackground(lk, videoOn, bgSel, processorRef);
+  useEffect(() => { void applyBackground(); }, [applyBackground]);
+  // Tear down the processor on unmount.
+  useEffect(() => () => { processorRef.current?.stop(); processorRef.current = null; }, []);
+
+  const cycleLayout = () => {
+    setLayout((cur) => {
+      const next: CallLayout = cur === "grid" ? "speaker" : cur === "speaker" ? "sidebar" : "grid";
+      try { localStorage.setItem(LAYOUT_STORAGE_KEY, next); } catch { /* ignore */ }
+      return next;
+    });
+  };
+
   if (!active) return null;
 
-  const other = lk.participants.find(p => !p.isLocal) ?? null;
-  const me = lk.participants.find(p => p.isLocal) ?? null;
+  const others: StageParticipant[] = lk.participants
+    .filter((p) => !p.isLocal)
+    .map((p) => ({ key: p.identity, name: p.name, hue: active.otherHue, participant: p, isMe: false }));
+  const meParticipant = lk.participants.find((p) => p.isLocal) ?? null;
+  const me: StageParticipant = { key: "me", name: "You", hue: 210, participant: meParticipant, isMe: true, muted: micMuted, videoOff: !videoOn };
+  // Solo / 1:1 fallback so the stage always has the "other" tile present.
+  const stageOthers: StageParticipant[] = others.length > 0
+    ? others
+    : [{ key: "them", name: active.otherName, hue: active.otherHue, participant: null, isMe: false }];
+  const firstRemote = others[0]?.participant ?? null;
+
+  const effectiveLayout: CallLayout = contractOpen && layout === "grid" ? "sidebar" : layout;
 
   return (
     <div className="fixed inset-0 z-[100] flex flex-col bg-[hsl(232_65%_8%)] text-white" data-testid="overlay-active-call">
@@ -154,16 +224,27 @@ function ActiveCallOverlay() {
         </div>
       </header>
 
-      {/* Body: two tiles (you + them). Larger remote tile if video. */}
-      <div className="flex-1 min-h-0 p-6 flex items-center justify-center">
-        <div className="w-full max-w-4xl grid gap-4 grid-cols-1 sm:grid-cols-2">
-          <CallTile name={active.otherName} hue={active.otherHue} participant={other} isMe={false} kind={active.kind} />
-          <CallTile name="You" hue={210} participant={me} isMe={true} kind={active.kind} muted={micMuted} videoOff={!videoOn} />
+      {/* Clerk banner — visible to every participant while a clerk runs. */}
+      {hasChannel && <MeetingClerkBanner channelId={channelId} />}
+
+      {/* Body: video stage + optional contract side-panel. */}
+      <div className="flex-1 min-h-0 flex">
+        <div className="flex-1 min-w-0 p-4">
+          <CallVideoStage layout={effectiveLayout} me={me} others={stageOthers} />
         </div>
+        {contractOpen && contractPdfUrl && (
+          <ContractPanel
+            title={contract?.title ?? "Contract"}
+            pdfUrl={contractPdfUrl}
+            width={panelWidth}
+            onWidthChange={setPanelWidth}
+            onClose={() => setContractOpen(false)}
+          />
+        )}
       </div>
 
       {/* Hidden audio sink so the remote can be heard. */}
-      <RemoteAudio participant={other} />
+      <RemoteAudio participant={firstRemote} />
 
       {/* Error banner */}
       {lk.error && (
@@ -173,11 +254,7 @@ function ActiveCallOverlay() {
       )}
 
       {/* Controls */}
-      <div className="shrink-0 px-6 py-4 border-t border-[hsl(232_40%_22%)] bg-[hsl(232_55%_11%)] flex flex-col items-center gap-2">
-        {/* When LiveKit isn't connected yet the toggles below are no-ops.
-            Make that loud and visible so users don't think the buttons are
-            broken — the underlying reconcile effects only fire once we
-            reach "connected". */}
+      <div className="relative shrink-0 px-6 py-4 border-t border-[hsl(232_40%_22%)] bg-[hsl(232_55%_11%)] flex flex-col items-center gap-2">
         {lk.status !== "connected" && (
           <div className="text-[11px] uppercase tracking-wider font-mono text-[hsl(40_80%_60%)]">
             {lk.status === "connecting" || lk.status === "reconnecting"
@@ -187,13 +264,22 @@ function ActiveCallOverlay() {
               : "Waiting for media…"}
           </div>
         )}
-        <div className="flex items-center justify-center gap-3">
+        {bgOpen && (
+          <VirtualBackgroundPicker
+            current={bgSel}
+            onSelect={(sel) => { setBgSel(sel); setBgOpen(false); }}
+            onClose={() => setBgOpen(false)}
+          />
+        )}
+        <div className="flex items-center justify-center gap-3 flex-wrap">
         <CtrlBtn on={!micMuted} onClick={() => setMicMuted(m => !m)} disabled={lk.status !== "connected"} onIcon={<Mic className="w-5 h-5" />} offIcon={<MicOff className="w-5 h-5" />} title={micMuted ? "Unmute" : "Mute"} testid="call-mic" />
         <CtrlBtn on={videoOn} onClick={() => setVideoOn(v => !v)} disabled={lk.status !== "connected"} onIcon={<Video className="w-5 h-5" />} offIcon={<VideoOff className="w-5 h-5" />} title={videoOn ? "Stop video" : "Start video"} testid="call-video" />
         <CtrlBtn on={screenSharing} onClick={() => setScreenSharing(s => !s)} disabled={lk.status !== "connected"} onIcon={<MonitorUp className="w-5 h-5" />} offIcon={<MonitorUp className="w-5 h-5" />} title={screenSharing ? "Stop sharing" : "Share screen"} testid="call-screen" />
-        {/* Add people to this call. Opens a picker; selected users get
-            rung into the same LiveKit room, phone-route users get dialed
-            via Twilio with caller-id 'Bulldog · <channel-or-name>'. */}
+        {/* Virtual background picker toggle. */}
+        <CtrlBtn on={bgSel.id !== "none"} onClick={() => setBgOpen(o => !o)} disabled={!videoOn} onIcon={<Sparkles className="w-5 h-5" />} offIcon={<Sparkles className="w-5 h-5" />} title={videoOn ? "Background effects" : "Turn on video to use effects"} testid="call-background" />
+        {/* Layout switcher cycles Grid → Speaker → Sidebar. */}
+        <CtrlBtn on={true} onClick={cycleLayout} onIcon={<LayoutGrid className="w-5 h-5" />} offIcon={<LayoutGrid className="w-5 h-5" />} title={`Layout: ${layout}`} testid="call-layout" />
+        {/* Add people to this call. */}
         <button
           type="button"
           onClick={() => setAddOpen(true)}
@@ -204,6 +290,23 @@ function ActiveCallOverlay() {
         >
           <UserPlus className="w-5 h-5" />
         </button>
+        {/* AI Meeting Clerk — record/transcribe/summarize for the channel. */}
+        {hasChannel && (
+          <div className="px-1">
+            <MeetingClerkButton channelId={channelId} canControl={true} />
+          </div>
+        )}
+        {/* Contract side-panel toggle (only when a linked contract PDF exists). */}
+        {contractPdfUrl && (
+          <CtrlBtn
+            on={contractOpen}
+            onClick={() => setContractOpen(o => !o)}
+            onIcon={<FileText className="w-5 h-5" />}
+            offIcon={<FileText className="w-5 h-5" />}
+            title="View contract"
+            testid="call-contract"
+          />
+        )}
         <div className="w-3" />
         <button
           type="button"
@@ -220,6 +323,58 @@ function ActiveCallOverlay() {
       {addOpen && <InCallAddDialog onClose={() => setAddOpen(false)} />}
     </div>
   );
+}
+
+// Drives the virtual-background processor in response to the chosen mode and
+// camera state. Returns a stable async callback the overlay can fire from an
+// effect. On any MediaPipe failure it reverts to the raw camera and toasts.
+function useCallbackApplyBackground(
+  lk: ReturnType<typeof useLiveKitRoom>,
+  videoOn: boolean,
+  bgSel: BgSelection,
+  processorRef: React.MutableRefObject<VirtualBackgroundProcessor | null>,
+) {
+  return useMemo(() => {
+    return async () => {
+      // No effect when camera is off or "none" — make sure any processor is
+      // torn down and the raw camera is restored.
+      const teardown = async () => {
+        if (processorRef.current) {
+          processorRef.current.stop();
+          processorRef.current = null;
+          await lk.replaceCameraTrack(null);
+        }
+      };
+
+      if (!videoOn || lk.status !== "connected") { await teardown(); return; }
+      if (bgSel.mode.kind === "none") { await teardown(); return; }
+
+      const raw = lk.getRawCameraTrack();
+      if (!raw) return; // camera not published yet; effect re-runs on change
+
+      try {
+        // Reuse an existing processor by swapping its mode; otherwise spin up.
+        if (processorRef.current) {
+          await processorRef.current.setMode(bgSel.mode);
+          return;
+        }
+        const proc = new VirtualBackgroundProcessor();
+        const processed = await proc.start(raw, bgSel.mode);
+        processorRef.current = proc;
+        const ok = await lk.replaceCameraTrack(processed);
+        if (!ok) { proc.stop(); processorRef.current = null; }
+      } catch (err) {
+        console.warn("[call] virtual background unavailable:", (err as Error).message);
+        processorRef.current?.stop();
+        processorRef.current = null;
+        if (typeof window !== "undefined") {
+          // Lightweight toast — no toast lib wired into this overlay.
+          window.dispatchEvent(new CustomEvent("bulldog:toast", { detail: "Background effects unavailable" }));
+        }
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [videoOn, lk.status, bgSel.id, bgSel.mode.kind]);
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -494,67 +649,6 @@ function InCallAddDialog({ onClose }: { onClose: () => void }) {
             </button>
           </div>
         </div>
-      </div>
-    </div>
-  );
-}
-
-function CallTile({
-  name, hue, participant, isMe, kind, muted, videoOff,
-}: {
-  name: string; hue: number;
-  participant: RoomParticipantState | null;
-  isMe: boolean;
-  kind: "voice" | "video";
-  muted?: boolean;
-  videoOff?: boolean;
-}) {
-  const videoRef = useRef<HTMLVideoElement | null>(null);
-  const track = participant?.videoTrack ?? null;
-  useEffect(() => {
-    if (!videoRef.current) return;
-    return attachTrack(track, videoRef.current);
-  }, [track]);
-
-  const speaking = participant?.isSpeaking && !participant?.micMuted;
-  const isMuted = participant?.micMuted ?? (isMe ? !!muted : false);
-  const hasVideo = !!track && !videoOff;
-
-  return (
-    <div
-      className={[
-        "relative aspect-video rounded-2xl overflow-hidden border-2 transition-colors bg-[hsl(232_55%_11%)]",
-        speaking ? "border-vs-blue shadow-xl" : "border-[hsl(232_40%_25%)]",
-      ].join(" ")}
-      data-testid={`call-tile-${isMe ? "me" : "them"}`}
-    >
-      {track && !videoOff && (
-        <video
-          ref={videoRef}
-          autoPlay
-          playsInline
-          muted // remote audio handled separately
-          className="absolute inset-0 w-full h-full object-cover"
-          style={{ transform: isMe ? "scaleX(-1)" : undefined }}
-        />
-      )}
-      {!hasVideo && (
-        <div className="absolute inset-0 flex items-center justify-center">
-          <div className={speaking ? "speaking-ring rounded-full" : ""}>
-            <Avatar member={{ name, hue }} size={128} ring={speaking ? "blue" : "none"} />
-          </div>
-        </div>
-      )}
-      <div className="absolute bottom-0 left-0 right-0 px-4 py-3 bg-gradient-to-t from-black/80 to-transparent flex items-center justify-between">
-        <span className="text-sm font-semibold text-white">{name}{isMe && " (you)"}</span>
-        <span
-          className={[
-            "w-7 h-7 rounded-full flex items-center justify-center",
-            isMuted ? "bg-vs-red text-white" : speaking ? "bg-vs-blue text-[hsl(232_60%_9%)]" : "bg-[hsl(232_45%_27%)] text-[hsl(0_0%_85%)]",
-          ].join(" ")}
-        >
-          {isMuted ? <MicOff className="w-3.5 h-3.5" /> : <Mic className="w-3.5 h-3.5" />}
-        </span>
       </div>
     </div>
   );
