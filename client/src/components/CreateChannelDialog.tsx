@@ -210,7 +210,8 @@ export function CreateChannelDialog({ open, onClose, projectId, me, onCreated }:
         const picked = (contractsQ.data ?? []).find(c => String(c.id) === linkedContractId);
         if (picked) {
           // The contracts app serves PDFs at /api/contracts/:id/file and
-          // the human view at /contracts/:id — mirror what the server-side
+          // the human view at /#/contracts/:id (hash-routed SPA) — mirror
+          // what the server-side
           // bridge endpoint generates so behaviour is consistent across
           // entry points (contracts UI vs chat UI).
           const contractsBase = (window as any).BULLDOG_CONTRACTS_BASE
@@ -220,7 +221,7 @@ export function CreateChannelDialog({ open, onClose, projectId, me, onCreated }:
             contractId: picked.id,
             title: picked.title || `Contract ${picked.id}`,
             ref: picked.contractNumber || null,
-            appUrl: `${contractsBase}/contracts/${picked.id}`,
+            appUrl: `${contractsBase}/#/contracts/${picked.id}`,
             pdfUrl: `${contractsBase}/api/contracts/${picked.id}/file`,
           };
         }

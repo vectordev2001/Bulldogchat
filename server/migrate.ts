@@ -899,4 +899,49 @@ export function runMigrations() {
   } catch (e: any) {
     console.warn("[migrate v21] error:", e?.message);
   }
+
+  // v22 (Phase 1.9.13) — the contracts SPA uses hash-based routing
+  // (wouter useHashLocation), so real deep links are
+  // https://vectorcontracts.bulldogops.com/#/contracts/N. Chat previously
+  // stored the bare /contracts/N form, which boots the SPA at empty hash and
+  // renders the wrong route. Rewrite stored URLs to the hash form.
+  // Idempotent: the negative lookbehind preserves an already-rewritten
+  // /#/contracts/ and only touches a bare /contracts/ after the domain.
+  try {
+    // Only rewrite within the vectorcontracts host; the lookbehind ensures
+    // /#/contracts/ is left intact so re-running v22 cannot double-apply.
+    const re = /(?<!\/#)\/contracts\//g;
+    const rewrite = (s: string): string => {
+      if (!s.includes("vectorcontracts.bulldogops.com")) return s;
+      return s.replace(re, "/#/contracts/");
+    };
+
+    // 1. channels.linked_contract (JSON string).
+    const channelsToFix = rawDb.prepare(
+      "SELECT id, linked_contract FROM channels WHERE linked_contract IS NOT NULL AND linked_contract LIKE ?"
+    ).all(`%vectorcontracts.bulldogops.com/contracts/%`) as Array<{ id: number; linked_contract: string }>;
+    let channelsUpdated = 0;
+    for (const ch of channelsToFix) {
+      const next = rewrite(ch.linked_contract);
+      if (next === ch.linked_contract) continue;
+      rawDb.prepare("UPDATE channels SET linked_contract = ? WHERE id = ?").run(next, ch.id);
+      channelsUpdated++;
+    }
+    console.log(`[migrate v22] channels.linked_contract rows updated: ${channelsUpdated}`);
+
+    // 2. messages.meta — contract system cards store appUrl in meta.
+    const messagesToFix = rawDb.prepare(
+      "SELECT id, meta FROM messages WHERE meta IS NOT NULL AND meta LIKE ?"
+    ).all(`%vectorcontracts.bulldogops.com/contracts/%`) as Array<{ id: number; meta: string }>;
+    let messagesUpdated = 0;
+    for (const m of messagesToFix) {
+      const next = rewrite(m.meta);
+      if (next === m.meta) continue;
+      rawDb.prepare("UPDATE messages SET meta = ? WHERE id = ?").run(next, m.id);
+      messagesUpdated++;
+    }
+    console.log(`[migrate v22] messages.meta rows updated: ${messagesUpdated}`);
+  } catch (e: any) {
+    console.warn("[migrate v22] error:", e?.message);
+  }
 }
