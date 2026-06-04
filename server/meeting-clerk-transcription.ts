@@ -24,9 +24,10 @@
 // transcript is produced — the pipeline still flows end-to-end so the rest
 // of the feature is testable.
 //
-// NOTE: `@deepgram/sdk` v4 exposes a `.listen.live(...)` factory that
-// returns a connection with on/send/finish methods. We import it lazily so
-// missing creds don't crash startup.
+// NOTE: `@deepgram/sdk` v5 exposes `new DeepgramClient({ apiKey })` and
+// `await client.listen.v1.connect(opts)` which returns a live socket with
+// on/sendMedia/sendCloseStream/connect/waitForOpen methods. We import it
+// lazily so missing creds don't crash startup.
 
 export interface TranscriptionSessionOpts {
   noteId: number;
@@ -69,15 +70,22 @@ export async function startTranscriptionSession(opts: TranscriptionSessionOpts):
 
   // Lazy-import — keeps cold start fast and avoids loading the WS deps
   // unless we actually plan to transcribe.
+  //
+  // @deepgram/sdk v5 rewrote the API: there is no `createClient`. Instead you
+  // construct a `DeepgramClient` and open a live socket via
+  // `await client.listen.v1.connect(opts)`. The returned socket exposes
+  // `.on(event, cb)`, `.sendMedia(chunk)`, `.sendFinalize()` / `.sendCloseStream()`
+  // and `.waitForOpen()`. Messages arrive on a single "message" event carrying
+  // a discriminated union; we filter for `type === "Results"`.
   const dgMod: any = await import("@deepgram/sdk");
-  const createClient = dgMod.createClient || dgMod.default?.createClient;
-  if (!createClient) {
-    console.warn("[meeting-clerk] @deepgram/sdk loaded but createClient missing; falling back to stub");
+  const DeepgramClient = dgMod.DeepgramClient || dgMod.default?.DeepgramClient;
+  if (!DeepgramClient) {
+    console.warn("[meeting-clerk] @deepgram/sdk loaded but DeepgramClient missing; falling back to stub");
     const stub = makeStubSession(opts);
     sessions.set(opts.noteId, stub);
     return stub;
   }
-  const client = createClient(process.env.DEEPGRAM_API_KEY!);
+  const client = new DeepgramClient({ apiKey: process.env.DEEPGRAM_API_KEY! });
 
   const model = (process.env.DEEPGRAM_MODEL || "nova-3").trim();
   const language = (process.env.DEEPGRAM_LANGUAGE || "en-US").trim();
@@ -95,7 +103,7 @@ export async function startTranscriptionSession(opts: TranscriptionSessionOpts):
 
   let connection: any;
   try {
-    connection = client.listen.live(liveOpts);
+    connection = await client.listen.v1.connect(liveOpts);
   } catch (err) {
     console.warn("[meeting-clerk] deepgram live connect failed:", (err as Error).message);
     const stub = makeStubSession(opts);
@@ -113,29 +121,16 @@ export async function startTranscriptionSession(opts: TranscriptionSessionOpts):
   const flushPending = () => {
     while (pending.length > 0 && open) {
       const chunk = pending.shift()!;
-      try { connection.send(chunk); } catch (err) {
+      try { connection.sendMedia(chunk); } catch (err) {
         console.warn("[meeting-clerk] deepgram send failed:", (err as Error).message);
       }
     }
   };
 
-  // Deepgram v4 events: "open" / "close" / "Results" / "Metadata" / "Error" / "Warning"
-  const LiveTranscriptionEvents = dgMod.LiveTranscriptionEvents || {
-    Open: "open",
-    Close: "close",
-    Transcript: "Results",
-    Metadata: "Metadata",
-    Error: "error",
-  };
-
-  connection.on(LiveTranscriptionEvents.Open, () => {
-    open = true;
-    openWaiters.forEach(fn => fn());
-    openWaiters = [];
-    flushPending();
-  });
-
-  connection.on(LiveTranscriptionEvents.Transcript, (data: any) => {
+  // v5 delivers everything on a single "message" event carrying a
+  // discriminated union ({ type: "Results" | "Metadata" | ... }). We only
+  // care about "Results"; the rest is ignored.
+  const handleResults = (data: any) => {
     try {
       const alt = data?.channel?.alternatives?.[0];
       const text: string = (alt?.transcript || "").trim();
@@ -163,15 +158,33 @@ export async function startTranscriptionSession(opts: TranscriptionSessionOpts):
     } catch (err) {
       console.warn("[meeting-clerk] transcript handler failed:", (err as Error).message);
     }
+  };
+
+  connection.on("open", () => {
+    open = true;
+    openWaiters.forEach(fn => fn());
+    openWaiters = [];
+    flushPending();
   });
 
-  connection.on(LiveTranscriptionEvents.Error, (err: any) => {
+  connection.on("message", (data: any) => {
+    if (data?.type === "Results") handleResults(data);
+  });
+
+  connection.on("error", (err: any) => {
     console.warn("[meeting-clerk] deepgram error:", err?.message ?? err);
   });
 
-  connection.on(LiveTranscriptionEvents.Close, () => {
+  connection.on("close", () => {
     open = false;
   });
+
+  // v5 requires an explicit connect() to open the socket and register handlers.
+  try {
+    connection.connect();
+  } catch (err) {
+    console.warn("[meeting-clerk] deepgram connect() failed:", (err as Error).message);
+  }
 
   const session: TranscriptionSession = {
     noteId: opts.noteId,
@@ -179,7 +192,7 @@ export async function startTranscriptionSession(opts: TranscriptionSessionOpts):
     isOpen: () => open,
     ingestAudio: (chunk: Buffer) => {
       if (open) {
-        try { connection.send(chunk); } catch (err) {
+        try { connection.sendMedia(chunk); } catch (err) {
           console.warn("[meeting-clerk] deepgram send failed:", (err as Error).message);
         }
       } else {
@@ -189,19 +202,21 @@ export async function startTranscriptionSession(opts: TranscriptionSessionOpts):
     },
     close: async () => {
       // Drain any queued chunks first, then signal end-of-stream and wait
-      // briefly for trailing finals.
+      // briefly for trailing finals. v5 uses sendCloseStream() to gracefully
+      // end the stream (server flushes finals) and close() to tear down.
       flushPending();
       try {
-        if (typeof connection.finish === "function") {
-          connection.finish();
-        } else if (typeof connection.requestClose === "function") {
-          connection.requestClose();
+        if (typeof connection.sendCloseStream === "function") {
+          connection.sendCloseStream({ type: "CloseStream" });
+        } else if (typeof connection.sendFinalize === "function") {
+          connection.sendFinalize({ type: "Finalize" });
         }
       } catch (err) {
         console.warn("[meeting-clerk] deepgram close signal failed:", (err as Error).message);
       }
-      // Give Deepgram a moment to flush the final transcript.
+      // Give Deepgram a moment to flush the final transcript, then tear down.
       await new Promise<void>((resolve) => setTimeout(resolve, 1500));
+      try { if (typeof connection.close === "function") connection.close(); } catch { /* ignore */ }
       open = false;
       sessions.delete(opts.noteId);
     },

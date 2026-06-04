@@ -511,6 +511,50 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     }
   });
 
+  // Phase 1.9.15 — proxy a channel's linked-contract PDF through the chat
+  // server. Loading the contract file directly as an <iframe>/<object> src
+  // against vectorcontracts.* fails: the auth cookie is scoped to the chat
+  // origin and isn't sent on a cross-origin document load, so the file
+  // endpoint 401s. Here we resolve the channel's stored pdfUrl, fetch it
+  // server-side forwarding the user's bearer/cookie, and stream the bytes
+  // back same-origin so the client can render it without CORS or auth
+  // headaches.
+  app.get("/api/contracts-proxy/:channelId", requireAuth, async (req, res) => {
+    const u = (req as AuthedRequest).user;
+    const channelId = Number(req.params.channelId);
+    if (!Number.isFinite(channelId)) return res.status(400).json({ message: "Invalid channel id" });
+    const access = userCanAccessChannel(u.id, u.orgId, channelId);
+    if (!access) return res.status(404).json({ message: "Channel not found" });
+    const ch = storage.getChannel(channelId);
+    const pdfUrl = (ch?.linkedContract as { pdfUrl?: string | null } | null | undefined)?.pdfUrl;
+    if (!pdfUrl) return res.status(404).json({ message: "No contract PDF linked to this channel" });
+
+    const auth = req.headers.authorization;
+    const cookie = req.headers.cookie;
+    try {
+      const upstream = await fetch(pdfUrl, {
+        headers: {
+          ...(auth ? { authorization: auth } : {}),
+          ...(cookie ? { cookie } : {}),
+        },
+      });
+      if (!upstream.ok || !upstream.body) {
+        return res.status(upstream.status || 502).json({
+          message: `Contract PDF fetch failed (${upstream.status})`,
+        });
+      }
+      res.setHeader("Content-Type", upstream.headers.get("content-type") || "application/pdf");
+      const len = upstream.headers.get("content-length");
+      if (len) res.setHeader("Content-Length", len);
+      res.setHeader("Content-Disposition", "inline");
+      const buf = Buffer.from(await upstream.arrayBuffer());
+      res.end(buf);
+    } catch (err) {
+      console.error("[contracts pdf proxy]", err);
+      res.status(502).json({ message: "Failed to reach contracts service" });
+    }
+  });
+
   // ═══════════════════════════════════════════════════════════════════
   // Phase 1.9.4 — AI clerk (meeting notes)
   // ═══════════════════════════════════════════════════════════════════

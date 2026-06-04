@@ -3,12 +3,13 @@
  * calls. Mounts once at the app root so the modal appears no matter
  * which page the user is on when the phone rings.
  */
-import { useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { Phone, PhoneOff, Mic, MicOff, Video, VideoOff, MonitorUp, Loader2, Volume2, UserPlus, X, Check, Search, PhoneCall, FileText, Sparkles, LayoutGrid } from "lucide-react";
 import { useCalls } from "@/lib/CallContext";
 import { useLiveKitRoom, attachTrack } from "@/lib/useLiveKitRoom";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Avatar } from "./Avatar";
 import type { RoomParticipantState } from "@/lib/useLiveKitRoom";
 import type { ApiUser, ApiChannel } from "@/types/api";
@@ -193,6 +194,26 @@ function ActiveCallOverlay() {
     });
   };
 
+  // Ending the call must also stop any clerk that's still recording on this
+  // channel — otherwise the post-process pipeline (transcript → summary →
+  // PDF → post + email) never fires. We read the notes the clerk banner is
+  // already polling (cached under the same key) and fire-and-forget the stop
+  // so the call ends instantly; the server runs the pipeline async.
+  const endCallWithClerkStop = useCallback(() => {
+    if (hasChannel) {
+      try {
+        const notes = queryClient.getQueryData<{ id: number; status: string }[]>([
+          "/api/channels", channelId, "meeting-notes",
+        ]);
+        const recording = (notes ?? []).find(n => n.status === "recording");
+        if (recording) {
+          void apiRequest("POST", `/api/meeting-notes/${recording.id}/stop`).catch(() => null);
+        }
+      } catch { /* ignore — never block the hangup */ }
+    }
+    void endActive();
+  }, [hasChannel, channelId, endActive]);
+
   if (!active) return null;
 
   const others: StageParticipant[] = lk.participants
@@ -232,9 +253,10 @@ function ActiveCallOverlay() {
         <div className="flex-1 min-w-0 p-4">
           <CallVideoStage layout={effectiveLayout} me={me} others={stageOthers} />
         </div>
-        {contractOpen && contractPdfUrl && (
+        {contractOpen && contractPdfUrl && hasChannel && (
           <ContractPanel
             title={contract?.title ?? "Contract"}
+            channelId={channelId}
             pdfUrl={contractPdfUrl}
             width={panelWidth}
             onWidthChange={setPanelWidth}
@@ -310,7 +332,7 @@ function ActiveCallOverlay() {
         <div className="w-3" />
         <button
           type="button"
-          onClick={() => { void endActive(); }}
+          onClick={endCallWithClerkStop}
           className="h-12 px-6 rounded-full bg-vs-red hover:bg-[hsl(2_75%_60%)] text-white flex items-center gap-2 shadow-lg transition-colors"
           data-testid="button-end-call"
         >

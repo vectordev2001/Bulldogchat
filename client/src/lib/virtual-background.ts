@@ -39,6 +39,12 @@ export class VirtualBackgroundProcessor {
   private inputStream: MediaStream | null = null;
   private canvas: HTMLCanvasElement | null = null;
   private ctx: CanvasRenderingContext2D | null = null;
+  // Offscreen scratch canvas used to build the masked-person layer in
+  // isolation, so the compositing math on the visible canvas stays simple
+  // and we never accidentally leave a stale globalCompositeOperation/filter
+  // bleeding across frames.
+  private personCanvas: HTMLCanvasElement | null = null;
+  private personCtx: CanvasRenderingContext2D | null = null;
   private segmentation: SelfieSegmentationInstance | null = null;
   private bgImage: HTMLImageElement | null = null;
   private mode: BackgroundMode = { kind: "blur", amount: 8 };
@@ -46,6 +52,7 @@ export class VirtualBackgroundProcessor {
   private running = false;
   private outputStream: MediaStream | null = null;
   private frameLoopActive = false;
+  private loggedMaskSize = false;
 
   /**
    * Start processing. Returns the processed MediaStreamTrack. Throws if
@@ -86,6 +93,13 @@ export class VirtualBackgroundProcessor {
     this.canvas = canvas;
     this.ctx = canvas.getContext("2d");
     if (!this.ctx) throw new Error("2D canvas context unavailable");
+
+    const personCanvas = document.createElement("canvas");
+    personCanvas.width = width;
+    personCanvas.height = height;
+    this.personCanvas = personCanvas;
+    this.personCtx = personCanvas.getContext("2d");
+    if (!this.personCtx) throw new Error("2D canvas context unavailable");
 
     const seg = new SelfieSegmentationCtor({
       locateFile: (file: string) => `${MEDIAPIPE_CDN}/${file}`,
@@ -150,24 +164,49 @@ export class VirtualBackgroundProcessor {
     void pump();
   }
 
-  // Composite: draw person where mask is opaque, chosen background elsewhere.
+  // Composite the segmented person over the chosen background.
+  //
+  // The previous build composited everything on a single canvas and could
+  // leave the background covering the whole tile when the mask semantics
+  // weren't what `source-in` expected. We now build the masked person on a
+  // dedicated offscreen canvas first (mask → source-in → camera frame), then
+  // paint background + person onto the visible canvas. This keeps each
+  // composite op isolated so the person is always preserved with only the
+  // area *behind* them replaced — like a green screen.
   private drawResults(results: SelfieSegmentationResults): void {
     const ctx = this.ctx;
     const canvas = this.canvas;
-    if (!ctx || !canvas) return;
+    const pctx = this.personCtx;
+    const pcanvas = this.personCanvas;
+    if (!ctx || !canvas || !pctx || !pcanvas) return;
     const w = canvas.width;
     const h = canvas.height;
 
+    if (!this.loggedMaskSize) {
+      this.loggedMaskSize = true;
+      const mw = (results.segmentationMask as { width?: number }).width;
+      const mh = (results.segmentationMask as { height?: number }).height;
+      console.debug("[virtual-bg] segmentationMask", mw, "x", mh);
+    }
+
+    // 1) Build the cut-out person on the offscreen canvas: draw the mask,
+    //    then keep the camera frame only where the mask is opaque (the
+    //    person). `source-in` clips the frame to the mask's alpha.
+    pctx.save();
+    pctx.globalCompositeOperation = "source-over";
+    pctx.clearRect(0, 0, w, h);
+    pctx.drawImage(results.segmentationMask, 0, 0, w, h);
+    pctx.globalCompositeOperation = "source-in";
+    pctx.drawImage(results.image, 0, 0, w, h);
+    pctx.restore();
+
+    // 2) On the visible canvas: draw the background first, then drop the
+    //    cut-out person on top.
     ctx.save();
+    ctx.globalCompositeOperation = "source-over";
+    ctx.filter = "none";
     ctx.clearRect(0, 0, w, h);
 
-    // 1) Person layer: draw the camera frame masked to the segmentation.
-    ctx.drawImage(results.segmentationMask, 0, 0, w, h);
-    ctx.globalCompositeOperation = "source-in";
-    ctx.drawImage(results.image, 0, 0, w, h);
-
-    // 2) Background layer: draw behind the person.
-    ctx.globalCompositeOperation = "destination-over";
     if (this.mode.kind === "blur") {
       const blur = this.mode.amount ?? 8;
       ctx.filter = `blur(${blur}px)`;
@@ -176,10 +215,11 @@ export class VirtualBackgroundProcessor {
     } else if (this.mode.kind === "image" && this.bgImage) {
       this.drawCover(ctx, this.bgImage, w, h);
     } else {
-      // "none" → just the original frame behind (effectively passthrough).
+      // "none" → original frame as the background (effectively passthrough).
       ctx.drawImage(results.image, 0, 0, w, h);
     }
 
+    ctx.drawImage(pcanvas, 0, 0, w, h);
     ctx.restore();
   }
 
@@ -211,6 +251,9 @@ export class VirtualBackgroundProcessor {
     this.outputStream = null;
     this.canvas = null;
     this.ctx = null;
+    this.personCanvas = null;
+    this.personCtx = null;
     this.bgImage = null;
+    this.loggedMaskSize = false;
   }
 }
