@@ -980,6 +980,19 @@ class DatabaseStorage implements IStorage {
     safeRun(`DELETE FROM recordings WHERE channel_id = ?`, channelId);
     safeRun(`DELETE FROM livekit_rooms WHERE channel_id = ?`, channelId);
     safeRun(`DELETE FROM work_object_channel_links WHERE channel_id = ?`, channelId);
+    // Phase 1.9.4: meeting notes (FK has ON DELETE CASCADE but be explicit)
+    safeRun(`DELETE FROM meeting_notes WHERE channel_id = ?`, channelId);
+    // Phase 1.9.5: scheduled calls + their invitees must go first because
+    // invitees FK -> scheduled_calls and scheduled_calls FK -> channels.
+    try {
+      const callIds = rawDb.prepare(`SELECT id FROM scheduled_calls WHERE channel_id = ?`).all(channelId) as Array<{ id: number }>;
+      for (const { id } of callIds) {
+        safeRun(`DELETE FROM scheduled_call_invitees WHERE scheduled_call_id = ?`, id);
+      }
+      safeRun(`DELETE FROM scheduled_calls WHERE channel_id = ?`, channelId);
+    } catch (e: any) {
+      if (!/no such table/i.test(String(e?.message))) throw e;
+    }
     db.delete(channels).where(eq(channels.id, channelId)).run();
   }
   // Cascade-delete a job (work_object) and every channel nested under it.

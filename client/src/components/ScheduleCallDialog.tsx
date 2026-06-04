@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { apiRequest } from "@/lib/queryClient";
 import type { ApiUser, ApiChannel } from "@/types/api";
-import { Loader2, Video, Mic, Calendar as CalIcon, X, Plus, Search } from "lucide-react";
+import { Loader2, Video, Mic, Calendar as CalIcon, X, Plus, Search, Trash2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 /**
@@ -470,7 +470,21 @@ export function MeetingsListDialog({
   const cancelMut = useMutation({
     mutationFn: async (id: number) =>
       apiRequest("POST", `/api/scheduled-calls/${id}/cancel`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["/api/scheduled-calls"] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["/api/scheduled-calls"] });
+      toast({ title: "Meeting cancelled" });
+    },
+    onError: (err: any) => toast({ title: "Cancel failed", description: err?.message ?? "Unknown error", variant: "destructive" }),
+  });
+
+  const deleteMut = useMutation({
+    mutationFn: async (id: number) =>
+      apiRequest("DELETE", `/api/scheduled-calls/${id}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["/api/scheduled-calls"] });
+      toast({ title: "Meeting deleted" });
+    },
+    onError: (err: any) => toast({ title: "Delete failed", description: err?.message ?? "Unknown error", variant: "destructive" }),
   });
 
   if (!open) return null;
@@ -527,6 +541,7 @@ export function MeetingsListDialog({
                   memberById={memberById}
                   onRsvp={(response) => rsvpMut.mutate({ id: c.id, response })}
                   onCancel={() => { if (confirm(`Cancel "${c.title}"?`)) cancelMut.mutate(c.id); }}
+                  onDelete={() => { if (confirm(`Permanently delete "${c.title}"? This cannot be undone.`)) deleteMut.mutate(c.id); }}
                 />
               ))}
             </Section>
@@ -541,6 +556,7 @@ export function MeetingsListDialog({
                   memberById={memberById}
                   onRsvp={() => {}}
                   onCancel={() => {}}
+                  onDelete={() => { if (confirm(`Permanently delete "${c.title}"? This cannot be undone.`)) deleteMut.mutate(c.id); }}
                   readOnly
                 />
               ))}
@@ -562,18 +578,21 @@ function Section({ label, children }: { label: string; children: React.ReactNode
 }
 
 function MeetingRow({
-  call, me, memberById, onRsvp, onCancel, readOnly,
+  call, me, memberById, onRsvp, onCancel, onDelete, readOnly,
 }: {
   call: ApiScheduledCall;
   me: ApiUser;
   memberById: Map<number, ApiUser>;
   onRsvp: (response: "yes" | "no" | "maybe") => void;
   onCancel: () => void;
+  onDelete: () => void;
   readOnly?: boolean;
 }) {
   const organizer = memberById.get(call.organizerId);
   const myInvitee = call.invitees.find((i) => i.userId === me.id);
   const iAmOrganizer = call.organizerId === me.id;
+  const iAmAdmin = me.role === "admin";
+  const canDelete = iAmOrganizer || iAmAdmin;
   const startDate = new Date(call.startAt);
   const whenLabel = startDate.toLocaleString(undefined, {
     weekday: "short", month: "short", day: "numeric",
@@ -597,9 +616,9 @@ function MeetingRow({
             <div className="text-[11px] text-[hsl(0_0%_75%)] mt-1 line-clamp-2">{call.notes}</div>
           )}
         </div>
-        {!readOnly && !cancelled && (
+        {(cancelled ? canDelete : !readOnly) && (
           <div className="flex items-center gap-1 shrink-0">
-            {iAmOrganizer && (
+            {!cancelled && iAmOrganizer && (
               <button
                 type="button"
                 onClick={onCancel}
@@ -609,13 +628,26 @@ function MeetingRow({
                 Cancel
               </button>
             )}
-            <a
-              href={`/api/scheduled-calls/${call.id}/ics`}
-              className="px-2 py-1 rounded-md bg-[hsl(232_50%_18%)] hover:bg-[hsl(232_50%_22%)] border border-[hsl(232_40%_25%)] text-[10px] font-semibold uppercase tracking-wider"
-              data-testid={`link-meeting-ics-${call.id}`}
-            >
-              .ics
-            </a>
+            {!cancelled && (
+              <a
+                href={`/api/scheduled-calls/${call.id}/ics`}
+                className="px-2 py-1 rounded-md bg-[hsl(232_50%_18%)] hover:bg-[hsl(232_50%_22%)] border border-[hsl(232_40%_25%)] text-[10px] font-semibold uppercase tracking-wider"
+                data-testid={`link-meeting-ics-${call.id}`}
+              >
+                .ics
+              </a>
+            )}
+            {canDelete && (
+              <button
+                type="button"
+                onClick={onDelete}
+                title="Permanently delete this meeting"
+                className="p-1 rounded-md bg-vs-red/15 hover:bg-vs-red/30 border border-vs-red/40 text-vs-red"
+                data-testid={`button-meeting-delete-${call.id}`}
+              >
+                <Trash2 className="w-3 h-3" />
+              </button>
+            )}
           </div>
         )}
       </div>

@@ -759,6 +759,26 @@ export function registerScheduledCallRoutes(app: Express) {
     res.json({ ok: true });
   });
 
+  // Hard delete a scheduled call. Removes invitees + the call row. The
+  // organizer or any admin can delete. We delete invitees first because
+  // they FK -> scheduled_calls.
+  app.delete("/api/scheduled-calls/:id", requireAuth, (req, res) => {
+    const u = (req as AuthedRequest).user;
+    const me = storage.getUser(u.id);
+    const callId = Number(req.params.id);
+    const call = getScheduledCall(callId);
+    if (!call || call.orgId !== u.orgId) return res.status(404).json({ message: "not found" });
+    if (call.organizerId !== u.id && me?.role !== "admin") return res.status(403).json({ message: "not allowed" });
+    try {
+      rawDb.prepare(`DELETE FROM scheduled_call_invitees WHERE scheduled_call_id = ?`).run(callId);
+      rawDb.prepare(`DELETE FROM scheduled_calls WHERE id = ?`).run(callId);
+      res.json({ ok: true, deleted: callId });
+    } catch (err: any) {
+      console.error("[delete-scheduled-call]", err);
+      res.status(500).json({ message: "failed to delete meeting" });
+    }
+  });
+
   // Per-user join URL for a meeting. Returns the tokenized /call-join URL
   // bound to the caller's user id. Used by the in-channel RSVP card.
   app.get("/api/scheduled-calls/:id/join-url", requireAuth, (req, res) => {
