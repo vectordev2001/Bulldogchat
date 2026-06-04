@@ -10,6 +10,7 @@
 import { useState } from "react";
 import { ExternalLink, FileText, X, Loader2 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { ActionPill } from "@/components/ui/action-pill";
 import type { ApiChannel, ApiLinkedContract, ApiUser } from "@/types/api";
 
 interface Props {
@@ -52,38 +53,39 @@ export function ContractBanner({ channel, contract, me }: Props) {
           </span>
         )}
       </div>
-      <div className="ml-auto flex items-center gap-1">
+      <div className="ml-auto flex items-center gap-1.5">
         {contract.pdfUrl && (
+          <ActionPill asChild variant="primary">
+            <a
+              href={contract.pdfUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              data-testid="contract-banner-pdf"
+            >
+              <FileText /> View PDF
+            </a>
+          </ActionPill>
+        )}
+        <ActionPill asChild variant="primary">
           <a
-            href={contract.pdfUrl}
+            href={contract.appUrl}
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center gap-1 rounded px-2 py-0.5 text-[11px] text-vs-blue-light hover:bg-[hsl(232_40%_22%)]"
-            data-testid="contract-banner-pdf"
+            data-testid="contract-banner-open"
           >
-            View PDF
+            Open <ExternalLink />
           </a>
-        )}
-        <a
-          href={contract.appUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex items-center gap-1 rounded px-2 py-0.5 text-[11px] text-vs-blue-light hover:bg-[hsl(232_40%_22%)]"
-          data-testid="contract-banner-open"
-        >
-          Open <ExternalLink className="h-3 w-3" />
-        </a>
+        </ActionPill>
         {canDetach && (
-          <button
-            type="button"
+          <ActionPill
+            variant="neutral"
             onClick={onDetach}
             disabled={detaching}
-            className="rounded p-1 text-[hsl(0_0%_55%)] hover:bg-[hsl(0_0%_15%)] hover:text-white disabled:opacity-50"
             title="Detach contract"
             data-testid="contract-banner-detach"
           >
-            {detaching ? <Loader2 className="h-3 w-3 animate-spin" /> : <X className="h-3 w-3" />}
-          </button>
+            {detaching ? <Loader2 className="animate-spin" /> : <X />}
+          </ActionPill>
         )}
       </div>
     </div>

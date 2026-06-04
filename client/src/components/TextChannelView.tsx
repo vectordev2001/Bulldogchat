@@ -7,6 +7,7 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
+import { ActionPill } from "@/components/ui/action-pill";
 import { useCalls } from "@/lib/CallContext";
 import { Avatar } from "./Avatar";
 import { useState, useRef, useEffect, KeyboardEvent, useCallback, useMemo } from "react";
@@ -1058,10 +1059,18 @@ function ScheduledCallCard({ meta, createdAt, onJoin }: { meta: ApiScheduledCall
   const accent = meta.callKind === "video" ? "vs-blue-light" : "vs-green";
 
   const responseDot = (r: ScheduledCallInviteeLive["response"]) =>
-    r === "yes" ? "bg-vs-green" :
-    r === "no"  ? "bg-vs-red" :
-    r === "maybe" ? "bg-yellow-400" :
-    "bg-[hsl(218_100%_68%/0.4)]";
+    r === "yes" ? "bg-emerald-400" :
+    r === "no"  ? "bg-red-400" :
+    r === "maybe" ? "bg-amber-400" :
+    "bg-white/40";
+
+  // Tinted pill fill per RSVP response (matches ActionPill variants):
+  // accepted→success, declined→danger, tentative→warning, pending→neutral.
+  const inviteeChipClass = (r: ScheduledCallInviteeLive["response"]) =>
+    r === "yes" ? "bg-emerald-500/15 text-emerald-300" :
+    r === "no"  ? "bg-red-500/15 text-red-300" :
+    r === "maybe" ? "bg-amber-500/15 text-amber-300" :
+    "bg-white/8 text-white/85";
 
   return (
     <motion.div
@@ -1092,40 +1101,41 @@ function ScheduledCallCard({ meta, createdAt, onJoin }: { meta: ApiScheduledCall
           {!cancelled && (
             <div className="flex items-center gap-1.5 mt-2 flex-wrap">
               <span className="text-[10px] uppercase tracking-wider text-[hsl(0_0%_55%)] font-mono">RSVP:</span>
-              <button
-                type="button"
+              <ActionPill
+                variant="success"
                 onClick={() => rsvpMut.mutate("yes")}
                 disabled={rsvpMut.isPending}
-                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-semibold uppercase tracking-wider border border-vs-green/40 bg-vs-green/10 hover:bg-vs-green/20 text-white disabled:opacity-50"
+                icon={<Check />}
                 data-testid={`button-card-rsvp-${meta.scheduledCallId}-yes`}
               >
-                <Check className="w-3 h-3" /> Yes
-              </button>
-              <button
-                type="button"
+                Yes
+              </ActionPill>
+              <ActionPill
+                variant="danger"
                 onClick={() => rsvpMut.mutate("no")}
                 disabled={rsvpMut.isPending}
-                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-semibold uppercase tracking-wider border border-vs-red/40 bg-vs-red/10 hover:bg-vs-red/20 text-white disabled:opacity-50"
+                icon={<Ban />}
                 data-testid={`button-card-rsvp-${meta.scheduledCallId}-no`}
               >
-                <Ban className="w-3 h-3" /> No
-              </button>
-              <button
-                type="button"
+                No
+              </ActionPill>
+              <ActionPill
+                variant="warning"
                 onClick={() => rsvpMut.mutate("maybe")}
                 disabled={rsvpMut.isPending}
-                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-semibold uppercase tracking-wider border border-vs-blue-light/40 bg-vs-blue-light/10 hover:bg-vs-blue-light/20 text-white disabled:opacity-50"
+                icon={<HelpCircle />}
                 data-testid={`button-card-rsvp-${meta.scheduledCallId}-maybe`}
               >
-                <HelpCircle className="w-3 h-3" /> Maybe
-              </button>
-              <a
-                href={`/api/scheduled-calls/${meta.scheduledCallId}/ics`}
-                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-semibold uppercase tracking-wider border border-[hsl(232_40%_25%)] bg-[hsl(232_50%_18%)] hover:bg-[hsl(232_50%_22%)] text-white ml-auto"
-                data-testid={`link-card-ics-${meta.scheduledCallId}`}
-              >
-                <CalendarIcon className="w-3 h-3" /> .ics
-              </a>
+                Maybe
+              </ActionPill>
+              <ActionPill asChild variant="primary" className="ml-auto">
+                <a
+                  href={`/api/scheduled-calls/${meta.scheduledCallId}/ics`}
+                  data-testid={`link-card-ics-${meta.scheduledCallId}`}
+                >
+                  <CalendarIcon /> .ics
+                </a>
+              </ActionPill>
             </div>
           )}
         </div>
@@ -1135,7 +1145,7 @@ function ScheduledCallCard({ meta, createdAt, onJoin }: { meta: ApiScheduledCall
           {liveInvitees.map((inv) => (
             <span
               key={inv.id}
-              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] text-[hsl(0_0%_80%)] border border-[hsl(232_40%_25%)] bg-[hsl(232_50%_16%)]"
+              className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-medium border border-transparent ${inviteeChipClass(inv.response)}`}
             >
               <span className={`w-1.5 h-1.5 rounded-full inline-block shrink-0 ${responseDot(inv.response)}`} />
               {inv.name}
