@@ -24,6 +24,8 @@ import { storage } from "./storage";
 import { signCallJoinToken, sendSms, buildScheduledCallSmsBody, buildReminderSmsBody, generateRsvpCode, buildIcsForScheduledCall, parseRsvpSms, smsAvailable, verifyTwilioSignature } from "./sms";
 import { emitMessageNew } from "./events";
 import { requireAuth, type AuthedRequest } from "./auth";
+import { sendEmail, isEmailConfigured, emailFromAddress, emailFromName } from "./email";
+import { sendNotificationToUsers } from "./push";
 import type { ScheduledCall, ScheduledCallInvitee, ScheduledCallSystemMessageMeta, RsvpResponse } from "@shared/schema";
 
 const CHAT_BASE_URL = process.env.CHAT_BASE_URL || "https://chat.bulldogops.com";
@@ -202,6 +204,16 @@ function markInviteeReminderSent(inviteeId: number) {
   rawDb.prepare("UPDATE scheduled_call_invitees SET reminder_sent_at = ? WHERE id = ?").run(now, inviteeId);
 }
 
+function markInviteeReminder15Sent(inviteeId: number) {
+  const now = Math.floor(Date.now() / 1000);
+  rawDb.prepare("UPDATE scheduled_call_invitees SET reminder_15_at = ? WHERE id = ?").run(now, inviteeId);
+}
+
+function markInviteeReminderStartSent(inviteeId: number) {
+  const now = Math.floor(Date.now() / 1000);
+  rawDb.prepare("UPDATE scheduled_call_invitees SET reminder_start_at = ?, reminder_sent_at = ? WHERE id = ?").run(now, now, inviteeId);
+}
+
 function setRsvp(inviteeId: number, response: RsvpResponse, channel: string) {
   const now = Math.floor(Date.now() / 1000);
   rawDb.prepare(`
@@ -244,87 +256,245 @@ function formatWhenLabel(d: Date, tz: string = "America/Los_Angeles"): string {
   }
 }
 
-/* ─────────────────── Dispatch (send invite SMSes) ─────────────────────── */
+/* ─────────────────── Dispatch (send invite SMSes + emails) ────────────── */
 async function dispatchInvites(call: ScheduledCall): Promise<void> {
   const organizer = storage.getUser(call.organizerId);
   if (!organizer) return;
   const invitees = listInviteesForCall(call.id);
   const whenLabel = formatWhenLabel(call.startAt);
+
+  // Build attendee email list for .ics (all invitees with emails).
+  const allAttendeeEmails: string[] = [];
+  for (const i of invitees) {
+    if (i.userId) {
+      const u = storage.getUser(i.userId);
+      if (u?.email) allAttendeeEmails.push(u.email);
+    } else if (i.externalEmail) {
+      allAttendeeEmails.push(i.externalEmail);
+    }
+  }
+
   for (const inv of invitees) {
     if (inv.inviteSentAt) continue; // already sent
+
+    // Resolve contact methods independently.
     let phone: string | null = null;
+    let email: string | null = null;
     if (inv.userId) {
       const u = storage.getUser(inv.userId);
       phone = normalizeE164(u?.phone);
+      email = u?.email ?? null;
     } else if (inv.externalPhone) {
       phone = normalizeE164(inv.externalPhone);
     }
-    if (!phone) {
-      markInviteSent(inv.id, "no phone");
-      continue;
+    if (inv.externalEmail) {
+      email = inv.externalEmail;
     }
-    if (!smsAvailable()) {
-      markInviteSent(inv.id, "SMS not configured");
-      continue;
-    }
+
     const joinUrl = buildJoinUrl(call, inv, organizer.name);
-    const body = buildScheduledCallSmsBody({
-      organizerName: organizer.name,
-      title: call.title,
-      whenLabel,
-      joinUrl,
-      rsvpCode: `#${inv.rsvpCode}`,
-    });
-    try {
-      const res = await sendSms({ to: phone, body });
-      if (res.ok) markInviteSent(inv.id, null);
-      else markInviteSent(inv.id, res.error || "unknown");
-    } catch (e: any) {
-      markInviteSent(inv.id, e?.message ?? "exception");
+    const rsvpBase = `${CHAT_BASE_URL}/api/scheduled-calls/${call.id}/rsvp-public?code=${inv.rsvpCode}`;
+    const rsvpYesUrl    = `${rsvpBase}&response=yes`;
+    const rsvpNoUrl     = `${rsvpBase}&response=no`;
+    const rsvpMaybeUrl  = `${rsvpBase}&response=maybe`;
+    const channelUrl    = call.channelId ? `${CHAT_BASE_URL}/channel/${call.channelId}` : CHAT_BASE_URL;
+
+    let emailSent = false;
+    let smsSent = false;
+    const errors: string[] = [];
+
+    // ─── Email ───────────────────────────────────────────────────────────
+    if (email && isEmailConfigured()) {
+      try {
+        const icsContent = buildIcsForScheduledCall({
+          uid: `bulldog-${call.id}@bulldogops.com`,
+          title: call.title,
+          description:
+            (call.notes ? call.notes + "\n\n" : "") +
+            `Join: ${joinUrl}\nOrganizer: ${organizer.name}`,
+          startUtc: call.startAt,
+          endUtc: call.endAt,
+          organizerEmail: organizer.email,
+          organizerName: organizer.name,
+          attendeeEmails: allAttendeeEmails,
+          joinUrl,
+          sequence: call.icsSequence,
+          method: "REQUEST",
+        });
+
+        const escH = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+        const subject = `${organizer.name} invited you to "${call.title}" — ${whenLabel}`;
+        const textBody = [
+          `${organizer.name} has scheduled a ${call.kind} call: "${call.title}"`,
+          `When: ${whenLabel}`,
+          `Join: ${joinUrl}`,
+          ``,
+          `RSVP:`,
+          `  Yes    → ${rsvpYesUrl}`,
+          `  No     → ${rsvpNoUrl}`,
+          `  Maybe  → ${rsvpMaybeUrl}`,
+        ].join("\n");
+
+        const htmlBody = `<!DOCTYPE html>
+<html><body style="font-family:sans-serif;background:#0d1117;color:#e6edf3;padding:24px;">
+<h2 style="color:#58a6ff;margin-top:0">${escH(call.title)}</h2>
+<p><strong>Organizer:</strong> ${escH(organizer.name)}<br/>
+<strong>When:</strong> ${escH(whenLabel)}</p>
+<p><a href="${escH(joinUrl)}" style="display:inline-block;padding:10px 20px;background:#1f6feb;color:#fff;border-radius:6px;text-decoration:none;font-weight:bold;">Join Meeting</a></p>
+<p style="margin-top:16px"><strong>RSVP:</strong></p>
+<p>
+  <a href="${escH(rsvpYesUrl)}" style="display:inline-block;margin-right:8px;padding:8px 16px;background:#238636;color:#fff;border-radius:6px;text-decoration:none;font-weight:bold;">Yes</a>
+  <a href="${escH(rsvpNoUrl)}" style="display:inline-block;margin-right:8px;padding:8px 16px;background:#b91c1c;color:#fff;border-radius:6px;text-decoration:none;font-weight:bold;">No</a>
+  <a href="${escH(rsvpMaybeUrl)}" style="display:inline-block;padding:8px 16px;background:#92400e;color:#fff;border-radius:6px;text-decoration:none;font-weight:bold;">Maybe</a>
+</p>
+<p style="margin-top:24px;font-size:12px;color:#8b949e;">You received this because you were invited to a Bulldog Chat meeting.</p>
+</body></html>`;
+
+        const res = await sendEmail({
+          to: email,
+          subject,
+          text: textBody,
+          html: htmlBody,
+          attachments: [{
+            filename: "meeting.ics",
+            content: Buffer.from(icsContent, "utf8"),
+            contentType: "text/calendar; method=REQUEST; charset=utf-8",
+          }],
+        });
+        if (res.sent) {
+          emailSent = true;
+        } else {
+          errors.push(`email: ${res.reason ?? "unknown"}`);
+          console.warn(`[scheduled-calls] email invite failed for inv ${inv.id}:`, res.reason);
+        }
+      } catch (e: any) {
+        errors.push(`email: ${e?.message ?? "exception"}`);
+        console.warn(`[scheduled-calls] email invite exception for inv ${inv.id}:`, e);
+      }
+    }
+
+    // ─── SMS ─────────────────────────────────────────────────────────────
+    if (phone && smsAvailable()) {
+      const smsBody = buildScheduledCallSmsBody({
+        organizerName: organizer.name,
+        title: call.title,
+        whenLabel,
+        joinUrl,
+        rsvpCode: `#${inv.rsvpCode}`,
+      });
+      try {
+        const res = await sendSms({ to: phone, body: smsBody });
+        if (res.ok) {
+          smsSent = true;
+        } else {
+          errors.push(`sms: ${res.error ?? "unknown"}`);
+        }
+      } catch (e: any) {
+        errors.push(`sms: ${e?.message ?? "exception"}`);
+      }
+    }
+
+    // ─── Mark result ─────────────────────────────────────────────────────
+    if (emailSent || smsSent) {
+      markInviteSent(inv.id, null);
+    } else if (!email && !phone) {
+      markInviteSent(inv.id, "no contact methods");
+    } else {
+      markInviteSent(inv.id, errors.length ? `all sends failed: ${errors.join("; ")}` : "no configured provider");
     }
   }
 }
 
 /* ─────────────────── Reminder loop (in-process) ───────────────────────── */
 async function dispatchReminders() {
-  // Find calls starting in the next ~6 minutes that haven't been reminded yet.
   const now = Math.floor(Date.now() / 1000);
-  const horizon = now + 6 * 60;
+
+  // Find calls starting in the next 16 minutes (covers 15-min and at-start
+  // reminder windows). Include a slight grace window for at-start.
+  const horizon = now + 16 * 60;
   const rows = rawDb.prepare(`
     SELECT * FROM scheduled_calls
     WHERE status = 'scheduled'
-      AND reminder_sent_at IS NULL
       AND start_at <= ?
       AND start_at > ?
-  `).all(horizon, now) as any[];
+  `).all(horizon, now - 60) as any[];
+
   for (const r of rows) {
     const call = rowToScheduledCall(r);
     const organizer = storage.getUser(call.organizerId);
     if (!organizer) continue;
-    const invitees = listInviteesForCall(call.id);
-    for (const inv of invitees) {
-      if (inv.reminderSentAt) continue;
-      if (inv.response === "no") continue; // don't pester declines
-      let phone: string | null = null;
-      if (inv.userId) {
-        const u = storage.getUser(inv.userId);
-        phone = normalizeE164(u?.phone);
-      } else if (inv.externalPhone) {
-        phone = normalizeE164(inv.externalPhone);
-      }
-      if (!phone || !smsAvailable()) {
-        markInviteeReminderSent(inv.id);
-        continue;
-      }
+    const inviteesRaw = rawDb.prepare(
+      "SELECT * FROM scheduled_call_invitees WHERE scheduled_call_id = ? ORDER BY id ASC"
+    ).all(call.id) as any[];
+
+    const secondsUntilStart = call.startAt.getTime() / 1000 - now;
+    const channelUrl = call.channelId ? `/channel/${call.channelId}` : "/";
+
+    for (const row of inviteesRaw) {
+      const inv = rowToInvitee(row);
+      if (inv.response === "no") continue;
+
       const joinUrl = buildJoinUrl(call, inv, organizer.name);
-      const minutes = Math.max(1, Math.round((call.startAt.getTime() - Date.now()) / 60000));
-      const body = buildReminderSmsBody({ title: call.title, minutesUntilStart: minutes, joinUrl });
-      try {
-        await sendSms({ to: phone, body });
-      } catch (e) { /* best-effort */ }
-      markInviteeReminderSent(inv.id);
+
+      if (inv.userId) {
+        // App-user invitee: web push notifications.
+
+        // 15-min push reminder
+        if (secondsUntilStart <= 15 * 60 && !row.reminder_15_at) {
+          try {
+            await sendNotificationToUsers([inv.userId], {
+              title: `Meeting in 15 min: ${call.title}`,
+              body: `${call.title} starts in about 15 minutes.`,
+              url: channelUrl,
+              tag: `sched-${call.id}`,
+            });
+          } catch (e) { /* best-effort */ }
+          markInviteeReminder15Sent(inv.id);
+        }
+
+        // At-start push + SMS reminder
+        if (secondsUntilStart <= 60 && !row.reminder_start_at) {
+          try {
+            await sendNotificationToUsers([inv.userId], {
+              title: `${call.title} starting now`,
+              body: `Your ${call.kind} call is starting now.`,
+              url: channelUrl,
+              tag: `sched-${call.id}`,
+            });
+          } catch (e) { /* best-effort */ }
+          const u = storage.getUser(inv.userId);
+          const phone = normalizeE164(u?.phone);
+          if (phone && smsAvailable()) {
+            const minutes = Math.max(0, Math.round(secondsUntilStart / 60));
+            const smsBody = buildReminderSmsBody({ title: call.title, minutesUntilStart: minutes, joinUrl });
+            try { await sendSms({ to: phone, body: smsBody }); } catch (e) { /* best-effort */ }
+          }
+          markInviteeReminderStartSent(inv.id);
+        }
+      } else {
+        // External-phone-only invitee: legacy 5-min SMS reminder.
+        if (inv.reminderSentAt) continue;
+        const phone = normalizeE164(inv.externalPhone);
+        if (!phone || !smsAvailable()) {
+          markInviteeReminderSent(inv.id);
+          continue;
+        }
+        if (secondsUntilStart <= 6 * 60) {
+          const minutes = Math.max(1, Math.round(secondsUntilStart / 60));
+          const smsBody = buildReminderSmsBody({ title: call.title, minutesUntilStart: minutes, joinUrl });
+          try { await sendSms({ to: phone, body: smsBody }); } catch (e) { /* best-effort */ }
+          markInviteeReminderSent(inv.id);
+        }
+      }
     }
-    markReminderSent(call.id);
+
+    // Mark call-level reminder_sent_at when all invitee at-start reminders done.
+    const allDone = inviteesRaw.every((row: any) =>
+      row.response === "no" ||
+      (row.user_id ? !!row.reminder_start_at : !!row.reminder_sent_at)
+    );
+    if (allDone && !r.reminder_sent_at) {
+      markReminderSent(call.id);
+    }
   }
   // Also auto-transition calls whose start_at has passed but status is still 'scheduled'.
   const startedRows = rawDb.prepare(`
@@ -372,6 +542,22 @@ async function postScheduledCallCard(call: ScheduledCall, kind: ScheduledCallSys
   // We embed a placeholder URL bound to the organizer for now; the client
   // overrides via /api/scheduled-calls/:id/join-url on click.
   const placeholderUrl = buildJoinUrl(call, { ...invitees[0], userId: organizer.id } as ScheduledCallInvitee, organizer.name);
+
+  // Build a snapshot invitee roster (excludes organizer — they're implicit yes).
+  const inviteeSnapshot = invitees.map((inv) => {
+    let name = "Guest";
+    if (inv.userId) {
+      const u = storage.getUser(inv.userId);
+      name = u?.name ?? `User #${inv.userId}`;
+    } else if (inv.externalEmail) {
+      name = inv.externalEmail;
+    } else if (inv.externalPhone) {
+      // Mask phone: keep last 4 digits
+      name = `...${inv.externalPhone.slice(-4)}`;
+    }
+    return { id: inv.id, name, response: inv.response as "pending" | "yes" | "no" | "maybe" };
+  });
+
   const meta: ScheduledCallSystemMessageMeta = {
     system: true,
     kind,
@@ -383,6 +569,7 @@ async function postScheduledCallCard(call: ScheduledCall, kind: ScheduledCallSys
     organizerId: call.organizerId,
     inviteeCount: invitees.length,
     joinUrl: placeholderUrl,
+    invitees: inviteeSnapshot,
   };
   const content =
     kind === "scheduled_call.created"   ? `${organizer.name} scheduled "${call.title}" for ${formatWhenLabel(call.startAt)}` :
@@ -542,11 +729,19 @@ export function registerScheduledCallRoutes(app: Express) {
     const callId = Number(req.params.id);
     const response = req.body?.response;
     if (!["yes", "no", "maybe"].includes(response)) return res.status(400).json({ message: "response invalid" });
+    const call = getScheduledCall(callId);
+    if (!call || call.orgId !== u.orgId) return res.status(404).json({ message: "not found" });
     const inv = rawDb.prepare(`
       SELECT * FROM scheduled_call_invitees
       WHERE scheduled_call_id = ? AND user_id = ?
     `).get(callId, u.id) as any;
-    if (!inv) return res.status(404).json({ message: "not an invitee" });
+    // Organizer is implicitly yes — they have no invitee row.
+    if (!inv) {
+      if (call.organizerId === u.id) {
+        return res.json({ ok: true, response, organizer: true });
+      }
+      return res.status(404).json({ message: "not an invitee" });
+    }
     setRsvp(inv.id, response as RsvpResponse, "in_app");
     res.json({ ok: true, response });
   });
@@ -683,7 +878,97 @@ export function registerScheduledCallRoutes(app: Express) {
     setRsvp(matched.id, parsed.response, "sms");
     const word = parsed.response === "yes" ? "YES" : parsed.response === "no" ? "NO" : "MAYBE";
     return res.type("text/xml").send(
-      `<Response><Message>Got it — you replied ${word} to "${matched.title}". Thanks.</Message></Response>`
+      `<Response><Message>Got it \u2014 you replied ${word} to "${matched.title}". Thanks.</Message></Response>`
     );
+  });
+
+  // Public RSVP page — no login required; rsvp_code is the auth token.
+  // GET /api/scheduled-calls/:id/rsvp-public?code=<rsvpCode>&response=<yes|no|maybe>
+  app.get("/api/scheduled-calls/:id/rsvp-public", (req, res) => {
+    const callId = Number(req.params.id);
+    const code = String(req.query.code || "").toUpperCase();
+    const response = String(req.query.response || "").toLowerCase();
+    if (!["yes", "no", "maybe"].includes(response)) {
+      return res.status(400).send("Invalid response. Use yes, no, or maybe.");
+    }
+    const call = getScheduledCall(callId);
+    if (!call) return res.status(404).send("Meeting not found.");
+    if (!code) return res.status(400).send("Missing code.");
+    const invitees = listInviteesForCall(callId);
+    const inv = invitees.find((i) => i.rsvpCode === code);
+    if (!inv) return res.status(403).send("Invalid RSVP code.");
+    setRsvp(inv.id, response as RsvpResponse, "web");
+    const organizer = storage.getUser(call.organizerId);
+    const whenLabel = formatWhenLabel(call.startAt);
+    const channelUrl = call.channelId
+      ? `${CHAT_BASE_URL}/channel/${call.channelId}`
+      : CHAT_BASE_URL;
+    const responseLabel = response === "yes" ? "Yes" : response === "no" ? "No" : "Maybe";
+    const responseColor = response === "yes" ? "#238636" : response === "no" ? "#b91c1c" : "#92400e";
+    const escH = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+    const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RSVP Recorded — Bulldog Chat</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #0d1117; color: #e6edf3; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+           min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px; }
+    .card { max-width: 440px; width: 100%; background: #161b22; border: 1px solid #30363d;
+            border-radius: 12px; padding: 32px 28px; text-align: center; }
+    .badge { display: inline-block; padding: 6px 16px; border-radius: 20px; font-weight: 700;
+             font-size: 14px; color: #fff; margin-bottom: 20px; background: ${responseColor}; }
+    h1 { font-size: 20px; font-weight: 700; margin-bottom: 8px; }
+    .meeting { font-size: 16px; font-weight: 600; color: #58a6ff; margin-bottom: 4px; }
+    .when { font-size: 13px; color: #8b949e; margin-bottom: 24px; }
+    a.btn { display: inline-block; padding: 10px 24px; background: #1f6feb; color: #fff;
+            border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 14px; }
+    a.btn:hover { background: #388bfd; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="badge">${escH(responseLabel)}</div>
+    <h1>RSVP Recorded</h1>
+    <div class="meeting">${escH(call.title)}</div>
+    <div class="when">${escH(whenLabel)}</div>
+    <a class="btn" href="${escH(channelUrl)}">Open Bulldog Chat</a>
+  </div>
+</body>
+</html>`;
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.send(html);
+  });
+
+  // Live invitee list for a scheduled call. Requires auth, scoped to org.
+  // GET /api/scheduled-calls/:id/invitees
+  app.get("/api/scheduled-calls/:id/invitees", requireAuth, (req, res) => {
+    const u = (req as AuthedRequest).user;
+    const callId = Number(req.params.id);
+    const call = getScheduledCall(callId);
+    if (!call || call.orgId !== u.orgId) return res.status(404).json({ message: "not found" });
+    const me = storage.getUser(u.id);
+    const isInvitee = rawDb.prepare(
+      "SELECT 1 FROM scheduled_call_invitees WHERE scheduled_call_id = ? AND user_id = ?"
+    ).get(callId, u.id);
+    if (!isInvitee && call.organizerId !== u.id && me?.role !== "admin") {
+      return res.status(403).json({ message: "not an invitee" });
+    }
+    const invitees = listInviteesForCall(callId);
+    const result = invitees.map((inv) => {
+      let name = "Guest";
+      if (inv.userId) {
+        const usr = storage.getUser(inv.userId);
+        name = usr?.name ?? `User #${inv.userId}`;
+      } else if (inv.externalEmail) {
+        name = inv.externalEmail;
+      } else if (inv.externalPhone) {
+        name = `...${inv.externalPhone.slice(-4)}`;
+      }
+      return { id: inv.id, name, response: inv.response };
+    });
+    res.json({ invitees: result });
   });
 }

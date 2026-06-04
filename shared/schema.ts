@@ -248,6 +248,12 @@ export interface ScheduledCallSystemMessageMeta {
   organizerId: number;
   inviteeCount: number;
   joinUrl: string;          // absolute, already token-bearing for /call-join
+  // Snapshot invitee roster at card-post time; live data is refetched by FE.
+  invitees?: Array<{
+    id: number;
+    name: string;       // user display name OR email/masked phone
+    response: "pending" | "yes" | "no" | "maybe";
+  }>;
 }
 export type SystemMessageMeta = WorkObjectSystemMessageMeta | ScheduledCallSystemMessageMeta;
 export const insertMessageSchema = createInsertSchema(messages).omit({

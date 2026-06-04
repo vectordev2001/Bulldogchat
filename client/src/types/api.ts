@@ -162,6 +162,12 @@ export interface ApiScheduledCallSystemMessageMeta {
   startAt: number;
   endAt: number;
   organizerId: number;
+  inviteeCount?: number;
+  invitees?: Array<{
+    id: number;
+    name: string;
+    response: "pending" | "yes" | "no" | "maybe";
+  }>;
 }
 
 export type ApiSystemMessageMeta =

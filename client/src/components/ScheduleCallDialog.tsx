@@ -4,6 +4,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { apiRequest } from "@/lib/queryClient";
 import type { ApiUser, ApiChannel } from "@/types/api";
 import { Loader2, Video, Mic, Calendar as CalIcon, X, Plus, Search } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
 
 /**
  * ScheduleCallDialog — modal for creating a scheduled call.
@@ -444,6 +445,7 @@ export function MeetingsListDialog({
   onOpenScheduler: () => void;
 }) {
   const qc = useQueryClient();
+  const { toast } = useToast();
   const memberById = useMemo(() => new Map(orgMembers.map((m) => [m.id, m])), [orgMembers]);
 
   const q = useQuery<{ calls: ApiScheduledCall[] }>({
@@ -455,7 +457,14 @@ export function MeetingsListDialog({
   const rsvpMut = useMutation({
     mutationFn: async ({ id, response }: { id: number; response: "yes" | "no" | "maybe" }) =>
       apiRequest("POST", `/api/scheduled-calls/${id}/rsvp`, { response }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["/api/scheduled-calls"] }),
+    onSuccess: (_data, { response }) => {
+      qc.invalidateQueries({ queryKey: ["/api/scheduled-calls"] });
+      const label = response === "yes" ? "Yes" : response === "no" ? "No" : "Maybe";
+      toast({ title: `RSVP ${label} recorded` });
+    },
+    onError: (err: any) => {
+      toast({ title: "RSVP failed", description: err?.message ?? "Unknown error", variant: "destructive" });
+    },
   });
 
   const cancelMut = useMutation({

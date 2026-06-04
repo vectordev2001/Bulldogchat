@@ -777,4 +777,21 @@ export function runMigrations() {
   } catch (e) {
     console.warn("[migrate] v17 meeting_notes skipped:", e);
   }
+
+  // v18 (Phase 1.9.5) — two new per-invitee reminder columns for 15-min and
+  // at-start push notifications. Keep existing reminder_sent_at for back-compat
+  // (external-phone-only invitees still use it for the legacy SMS reminder).
+  try {
+    const sciCols = rawDb.prepare(`PRAGMA table_info(scheduled_call_invitees)`).all() as Array<{ name: string }>;
+    if (!sciCols.find(c => c.name === "reminder_15_at")) {
+      rawDb.exec(`ALTER TABLE scheduled_call_invitees ADD COLUMN reminder_15_at INTEGER;`);
+      console.log("[migrate] v18 added scheduled_call_invitees.reminder_15_at");
+    }
+    if (!sciCols.find(c => c.name === "reminder_start_at")) {
+      rawDb.exec(`ALTER TABLE scheduled_call_invitees ADD COLUMN reminder_start_at INTEGER;`);
+      console.log("[migrate] v18 added scheduled_call_invitees.reminder_start_at");
+    }
+  } catch (e) {
+    console.warn("[migrate] v18 reminder columns skipped:", e);
+  }
 }

@@ -5,7 +5,8 @@ import { Avatar } from "./Avatar";
 import { useState, useRef, useEffect, KeyboardEvent, useCallback, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import type { ApiChannel, ApiMessage, ApiUser, UserRole, ApiAttachment, ApiSystemMessageMeta, ApiWorkObjectSystemMessageMeta, ApiScheduledCallSystemMessageMeta } from "@/types/api";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { useToast } from "@/hooks/use-toast";
 import { apiRequest, apiUpload, queryClient } from "@/lib/queryClient";
 import { ThreadPanel } from "./ThreadPanel";
 import { SearchModal } from "./SearchModal";
@@ -402,6 +403,7 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers, me
                 meId={me.id}
                 myRole={me.role}
                 onOpenThread={() => setThreadParent(msg)}
+                onJoinMeeting={(kind) => setCallDialog(kind)}
               />
             );
           })}
@@ -621,11 +623,12 @@ function ChannelIntro({ channel }: { channel: ApiChannel }) {
   );
 }
 
-function SystemMessageRow({ meta, content, createdAt }: { meta: ApiSystemMessageMeta; content: string; createdAt: string }) {
+function SystemMessageRow({ meta, content, createdAt, onJoinMeeting }: { meta: ApiSystemMessageMeta; content: string; createdAt: string; onJoinMeeting?: (kind: "voice" | "video") => void }) {
   // Scheduled-call cards get their own rich row with RSVP buttons + .ics link
   // instead of the compact work-object banner.
   if (meta.kind.startsWith("scheduled_call.")) {
-    return <ScheduledCallCard meta={meta as ApiScheduledCallSystemMessageMeta} createdAt={createdAt} />;
+    const smeta = meta as ApiScheduledCallSystemMessageMeta;
+    return <ScheduledCallCard meta={smeta} createdAt={createdAt} onJoin={onJoinMeeting ? () => onJoinMeeting(smeta.callKind) : undefined} />;
   }
   // Below here, meta must be a work-object kind. Narrow the type so TS knows.
   const wo = meta as ApiWorkObjectSystemMessageMeta;
@@ -677,10 +680,10 @@ function SystemMessageRow({ meta, content, createdAt }: { meta: ApiSystemMessage
   );
 }
 
-function MessageRow({ msg, grouped, isMe, meId, myRole, onOpenThread }: { msg: ApiMessage; grouped: boolean; isMe: boolean; meId: number; myRole: UserRole; onOpenThread: () => void }) {
+function MessageRow({ msg, grouped, isMe, meId, myRole, onOpenThread, onJoinMeeting }: { msg: ApiMessage; grouped: boolean; isMe: boolean; meId: number; myRole: UserRole; onOpenThread: () => void; onJoinMeeting?: (kind: "voice" | "video") => void }) {
   // System messages (work-object events) render as compact centered banners.
   if (msg.meta && msg.meta.system) {
-    return <SystemMessageRow meta={msg.meta} content={msg.content} createdAt={msg.createdAt} />;
+    return <SystemMessageRow meta={msg.meta} content={msg.content} createdAt={msg.createdAt} onJoinMeeting={onJoinMeeting} />;
   }
 
   // Tombstoned message — author or admin deleted it. We still render the
@@ -936,7 +939,14 @@ function renderInline(text: string, mentions: ApiMessage["mentions"] | undefined
 // Renders inside the message stream like a work-object banner but bigger.
 // ─────────────────────────────────────────────────────────────────────────
 
-function ScheduledCallCard({ meta, createdAt }: { meta: ApiScheduledCallSystemMessageMeta; createdAt: string }) {
+interface ScheduledCallInviteeLive {
+  id: number;
+  name: string;
+  response: "pending" | "yes" | "no" | "maybe";
+}
+
+function ScheduledCallCard({ meta, createdAt, onJoin }: { meta: ApiScheduledCallSystemMessageMeta; createdAt: string; onJoin?: () => void }) {
+  const { toast } = useToast();
   const startDate = new Date(meta.startAt);
   const whenLabel = startDate.toLocaleString(undefined, {
     weekday: "short", month: "short", day: "numeric",
@@ -948,13 +958,33 @@ function ScheduledCallCard({ meta, createdAt }: { meta: ApiScheduledCallSystemMe
   const rsvpMut = useMutation({
     mutationFn: async (response: "yes" | "no" | "maybe") =>
       apiRequest("POST", `/api/scheduled-calls/${meta.scheduledCallId}/rsvp`, { response }),
-    onSuccess: () => {
+    onSuccess: (_data, response) => {
       queryClient.invalidateQueries({ queryKey: ["/api/scheduled-calls"] });
+      const label = response === "yes" ? "Yes" : response === "no" ? "No" : "Maybe";
+      toast({ title: `RSVP ${label} recorded` });
+    },
+    onError: (err: any) => {
+      toast({ title: "RSVP failed", description: err?.message ?? "Unknown error", variant: "destructive" });
     },
   });
 
+  const inviteesQuery = useQuery<{ invitees: ScheduledCallInviteeLive[] }>({
+    queryKey: ["/api/scheduled-calls", meta.scheduledCallId, "invitees"],
+    queryFn: () => apiRequest("GET", `/api/scheduled-calls/${meta.scheduledCallId}/invitees`),
+    refetchInterval: 15000,
+    enabled: !cancelled,
+  });
+
+  const liveInvitees: ScheduledCallInviteeLive[] = inviteesQuery.data?.invitees ?? (meta as any).invitees ?? [];
+
   const Icon = meta.callKind === "video" ? Video : Mic;
   const accent = meta.callKind === "video" ? "vs-blue-light" : "vs-green";
+
+  const responseDot = (r: ScheduledCallInviteeLive["response"]) =>
+    r === "yes" ? "bg-vs-green" :
+    r === "no"  ? "bg-vs-red" :
+    r === "maybe" ? "bg-yellow-400" :
+    "bg-[hsl(218_100%_68%/0.4)]";
 
   return (
     <motion.div
@@ -965,9 +995,14 @@ function ScheduledCallCard({ meta, createdAt }: { meta: ApiScheduledCallSystemMe
       data-testid={`scheduled-call-card-${meta.scheduledCallId}`}
     >
       <div className="flex items-start gap-3">
-        <div className={`w-10 h-10 rounded-full bg-${accent}/15 border border-${accent}/40 flex items-center justify-center shrink-0`}>
+        <button
+          type="button"
+          title="Join meeting"
+          onClick={() => onJoin?.()}
+          className={`w-10 h-10 rounded-full bg-${accent}/15 border border-${accent}/40 flex items-center justify-center shrink-0 cursor-pointer hover:bg-${accent}/25 transition-colors`}
+        >
           <Icon className={`w-5 h-5 text-${accent}`} />
-        </div>
+        </button>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-[10px] font-mono uppercase tracking-wider text-[hsl(0_0%_55%)]">
@@ -1018,6 +1053,19 @@ function ScheduledCallCard({ meta, createdAt }: { meta: ApiScheduledCallSystemMe
           )}
         </div>
       </div>
+      {liveInvitees.length > 0 && (
+        <div className="flex items-center flex-wrap gap-1.5 mt-2">
+          {liveInvitees.map((inv) => (
+            <span
+              key={inv.id}
+              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] text-[hsl(0_0%_80%)] border border-[hsl(232_40%_25%)] bg-[hsl(232_50%_16%)]"
+            >
+              <span className={`w-1.5 h-1.5 rounded-full inline-block shrink-0 ${responseDot(inv.response)}`} />
+              {inv.name}
+            </span>
+          ))}
+        </div>
+      )}
       <div className="text-[10px] text-[hsl(0_0%_45%)] mt-2 text-right font-mono uppercase tracking-wider">
         {fmtTime(createdAt)}
       </div>
