@@ -29,6 +29,31 @@ export function CallVideoStage({
 }) {
   const all = [...others, me];
 
+  // Screen share takes precedence over any normal layout: whenever any
+  // participant is sharing a screen, promote it to a featured tile and
+  // render the camera tiles as a thumbnail strip beneath. Prefer remote
+  // sharers (more useful than viewing your own screen back) but fall
+  // back to the local screen so the sharer also has confirmation.
+  const remoteSharer = others.find((p) => p.participant?.screenTrack);
+  const localSharer = me.participant?.screenTrack ? me : null;
+  const sharer = remoteSharer ?? localSharer;
+  if (sharer) {
+    return (
+      <div className="w-full h-full flex flex-col gap-3 p-1">
+        <div className="flex-1 min-h-0">
+          <CallTile {...sharer} screen />
+        </div>
+        <div className="h-24 shrink-0 flex gap-2 overflow-x-auto">
+          {all.map((p) => (
+            <div key={p.key} className="h-full aspect-video shrink-0">
+              <CallTile {...p} compact />
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
   // Pick the focused participant: first remote that's speaking, else first
   // remote, else me (solo call).
   const speaking = others.find((o) => o.participant?.isSpeaking && !o.participant?.micMuted);

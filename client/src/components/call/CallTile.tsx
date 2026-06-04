@@ -9,7 +9,7 @@ import { attachTrack } from "@/lib/useLiveKitRoom";
 import type { RoomParticipantState } from "@/lib/useLiveKitRoom";
 
 export function CallTile({
-  name, hue, participant, isMe, muted, videoOff, compact,
+  name, hue, participant, isMe, muted, videoOff, compact, screen, fit,
 }: {
   name: string;
   hue: number;
@@ -19,9 +19,15 @@ export function CallTile({
   videoOff?: boolean;
   /** Smaller avatar + label, for filmstrip/sidebar thumbnails. */
   compact?: boolean;
+  /** When true, render the participant's screen-share track instead of camera. */
+  screen?: boolean;
+  /** Override object-fit (default cover for camera, contain for screen). */
+  fit?: "cover" | "contain";
 }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
-  const track = participant?.videoTrack ?? null;
+  const track = screen
+    ? (participant?.screenTrack ?? null)
+    : (participant?.videoTrack ?? null);
   useEffect(() => {
     if (!videoRef.current) return;
     return attachTrack(track, videoRef.current);
@@ -30,6 +36,9 @@ export function CallTile({
   const speaking = participant?.isSpeaking && !participant?.micMuted;
   const isMuted = participant?.micMuted ?? (isMe ? !!muted : false);
   const hasVideo = !!track && !videoOff;
+  const objectFitClass = (fit ?? (screen ? "contain" : "cover")) === "contain" ? "object-contain" : "object-cover";
+  // Never mirror the screen share — only mirror the local camera tile.
+  const mirror = isMe && !screen;
   const avatarSize = compact ? 56 : 128;
 
   return (
@@ -46,8 +55,8 @@ export function CallTile({
           autoPlay
           playsInline
           muted
-          className="absolute inset-0 w-full h-full object-cover"
-          style={{ transform: isMe ? "scaleX(-1)" : undefined }}
+          className={`absolute inset-0 w-full h-full ${objectFitClass} ${screen ? "bg-black" : ""}`}
+          style={{ transform: mirror ? "scaleX(-1)" : undefined }}
         />
       )}
       {!hasVideo && (
@@ -62,7 +71,7 @@ export function CallTile({
         compact ? "px-2 py-1" : "px-4 py-3",
       ].join(" ")}>
         <span className={compact ? "text-[11px] font-medium text-white truncate" : "text-sm font-semibold text-white"}>
-          {name}{isMe && !compact && " (you)"}
+          {name}{isMe && !compact && !screen && " (you)"}{screen ? " — screen" : ""}
         </span>
         {!compact && (
           <span
