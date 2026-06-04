@@ -194,15 +194,24 @@ export class VirtualBackgroundProcessor {
   private startFrameLoop(): void {
     if (this.frameLoopActive) return;
     this.frameLoopActive = true;
+    const SEND_TIMEOUT_MS = 1500;
     const tick = async () => {
       if (!this.running || !this.inputVideo || !this.segmentation) return;
       if (this.inFlight) return;
-      if (this.inputVideo.readyState < 2) return;
+      if (this.inputVideo.readyState < 2 || this.inputVideo.paused) return;
+      // MediaPipe never resolves send() if the underlying camera track has
+      // ended (e.g. user toggled camera off mid-call). Without a hard timeout
+      // that leaves `inFlight = true` forever and the loop silently dies, or
+      // worse, the page hangs on shutdown because close() is waiting for an
+      // in-flight send. Race the send against a 1.5s timeout.
       this.inFlight = true;
       try {
-        await this.segmentation.send({ image: this.inputVideo });
+        await Promise.race([
+          this.segmentation.send({ image: this.inputVideo }),
+          new Promise((_, reject) => setTimeout(() => reject(new Error("send timeout")), SEND_TIMEOUT_MS)),
+        ]);
       } catch {
-        /* a dropped frame is non-fatal; keep pumping */
+        /* a dropped/timed-out frame is non-fatal; next tick will retry */
       } finally {
         this.inFlight = false;
       }
@@ -283,16 +292,20 @@ export class VirtualBackgroundProcessor {
   }
 
   stop(): void {
-    this.running = false;
-    this.frameLoopActive = false;
-    if (this.rafId != null) {
-      cancelAnimationFrame(this.rafId);
-      this.rafId = null;
-    }
+    // Order matters: clear the timer FIRST so no further send() can be
+    // enqueued, then mark the processor as stopped, then tear down MediaPipe.
+    // close() can race with an in-flight send() on Chromium and lock the main
+    // thread for several seconds ("Page Unresponsive") if we let one slip in.
     if (this.intervalId != null) {
       clearInterval(this.intervalId);
       this.intervalId = null;
     }
+    if (this.rafId != null) {
+      cancelAnimationFrame(this.rafId);
+      this.rafId = null;
+    }
+    this.running = false;
+    this.frameLoopActive = false;
     this.inFlight = false;
     try { this.outputStream?.getTracks().forEach(t => t.stop()); } catch { /* ignore */ }
     try { this.segmentation?.close(); } catch { /* ignore */ }

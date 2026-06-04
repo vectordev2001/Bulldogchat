@@ -106,24 +106,15 @@ export function ContractPanel({
       </div>
       <div className="flex-1 min-h-0 relative bg-white">
         {objectUrl ? (
-          <object
-            data={objectUrl}
-            type="application/pdf"
-            className="w-full h-full"
-            data-testid="contract-pdf-object"
-          >
-            <div className="flex flex-col items-center justify-center h-full gap-2 text-[hsl(232_30%_30%)] p-4 text-center text-sm">
-              <span>Preview unavailable in this browser.</span>
-              <a
-                href={pdfUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1.5 text-vs-blue hover:underline"
-              >
-                <ExternalLink className="w-3.5 h-3.5" /> Open in new tab
-              </a>
-            </div>
-          </object>
+          // <iframe> is more reliable for blob: PDFs than <object> across
+          // Chromium variants (Comet included), which sometimes refuses to
+          // hand a blob URL to the embedded PDF plugin.
+          <iframe
+            src={objectUrl}
+            title={title}
+            className="w-full h-full border-0"
+            data-testid="contract-pdf-frame"
+          />
         ) : error ? (
           <div className="flex flex-col items-center justify-center h-full gap-3 text-[hsl(232_30%_35%)] p-4 text-center text-sm">
             <AlertTriangle className="w-6 h-6 text-vs-red" />

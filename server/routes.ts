@@ -527,8 +527,18 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     const access = userCanAccessChannel(u.id, u.orgId, channelId);
     if (!access) return res.status(404).json({ message: "Channel not found" });
     const ch = storage.getChannel(channelId);
-    const pdfUrl = (ch?.linkedContract as { pdfUrl?: string | null } | null | undefined)?.pdfUrl;
-    if (!pdfUrl) return res.status(404).json({ message: "No contract PDF linked to this channel" });
+    const rawPdfUrl = (ch?.linkedContract as { pdfUrl?: string | null } | null | undefined)?.pdfUrl;
+    if (!rawPdfUrl) return res.status(404).json({ message: "No contract PDF linked to this channel" });
+
+    // Earlier contract bridge writes captured a SPA hash route in pdfUrl
+    // (e.g. https://vectorcontracts.../api/#/contracts/130/file). When that
+    // URL is fetched server-side the fragment is stripped, the upstream sees
+    // just `/api/` and returns 200 with the index.html — which is why the
+    // PDF panel was rendering a blank page. Normalize by removing the `/#`
+    // and any trailing slash before `#`, so we hit the real REST endpoint.
+    const pdfUrl = rawPdfUrl
+      .replace(/\/api\/#\/contracts\//, "/api/contracts/")
+      .replace(/\/#\/contracts\//, "/contracts/");
 
     // Don't forward the user's chat-origin cookie/bearer — the contracts
     // server (vectorcontracts.*) has its own session on a different cookie
@@ -537,9 +547,16 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     // and a ?secret= query param so either server-side check is satisfied.
     const secret = process.env.SUITE_INTERNAL_SECRET;
     try {
-      let upstreamUrl = pdfUrl;
+      // If the stored URL is the app-route form (e.g. /contracts/130 instead
+      // of /api/contracts/130/file) try to coerce it to the API form.
+      let normalizedUrl = pdfUrl;
+      const appRouteMatch = pdfUrl.match(/^(https?:\/\/[^/]+)\/contracts\/(\d+)(?:\/file)?$/);
+      if (appRouteMatch) {
+        normalizedUrl = `${appRouteMatch[1]}/api/contracts/${appRouteMatch[2]}/file`;
+      }
+      let upstreamUrl = normalizedUrl;
       if (secret) {
-        upstreamUrl += (pdfUrl.includes("?") ? "&" : "?") + `secret=${encodeURIComponent(secret)}`;
+        upstreamUrl += (normalizedUrl.includes("?") ? "&" : "?") + `secret=${encodeURIComponent(secret)}`;
       }
       const upstream = await fetch(upstreamUrl, {
         headers: {
@@ -547,9 +564,15 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
         },
       });
       const maskedUrl = secret
-        ? pdfUrl + (pdfUrl.includes("?") ? "&" : "?") + "secret=***"
-        : pdfUrl;
-      console.log("[contracts pdf proxy] channel=%d pdfUrl=%s upstream=%d", channelId, maskedUrl, upstream.status);
+        ? upstreamUrl.replace(/secret=[^&]+/, "secret=***")
+        : upstreamUrl;
+      const upstreamCt = upstream.headers.get("content-type") || "";
+      console.log("[contracts pdf proxy] channel=%d url=%s upstream=%d ct=%s", channelId, maskedUrl, upstream.status, upstreamCt);
+      // Defensive: if the upstream handed us HTML (e.g. the SPA fallthrough),
+      // surface that as a 502 instead of dumping a blank page to the user.
+      if (upstreamCt.includes("text/html")) {
+        return res.status(502).json({ message: "Contracts service returned HTML, expected PDF", upstreamUrl: maskedUrl });
+      }
       if (!upstream.ok || !upstream.body) {
         return res.status(upstream.status || 502).json({
           message: "Upstream contracts fetch failed",
