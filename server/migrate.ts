@@ -822,4 +822,40 @@ export function runMigrations() {
   } catch (e) {
     console.warn("[migrate] v19 orphan card cleanup skipped:", e);
   }
+
+  // v20 (Phase 1.9.8) — broaden the orphan-card sweep. v19 only removed cards
+  // whose scheduled_calls row is gone. This also removes cards that point at a
+  // call which still exists but is cancelled/deleted (stale cards left when an
+  // older delete path only flipped status instead of removing the card).
+  // Idempotent: once cleaned the SELECT returns nothing.
+  try {
+    const stale = rawDb.prepare(
+      `SELECT id FROM messages
+       WHERE meta LIKE '%"scheduledCallId":%'
+         AND CAST(json_extract(meta, '$.scheduledCallId') AS INTEGER) IN (
+           SELECT id FROM scheduled_calls WHERE status IN ('cancelled','deleted')
+         )`,
+    ).all() as Array<{ id: number }>;
+    // Also re-sweep true orphans (missing row), same as v19 — covers anything
+    // created between v19 running and now.
+    const orphaned = rawDb.prepare(
+      `SELECT id FROM messages
+       WHERE meta LIKE '%"scheduledCallId":%'
+         AND CAST(json_extract(meta, '$.scheduledCallId') AS INTEGER)
+             NOT IN (SELECT id FROM scheduled_calls)`,
+    ).all() as Array<{ id: number }>;
+    const ids = Array.from(new Set([...stale, ...orphaned].map((o) => o.id)));
+    if (ids.length > 0) {
+      const tx = rawDb.transaction(() => {
+        const placeholders = ids.map(() => "?").join(",");
+        rawDb.prepare(`DELETE FROM message_mentions WHERE message_id IN (${placeholders})`).run(...ids);
+        rawDb.prepare(`DELETE FROM reactions WHERE message_id IN (${placeholders})`).run(...ids);
+        rawDb.prepare(`DELETE FROM messages WHERE id IN (${placeholders})`).run(...ids);
+      });
+      tx();
+    }
+    console.log(`[migrate v20] cleaned ${ids.length} stale/orphan scheduled-call cards`);
+  } catch (e) {
+    console.warn("[migrate] v20 stale card cleanup skipped:", e);
+  }
 }

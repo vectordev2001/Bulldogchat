@@ -701,12 +701,12 @@ function ChannelIntro({ channel }: { channel: ApiChannel }) {
   );
 }
 
-function SystemMessageRow({ meta, content, createdAt, onJoinMeeting }: { meta: ApiSystemMessageMeta; content: string; createdAt: string; onJoinMeeting?: (kind: "voice" | "video") => void }) {
+function SystemMessageRow({ meta, content, createdAt, meId, myRole, onJoinMeeting }: { meta: ApiSystemMessageMeta; content: string; createdAt: string; meId: number; myRole: UserRole; onJoinMeeting?: (kind: "voice" | "video") => void }) {
   // Scheduled-call cards get their own rich row with RSVP buttons + .ics link
   // instead of the compact work-object banner.
   if (meta.kind.startsWith("scheduled_call.")) {
     const smeta = meta as ApiScheduledCallSystemMessageMeta;
-    return <ScheduledCallCard meta={smeta} createdAt={createdAt} onJoin={onJoinMeeting ? () => onJoinMeeting(smeta.callKind) : undefined} />;
+    return <ScheduledCallCard meta={smeta} createdAt={createdAt} meId={meId} myRole={myRole} onJoin={onJoinMeeting ? () => onJoinMeeting(smeta.callKind) : undefined} />;
   }
   // Below here, meta must be a work-object kind. Narrow the type so TS knows.
   const wo = meta as ApiWorkObjectSystemMessageMeta;
@@ -761,7 +761,7 @@ function SystemMessageRow({ meta, content, createdAt, onJoinMeeting }: { meta: A
 function MessageRow({ msg, grouped, isMe, meId, myRole, onOpenThread, onJoinMeeting }: { msg: ApiMessage; grouped: boolean; isMe: boolean; meId: number; myRole: UserRole; onOpenThread: () => void; onJoinMeeting?: (kind: "voice" | "video") => void }) {
   // System messages (work-object events) render as compact centered banners.
   if (msg.meta && msg.meta.system) {
-    return <SystemMessageRow meta={msg.meta} content={msg.content} createdAt={msg.createdAt} onJoinMeeting={onJoinMeeting} />;
+    return <SystemMessageRow meta={msg.meta} content={msg.content} createdAt={msg.createdAt} meId={meId} myRole={myRole} onJoinMeeting={onJoinMeeting} />;
   }
 
   // Tombstoned message — author or admin deleted it. We still render the
@@ -1023,8 +1023,9 @@ interface ScheduledCallInviteeLive {
   response: "pending" | "yes" | "no" | "maybe";
 }
 
-function ScheduledCallCard({ meta, createdAt, onJoin }: { meta: ApiScheduledCallSystemMessageMeta; createdAt: string; onJoin?: () => void }) {
+function ScheduledCallCard({ meta, createdAt, meId, myRole, onJoin }: { meta: ApiScheduledCallSystemMessageMeta; createdAt: string; meId: number; myRole: UserRole; onJoin?: () => void }) {
   const { toast } = useToast();
+  const canDelete = meta.organizerId === meId || myRole === "admin";
   const startDate = new Date(meta.startAt);
   const whenLabel = startDate.toLocaleString(undefined, {
     weekday: "short", month: "short", day: "numeric",
@@ -1045,6 +1046,25 @@ function ScheduledCallCard({ meta, createdAt, onJoin }: { meta: ApiScheduledCall
       toast({ title: "RSVP failed", description: err?.message ?? "Unknown error", variant: "destructive" });
     },
   });
+
+  const deleteMut = useMutation({
+    mutationFn: async () =>
+      apiRequest("DELETE", `/api/scheduled-calls/${meta.scheduledCallId}`),
+    onSuccess: () => {
+      // The server emits message:delete over the socket which removes the
+      // card from the stream; also drop the meetings list cache.
+      queryClient.invalidateQueries({ queryKey: ["/api/scheduled-calls"] });
+      toast({ title: "Meeting deleted" });
+    },
+    onError: (err: any) => {
+      toast({ title: "Delete failed", description: err?.message ?? "Unknown error", variant: "destructive" });
+    },
+  });
+
+  const onDelete = () => {
+    if (!window.confirm("Delete this meeting? All invitees will be notified.")) return;
+    deleteMut.mutate();
+  };
 
   const inviteesQuery = useQuery<{ invitees: ScheduledCallInviteeLive[] }>({
     queryKey: ["/api/scheduled-calls", meta.scheduledCallId, "invitees"],
@@ -1096,6 +1116,20 @@ function ScheduledCallCard({ meta, createdAt, onJoin }: { meta: ApiScheduledCall
             </span>
             <CalendarIcon className="w-3 h-3 text-[hsl(0_0%_55%)]" />
             <span className="text-[11px] text-[hsl(0_0%_75%)]">{whenLabel}</span>
+            {canDelete && !cancelled && (
+              <ActionPill
+                variant="danger"
+                size="sm"
+                className="ml-auto"
+                onClick={onDelete}
+                disabled={deleteMut.isPending}
+                icon={<Trash2 />}
+                title="Delete meeting"
+                data-testid={`button-card-delete-${meta.scheduledCallId}`}
+              >
+                Delete
+              </ActionPill>
+            )}
           </div>
           <div className="text-sm font-semibold text-white mt-0.5">{meta.callTitle}</div>
           {!cancelled && (

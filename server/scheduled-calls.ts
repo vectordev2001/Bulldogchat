@@ -154,6 +154,16 @@ function createInvitees(call: ScheduledCall, input: CreateInput): ScheduledCallI
     const row = rawDb.prepare("SELECT * FROM scheduled_call_invitees WHERE id = ?").get(r.lastInsertRowid as number);
     created.push(rowToInvitee(row));
   }
+  // Always include the organizer in the roster, auto-accepted. They get the
+  // email/.ics too. Uses the same rsvpCode as the rest of the invite batch.
+  const organizerInsert = rawDb.prepare(`
+    INSERT INTO scheduled_call_invitees
+      (scheduled_call_id, user_id, external_phone, external_email, rsvp_code, response, responded_at)
+    VALUES (?, ?, ?, ?, ?, 'yes', strftime('%s','now'))
+  `);
+  const or = organizerInsert.run(call.id, input.organizerId, null, null, code);
+  const orow = rawDb.prepare("SELECT * FROM scheduled_call_invitees WHERE id = ?").get(or.lastInsertRowid as number);
+  created.push(rowToInvitee(orow));
   return created;
 }
 
@@ -261,6 +271,7 @@ async function dispatchInvites(call: ScheduledCall): Promise<void> {
   const organizer = storage.getUser(call.organizerId);
   if (!organizer) return;
   const invitees = listInviteesForCall(call.id);
+  console.log(`[scheduled-calls] dispatch call=${call.id} organizer=${call.organizerId} invitees=${invitees.length}`);
   const whenLabel = formatWhenLabel(call.startAt);
 
   // Build attendee email list for .ics (all invitees with emails).
@@ -290,6 +301,7 @@ async function dispatchInvites(call: ScheduledCall): Promise<void> {
     if (inv.externalEmail) {
       email = inv.externalEmail;
     }
+    console.log(`[scheduled-calls] inv=${inv.id} user=${inv.userId} email=${email ? "yes" : "no"} phone=${phone ? "yes" : "no"} emailConfigured=${isEmailConfigured()}`);
 
     const joinUrl = buildJoinUrl(call, inv, organizer.name);
     const rsvpBase = `${CHAT_BASE_URL}/api/scheduled-calls/${call.id}/rsvp-public?code=${inv.rsvpCode}`;
@@ -779,8 +791,9 @@ export function registerScheduledCallRoutes(app: Express) {
       const cards = rawDb.prepare(
         `SELECT id, channel_id FROM messages
          WHERE meta IS NOT NULL
-           AND meta LIKE '%"scheduledCallId":' || ? || '%'`,
+           AND CAST(json_extract(meta, '$.scheduledCallId') AS INTEGER) = ?`,
       ).all(callId) as Array<{ id: number; channel_id: number }>;
+      console.log(`[scheduled-calls] delete call=${callId} found ${cards.length} cards`);
       rawDb.prepare(`DELETE FROM scheduled_call_invitees WHERE scheduled_call_id = ?`).run(callId);
       rawDb.prepare(`DELETE FROM scheduled_calls WHERE id = ?`).run(callId);
       for (const c of cards) {
