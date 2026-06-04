@@ -343,7 +343,24 @@ function ActiveCallOverlay() {
             testid="call-screen"
           />
 
-          {/* More — popover containing Backgrounds, Meeting Clerk, Add people, Contract */}
+          {/* Background effects — first-class toolbar button (Phase 1.9.25) */}
+          <TopBarBtn
+            icon={<Sparkles className="w-5 h-5" />}
+            label="Effects"
+            active={bgOpen}
+            onClick={() => setBgOpen(o => !o)}
+            disabled={!videoOn}
+            testid="call-toolbar-effects"
+          />
+
+          {/* AI Meeting Clerk — inline button so it's always visible (Phase 1.9.25) */}
+          {hasChannel && (
+            <div className="flex items-center" data-testid="call-toolbar-clerk">
+              <MeetingClerkButton channelId={channelId} canControl={true} roomName={active.roomName} compact />
+            </div>
+          )}
+
+          {/* More — popover containing Add people, Contract */}
           <div className="relative">
             <TopBarBtn
               icon={<MoreHorizontal className="w-5 h-5" />}
@@ -357,27 +374,11 @@ function ActiveCallOverlay() {
                 className="absolute right-0 top-full mt-1 z-[120] w-56 rounded-lg bg-[hsl(232_55%_13%)] border border-[hsl(232_40%_25%)] shadow-2xl overflow-hidden"
                 onMouseLeave={() => setMoreOpen(false)}
               >
-                {/* Background effects */}
-                <button
-                  type="button"
-                  onClick={() => { setBgOpen(o => !o); setMoreOpen(false); }}
-                  disabled={!videoOn}
-                  className="w-full px-3 py-2.5 flex items-center gap-3 text-sm text-white hover:bg-[hsl(232_50%_20%)] disabled:opacity-40 disabled:cursor-not-allowed text-left"
-                >
-                  <Sparkles className="w-4 h-4 text-vs-blue-light shrink-0" />
-                  Background effects
-                </button>
-                {/* AI Meeting Clerk */}
-                {hasChannel && (
-                  <div className="px-3 py-2 border-t border-[hsl(232_40%_22%)]">
-                    <MeetingClerkButton channelId={channelId} canControl={true} roomName={active.roomName} />
-                  </div>
-                )}
                 {/* Add people */}
                 <button
                   type="button"
                   onClick={() => { setAddOpen(true); setMoreOpen(false); }}
-                  className="w-full px-3 py-2.5 flex items-center gap-3 text-sm text-white hover:bg-[hsl(232_50%_20%)] border-t border-[hsl(232_40%_22%)] text-left"
+                  className="w-full px-3 py-2.5 flex items-center gap-3 text-sm text-white hover:bg-[hsl(232_50%_20%)] text-left"
                 >
                   <UserPlus className="w-4 h-4 text-vs-blue-light shrink-0" />
                   Add people

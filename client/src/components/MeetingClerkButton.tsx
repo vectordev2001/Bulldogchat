@@ -21,6 +21,11 @@ interface Props {
   canControl: boolean;
   /** LiveKit room name for participant tracking. Passed when button is used inside a call. */
   roomName?: string;
+  /**
+   * Toolbar-style rendering: icon-on-top + small label underneath to match
+   * the in-call top toolbar buttons. Defaults to false (the original pill).
+   */
+  compact?: boolean;
 }
 
 interface ClerkConfig {
@@ -46,7 +51,7 @@ interface NoteRow {
   synologyStatus?: string | null;
 }
 
-export function MeetingClerkButton({ channelId, canControl, roomName }: Props) {
+export function MeetingClerkButton({ channelId, canControl, roomName, compact }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [activeNoteId, setActiveNoteId] = useState<number | null>(null);
 
@@ -229,6 +234,55 @@ export function MeetingClerkButton({ channelId, canControl, roomName }: Props) {
 
   const cfg = configQ.data;
   const cfgWarning = cfg && (!cfg.deepgramConfigured || !cfg.anthropicConfigured || !cfg.synologyEnabled);
+
+  // Compact toolbar mode: render an icon+label button matching TopBarBtn
+  // styling so the AI clerk lives front-and-center alongside Camera/Mic.
+  if (compact) {
+    const baseClass = "flex flex-col items-center gap-0.5 px-3 py-1.5 rounded-md transition-colors min-w-[48px]";
+    if (isRecording) {
+      return (
+        <button
+          type="button"
+          onClick={() => stopMutation.mutate()}
+          disabled={stopMutation.isPending}
+          className={`${baseClass} bg-vs-red/20 border border-vs-red/40 text-[hsl(2_85%_72%)] hover:bg-vs-red/30`}
+          title="Stop AI clerk"
+          data-testid="button-stop-clerk"
+        >
+          <Square className="w-5 h-5 fill-current" />
+          <span className="text-[10px] font-medium">Stop clerk</span>
+        </button>
+      );
+    }
+    if (isProcessing) {
+      return (
+        <div
+          className={`${baseClass} bg-[hsl(232_50%_18%)] border border-[hsl(232_40%_25%)] text-[hsl(0_0%_70%)]`}
+          title={`Clerk ${activeFromServer?.status ?? "processing"}…`}
+          data-testid="status-clerk-processing"
+        >
+          <Loader2 className="w-5 h-5 animate-spin" />
+          <span className="text-[10px] font-medium capitalize">{activeFromServer?.status}…</span>
+        </div>
+      );
+    }
+    if (canControl) {
+      return (
+        <button
+          type="button"
+          onClick={() => startMutation.mutate()}
+          disabled={startMutation.isPending}
+          className={`${baseClass} text-[hsl(0_0%_80%)] hover:bg-[hsl(232_50%_20%)] hover:text-vs-blue-light`}
+          title={cfgWarning ? "AI clerk (some integrations not configured — pipeline will still run)" : "Start AI clerk — records, transcribes, summarizes, files notes to Synology"}
+          data-testid="button-start-clerk"
+        >
+          {startMutation.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : <Bot className="w-5 h-5" />}
+          <span className="text-[10px] font-medium">Clerk</span>
+        </button>
+      );
+    }
+    return null;
+  }
 
   return (
     <div className="flex items-center gap-1.5">

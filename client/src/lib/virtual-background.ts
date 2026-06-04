@@ -258,10 +258,23 @@ export class VirtualBackgroundProcessor {
   }
 
   // Composite the segmented person over the chosen background.
-  //   1. Build a real alpha mask from MediaPipe's intensity mask.
-  //   2. On a person scratch canvas, draw the camera frame, then
-  //      destination-in with the alpha mask → person on transparent bg.
-  //   3. On the output canvas: paint the background, then drop the person on top.
+  //
+  // This uses the canonical MediaPipe Selfie Segmentation demo pattern
+  // ("draw mask → source-in image → destination-over background") because
+  // it works regardless of whether the mask is alpha-encoded or intensity-
+  // encoded. Steps on the output canvas:
+  //   1. Draw the segmentation mask. After this draw, pixels inside the
+  //      person silhouette are opaque; outside pixels are either transparent
+  //      (alpha-encoded build) or dark grayscale on opaque (intensity build).
+  //      Either way, what we need next is to keep the camera frame only where
+  //      this mask is *bright* — for that we run it through a tiny
+  //      luminance→alpha pass on a scratch canvas first so it behaves the
+  //      same across builds.
+  //   2. globalCompositeOperation = source-in, then drawImage(camera) — the
+  //      camera frame replaces the mask only where the mask is opaque, so
+  //      what remains is "person" on transparent.
+  //   3. globalCompositeOperation = destination-over, then draw the chosen
+  //      background — fills the still-transparent (non-person) area.
   private drawResults(results: SelfieSegmentationResults): void {
     const ctx = this.ctx;
     const canvas = this.canvas;
@@ -289,33 +302,23 @@ export class VirtualBackgroundProcessor {
     const w = canvas.width;
     const h = canvas.height;
 
-    // Build/refresh the person scratch canvas.
-    if (!this.personScratch) {
-      this.personScratch = document.createElement("canvas");
-      this.personScratchCtx = this.personScratch.getContext("2d");
-    }
-    const pc = this.personScratch!;
-    const pctx = this.personScratchCtx!;
-    if (pc.width !== w) pc.width = w;
-    if (pc.height !== h) pc.height = h;
-
-    // 1) Convert the intensity mask into a real alpha mask.
+    // 1) Normalize the mask to a luminance→alpha shape on a scratch canvas
+    //    so the composition path is identical for both mask encodings.
     const alphaMask = this.buildAlphaMask(results.segmentationMask, w, h);
 
-    // 2) Draw the camera frame, then clip to the alpha mask → person only.
-    pctx.save();
-    pctx.globalCompositeOperation = "source-over";
-    pctx.clearRect(0, 0, w, h);
-    pctx.drawImage(results.image, 0, 0, w, h);
-    pctx.globalCompositeOperation = "destination-in";
-    pctx.drawImage(alphaMask, 0, 0, w, h);
-    pctx.restore();
-
-    // 3) Output canvas: draw background, then the person on top.
     ctx.save();
-    ctx.globalCompositeOperation = "source-over";
     ctx.filter = "none";
     ctx.clearRect(0, 0, w, h);
+
+    // 2) Paint the alpha mask, then `source-in` with the camera frame.
+    //    Result: person pixels visible, rest transparent.
+    ctx.globalCompositeOperation = "source-over";
+    ctx.drawImage(alphaMask, 0, 0, w, h);
+    ctx.globalCompositeOperation = "source-in";
+    ctx.drawImage(results.image, 0, 0, w, h);
+
+    // 3) Drop the background underneath everything that's still transparent.
+    ctx.globalCompositeOperation = "destination-over";
     if (this.mode.kind === "blur") {
       const blur = this.mode.amount ?? 12;
       ctx.filter = `blur(${blur}px)`;
@@ -324,9 +327,11 @@ export class VirtualBackgroundProcessor {
     } else if (this.mode.kind === "image" && this.bgImage) {
       this.drawCover(ctx, this.bgImage, w, h);
     } else {
+      // "none" fallthrough — shouldn't normally hit here because the caller
+      // tears the processor down for kind=="none", but draw the raw frame as
+      // a safe default.
       ctx.drawImage(results.image, 0, 0, w, h);
     }
-    ctx.drawImage(pc, 0, 0, w, h);
 
     ctx.restore();
   }
