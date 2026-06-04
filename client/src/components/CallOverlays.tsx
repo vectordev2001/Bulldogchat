@@ -423,6 +423,8 @@ function InCallAddDialog({ onClose }: { onClose: () => void }) {
   const [route, setRoute] = useState<Map<number, "app" | "phone">>(new Map());
   const [phoneInput, setPhoneInput] = useState("");
   const [phoneNumbers, setPhoneNumbers] = useState<string[]>([]);
+  const [emailInput, setEmailInput] = useState("");
+  const [emailAddresses, setEmailAddresses] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
@@ -463,7 +465,17 @@ function InCallAddDialog({ onClose }: { onClose: () => void }) {
     setError(null);
   };
 
-  const totalTargets = selected.size + phoneNumbers.length;
+  const addEmail = () => {
+    const raw = emailInput.trim().toLowerCase();
+    if (!raw) return;
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(raw)) { setError("Enter a valid email address"); return; }
+    if (emailAddresses.includes(raw)) { setEmailInput(""); return; }
+    setEmailAddresses((arr) => [...arr, raw]);
+    setEmailInput("");
+    setError(null);
+  };
+
+  const totalTargets = selected.size + phoneNumbers.length + emailAddresses.length;
 
   const submit = async () => {
     if (totalTargets === 0) { setError("Pick at least one person or phone number"); return; }
@@ -477,10 +489,11 @@ function InCallAddDialog({ onClose }: { onClose: () => void }) {
     setWarnings([]);
     try {
       const resp = await inviteToActiveCall({
-        inviteeIds: appIds, phoneInviteeIds: phoneIds, phoneNumbers,
+        inviteeIds: appIds, phoneInviteeIds: phoneIds, phoneNumbers, emailAddresses,
       });
-      if (resp.dialWarnings.length > 0) {
-        setWarnings(resp.dialWarnings);
+      const allWarnings = [...(resp.dialWarnings ?? []), ...(resp.emailWarnings ?? [])];
+      if (allWarnings.length > 0) {
+        setWarnings(allWarnings);
         // Keep the dialog open so the user can see the warnings;
         // they can close manually.
       } else {
@@ -634,6 +647,39 @@ function InCallAddDialog({ onClose }: { onClose: () => void }) {
                 <span key={p} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-vs-red/15 border border-vs-red/40 text-[hsl(2_85%_75%)]">
                   {p}
                   <button type="button" onClick={() => setPhoneNumbers((arr) => arr.filter((x) => x !== p))} className="hover:text-white" aria-label={`Remove ${p}`}>
+                    <X className="w-3 h-3" />
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+
+          <div className="text-[10px] uppercase tracking-wider font-mono text-[hsl(0_0%_55%)] mt-1">Or email a join link</div>
+          <div className="flex items-center gap-2">
+            <input
+              value={emailInput}
+              onChange={(e) => setEmailInput(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addEmail(); } }}
+              placeholder="guest@example.com"
+              type="email"
+              inputMode="email"
+              className="flex-1 bg-[hsl(232_50%_18%)] border border-[hsl(232_40%_25%)] rounded-md px-2 py-1.5 text-sm text-white placeholder:text-[hsl(0_0%_45%)] outline-none focus:border-vs-blue"
+              data-testid="input-in-call-add-email"
+            />
+            <button
+              type="button"
+              onClick={addEmail}
+              className="px-3 py-1.5 rounded-md bg-[hsl(232_45%_27%)] hover:bg-[hsl(232_45%_32%)] text-white text-sm"
+            >
+              Add
+            </button>
+          </div>
+          {emailAddresses.length > 0 && (
+            <div className="flex flex-wrap gap-1.5">
+              {emailAddresses.map((e) => (
+                <span key={e} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-vs-blue/15 border border-vs-blue/40 text-vs-blue-light">
+                  {e}
+                  <button type="button" onClick={() => setEmailAddresses((arr) => arr.filter((x) => x !== e))} className="hover:text-white" aria-label={`Remove ${e}`}>
                     <X className="w-3 h-3" />
                   </button>
                 </span>

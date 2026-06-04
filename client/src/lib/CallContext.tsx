@@ -101,7 +101,15 @@ interface CallCtxValue {
     inviteeIds: number[];
     phoneInviteeIds?: number[];
     phoneNumbers?: string[];
-  }): Promise<{ invitedUserIds: number[]; dialedUserIds: number[]; dialedPhones: string[]; dialWarnings: string[] }>;
+    emailAddresses?: string[];
+  }): Promise<{
+    invitedUserIds: number[];
+    dialedUserIds: number[];
+    dialedPhones: string[];
+    emailedAddresses: string[];
+    dialWarnings: string[];
+    emailWarnings: string[];
+  }>;
   /**
    * Join a call via an SMS-link join token. Posts to /api/call-join/redeem
    * which mints a LiveKit token for the signed-in user (NOT the token's
@@ -374,20 +382,28 @@ export function CallProvider({ children }: { children: ReactNode }) {
   }, [stopRing]);
 
   const inviteToActiveCall = useCallback<CallCtxValue["inviteToActiveCall"]>(async ({
-    inviteeIds, phoneInviteeIds = [], phoneNumbers = [],
+    inviteeIds, phoneInviteeIds = [], phoneNumbers = [], emailAddresses = [],
   }) => {
     const cur = activeRef.current;
     if (!cur) {
-      return { invitedUserIds: [], dialedUserIds: [], dialedPhones: [], dialWarnings: ["No active call"] };
+      return {
+        invitedUserIds: [], dialedUserIds: [], dialedPhones: [], emailedAddresses: [],
+        dialWarnings: ["No active call"], emailWarnings: [],
+      };
     }
     const resp = await apiRequest<{
-      invitedUserIds: number[]; dialedUserIds: number[]; dialedPhones: string[]; dialWarnings: string[];
+      invitedUserIds: number[]; dialedUserIds: number[]; dialedPhones: string[];
+      emailedAddresses: string[]; dialWarnings: string[]; emailWarnings: string[];
     }>("POST", "/api/calls/active/invite", {
       roomName: cur.roomName,
       kind: cur.kind,
-      inviteeIds, phoneInviteeIds, phoneNumbers,
+      inviteeIds, phoneInviteeIds, phoneNumbers, emailAddresses,
     });
-    return resp;
+    return {
+      ...resp,
+      emailedAddresses: resp.emailedAddresses ?? [],
+      emailWarnings: resp.emailWarnings ?? [],
+    };
   }, []);
 
   const endActive = useCallback(async () => {

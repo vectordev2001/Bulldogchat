@@ -419,6 +419,14 @@ export function getNote(noteId: number): MeetingNoteRow | undefined {
   return getNoteRow(noteId);
 }
 
+// Delete a single meeting note. We only remove the DB row; the Synology PDF
+// (if uploaded) and the channel system message stay in place as a paper
+// trail. Returns true if a row was deleted.
+export function deleteNote(noteId: number): boolean {
+  const r = rawDb.prepare("DELETE FROM meeting_notes WHERE id = ?").run(noteId);
+  return r.changes > 0;
+}
+
 // Helper used by routes when serializing for the FE.
 export function publicNoteShape(row: MeetingNoteRow) {
   let attendees: any[] = [];

@@ -18,6 +18,15 @@ import { registerIntegrationRoutes } from "./routes-integrations";
 import { bulldogSsoBridge } from "./bulldog-sso";
 import { dialPhoneIntoRoom, sipConfigured } from "./sip";
 import { signCallJoinToken, verifyCallJoinToken, sendSms, smsAvailable, buildCallInviteSmsBody } from "./sms";
+import { sendEmail, isEmailConfigured } from "./email";
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
 import { registerScheduledCallRoutes, startReminderLoop } from "./scheduled-calls";
 import { syncDeactivatedFromAuth } from "./users-sync";
 import {
@@ -25,6 +34,7 @@ import {
   stopClerk,
   ingestAudioChunk,
   listNotesForChannel,
+  deleteNote,
   getNote,
   publicNoteShape,
   getClerkConfigSummary,
@@ -710,6 +720,28 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     const access = userCanAccessChannel(u.id, u.orgId, note.channel_id);
     if (!access) return res.status(404).json({ message: "Channel not found" });
     res.json(publicNoteShape(note));
+  });
+
+  // Phase 1.9.20 — delete a meeting note. The author of the note (the user
+  // who started the clerk) and org admins can delete. The Synology PDF (if
+  // already uploaded) and the system message in the channel stay as a paper
+  // trail — only the chat-side DB row is removed.
+  app.delete("/api/meeting-notes/:id", requireAuth, (req, res) => {
+    const u = (req as AuthedRequest).user;
+    const noteId = Number(req.params.id);
+    if (!Number.isFinite(noteId)) return res.status(400).json({ message: "Invalid note id" });
+    const note = getNote(noteId);
+    if (!note) return res.status(404).json({ message: "Note not found" });
+    const access = userCanAccessChannel(u.id, u.orgId, note.channel_id);
+    if (!access) return res.status(404).json({ message: "Channel not found" });
+    const isAuthor = note.started_by_user_id === u.id;
+    const isAdmin = u.role === "admin";
+    if (!isAuthor && !isAdmin) {
+      return res.status(403).json({ message: "Only the note's author or an admin can delete" });
+    }
+    const ok = deleteNote(noteId);
+    if (!ok) return res.status(404).json({ message: "Note already deleted" });
+    res.json({ ok: true });
   });
 
   // List members of a private channel (admin/creator visibility, but here
@@ -1905,6 +1937,7 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     const rawInvitees: unknown = req.body?.inviteeIds;
     const rawPhoneInvitees: unknown = req.body?.phoneInviteeIds;
     const rawPhones: unknown = req.body?.phoneNumbers;
+    const rawEmails: unknown = req.body?.emailAddresses;
     const inviteeIds: number[] = Array.isArray(rawInvitees)
       ? Array.from(
           new Set(
@@ -1938,8 +1971,22 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
           ),
         )
       : [];
-    if (inviteeIds.length === 0 && phoneNumbers.length === 0 && phoneInviteeIds.length === 0) {
-      return res.status(400).json({ message: "inviteeIds[], phoneInviteeIds[], or phoneNumbers[] required" });
+    const emailAddresses: string[] = Array.isArray(rawEmails)
+      ? Array.from(
+          new Set(
+            (rawEmails as unknown[])
+              .map((x) => String(x).trim().toLowerCase())
+              .filter((s) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(s)),
+          ),
+        )
+      : [];
+    if (
+      inviteeIds.length === 0 &&
+      phoneNumbers.length === 0 &&
+      phoneInviteeIds.length === 0 &&
+      emailAddresses.length === 0
+    ) {
+      return res.status(400).json({ message: "inviteeIds[], phoneInviteeIds[], phoneNumbers[], or emailAddresses[] required" });
     }
 
     if (!livekitConfigured()) {
@@ -2058,7 +2105,37 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
       }
     }
 
-    res.json({ roomName, invitedUserIds: validInvitees, dialedUserIds, dialedPhones, dialWarnings, kind });
+    // Email the join link to any external addresses. We don't add them to
+    // the LiveKit room directly — they get a one-click web join URL.
+    const emailedAddresses: string[] = [];
+    const emailWarnings: string[] = [];
+    if (emailAddresses.length > 0) {
+      if (!isEmailConfigured()) {
+        emailWarnings.push("Email not configured — addresses were not invited");
+      } else {
+        const baseUrl = (process.env.PUBLIC_BASE_URL || "https://chat.bulldogops.com").replace(/\/$/, "");
+        const joinUrl = `${baseUrl}/#/call/group/${encodeURIComponent(roomName)}`;
+        const subject = `${u.name} invited you to a ${kind} call`;
+        const text = `${u.name} is calling you into ${channelLabel} on Bulldog Chat.\n\nJoin: ${joinUrl}\n\nThis link opens the live call directly in your browser.`;
+        const html = `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;max-width:520px;">
+  <h2 style="margin:0 0 12px 0;font-size:18px;">\ud83d\udcde ${escapeHtml(u.name)} is calling</h2>
+  <p style="margin:0 0 8px 0;color:#444;">You're being invited into ${escapeHtml(channelLabel)} on Bulldog Chat.</p>
+  <p style="margin:16px 0;"><a href="${joinUrl}" style="display:inline-block;padding:10px 18px;background:#3b82f6;color:#fff;text-decoration:none;border-radius:6px;font-weight:600;">Join the call</a></p>
+  <p style="margin:0;color:#888;font-size:12px;">Or paste this link into your browser: ${joinUrl}</p>
+</div>`;
+        for (const addr of emailAddresses) {
+          try {
+            await sendEmail({ to: addr, subject, text, html });
+            emailedAddresses.push(addr);
+          } catch (err) {
+            const msg = (err as { message?: string })?.message ?? "failed";
+            emailWarnings.push(`email ${addr}: ${msg}`);
+          }
+        }
+      }
+    }
+
+    res.json({ roomName, invitedUserIds: validInvitees, dialedUserIds, dialedPhones, emailedAddresses, dialWarnings, emailWarnings, kind });
   });
 
   // Callee accepts. Mints their token and flips the row to 'active'.

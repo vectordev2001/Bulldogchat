@@ -12,8 +12,9 @@
 // Claude markdown right in the dialog as the "online" copy.
 
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { FileText, ChevronDown, ChevronRight, Loader2, CheckCircle2, AlertTriangle } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { FileText, ChevronDown, ChevronRight, Loader2, CheckCircle2, AlertTriangle, Trash2 } from "lucide-react";
+import { apiRequest } from "@/lib/queryClient";
 
 interface NoteRow {
   id: number;
@@ -66,12 +67,24 @@ function fmtBytes(n?: number | null): string {
 }
 
 export function MeetingNotesHistory({ channelId, open, onClose }: Props) {
+  const qc = useQueryClient();
   const q = useQuery<NoteRow[]>({
     queryKey: ["/api/channels", channelId, "meeting-notes"],
     enabled: open && !!channelId,
     refetchInterval: open ? 5000 : false,
   });
   const [expandedId, setExpandedId] = useState<number | null>(null);
+  const [pendingDeleteId, setPendingDeleteId] = useState<number | null>(null);
+
+  const delMut = useMutation({
+    mutationFn: async (id: number) => {
+      await apiRequest("DELETE", `/api/meeting-notes/${id}`);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["/api/channels", channelId, "meeting-notes"] });
+      setPendingDeleteId(null);
+    },
+  });
 
   if (!open) return null;
 
@@ -123,31 +136,64 @@ export function MeetingNotesHistory({ channelId, open, onClose }: Props) {
                 className="border-b border-[hsl(232_40%_18%)] last:border-b-0"
                 data-testid={`note-row-${row.id}`}
               >
-                <button
-                  type="button"
-                  onClick={() => setExpandedId(expanded ? null : row.id)}
-                  className="w-full text-left px-5 py-3 hover:bg-[hsl(232_50%_14%)]"
-                >
-                  <div className="flex items-start gap-2">
-                    {expanded ? <ChevronDown className="w-3.5 h-3.5 mt-0.5 text-[hsl(0_0%_55%)]" /> : <ChevronRight className="w-3.5 h-3.5 mt-0.5 text-[hsl(0_0%_55%)]" />}
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm font-medium text-[hsl(0_0%_92%)] truncate">
-                          {row.title || `Meeting notes #${row.id}`}
-                        </span>
-                        <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded border text-[10px] uppercase tracking-wider ${statusColor}`}>
-                          {statusIcon}{row.status}
-                        </span>
-                      </div>
-                      <div className="mt-0.5 text-[11px] text-[hsl(0_0%_60%)] flex flex-wrap gap-x-3 gap-y-0.5">
-                        <span>{fmtDate(row.startedAt)}</span>
-                        <span>Duration: {fmtDuration(row.durationSeconds)}</span>
-                        <span>{row.attendees?.length ?? 0} attendees</span>
-                        {row.pdfSizeBytes ? <span>PDF: {fmtBytes(row.pdfSizeBytes)}</span> : null}
+                <div className="flex items-start group">
+                  <button
+                    type="button"
+                    onClick={() => setExpandedId(expanded ? null : row.id)}
+                    className="flex-1 text-left px-5 py-3 hover:bg-[hsl(232_50%_14%)]"
+                  >
+                    <div className="flex items-start gap-2">
+                      {expanded ? <ChevronDown className="w-3.5 h-3.5 mt-0.5 text-[hsl(0_0%_55%)]" /> : <ChevronRight className="w-3.5 h-3.5 mt-0.5 text-[hsl(0_0%_55%)]" />}
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-medium text-[hsl(0_0%_92%)] truncate">
+                            {row.title || `Meeting notes #${row.id}`}
+                          </span>
+                          <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded border text-[10px] uppercase tracking-wider ${statusColor}`}>
+                            {statusIcon}{row.status}
+                          </span>
+                        </div>
+                        <div className="mt-0.5 text-[11px] text-[hsl(0_0%_60%)] flex flex-wrap gap-x-3 gap-y-0.5">
+                          <span>{fmtDate(row.startedAt)}</span>
+                          <span>Duration: {fmtDuration(row.durationSeconds)}</span>
+                          <span>{row.attendees?.length ?? 0} attendees</span>
+                          {row.pdfSizeBytes ? <span>PDF: {fmtBytes(row.pdfSizeBytes)}</span> : null}
+                        </div>
                       </div>
                     </div>
-                  </div>
-                </button>
+                  </button>
+                  {pendingDeleteId === row.id ? (
+                    <div className="flex items-center gap-1 px-3 py-3 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => delMut.mutate(row.id)}
+                        disabled={delMut.isPending}
+                        className="text-[10px] px-2 py-1 rounded bg-vs-red text-white hover:bg-red-700 disabled:opacity-50"
+                        data-testid={`confirm-delete-note-${row.id}`}
+                      >
+                        {delMut.isPending ? "Deleting…" : "Confirm"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setPendingDeleteId(null)}
+                        className="text-[10px] px-2 py-1 rounded text-[hsl(0_0%_70%)] hover:text-white"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setPendingDeleteId(row.id)}
+                      className="p-3 text-[hsl(0_0%_55%)] hover:text-vs-red opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
+                      title="Delete this meeting note"
+                      data-testid={`button-delete-note-${row.id}`}
+                      aria-label="Delete"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
                 {expanded && (
                   <div className="px-10 pb-4 pt-1 text-xs text-[hsl(0_0%_80%)] space-y-2">
                     {row.synologyRemotePath && (
