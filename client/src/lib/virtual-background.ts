@@ -55,6 +55,8 @@ export class VirtualBackgroundProcessor {
   private bgImage: CanvasImageSource | null = null;
   private mode: BackgroundMode = { kind: "blur", amount: 8 };
   private rafId: number | null = null;
+  private intervalId: number | null = null;
+  private inFlight = false;
   private running = false;
   private outputStream: MediaStream | null = null;
   private frameLoopActive = false;
@@ -181,24 +183,31 @@ export class VirtualBackgroundProcessor {
     });
   }
 
+  // The processing canvas is offscreen (never attached to the DOM), so
+  // requestAnimationFrame gets throttled to ~0 fps by Chrome after a couple
+  // frames when nothing visible references the canvas — the raw camera tile
+  // is what's actually rendered in the call HUD, not our processed canvas.
+  // That left the published track frozen on its very first frame, which
+  // looked like "the background didn't apply." Drive the loop with
+  // setInterval instead (~30 fps) with an in-flight guard so we don't queue
+  // up MediaPipe sends faster than the model can complete them.
   private startFrameLoop(): void {
     if (this.frameLoopActive) return;
     this.frameLoopActive = true;
-    const pump = async () => {
-      if (!this.running || !this.inputVideo || !this.segmentation) {
-        this.frameLoopActive = false;
-        return;
-      }
+    const tick = async () => {
+      if (!this.running || !this.inputVideo || !this.segmentation) return;
+      if (this.inFlight) return;
+      if (this.inputVideo.readyState < 2) return;
+      this.inFlight = true;
       try {
-        if (this.inputVideo.readyState >= 2) {
-          await this.segmentation.send({ image: this.inputVideo });
-        }
+        await this.segmentation.send({ image: this.inputVideo });
       } catch {
         /* a dropped frame is non-fatal; keep pumping */
+      } finally {
+        this.inFlight = false;
       }
-      this.rafId = requestAnimationFrame(() => { void pump(); });
     };
-    void pump();
+    this.intervalId = window.setInterval(() => { void tick(); }, 33);
   }
 
   // Composite the segmented person over the chosen background, single-canvas:
@@ -275,10 +284,16 @@ export class VirtualBackgroundProcessor {
 
   stop(): void {
     this.running = false;
+    this.frameLoopActive = false;
     if (this.rafId != null) {
       cancelAnimationFrame(this.rafId);
       this.rafId = null;
     }
+    if (this.intervalId != null) {
+      clearInterval(this.intervalId);
+      this.intervalId = null;
+    }
+    this.inFlight = false;
     try { this.outputStream?.getTracks().forEach(t => t.stop()); } catch { /* ignore */ }
     try { this.segmentation?.close(); } catch { /* ignore */ }
     this.segmentation = null;
