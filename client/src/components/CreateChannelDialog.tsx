@@ -214,7 +214,8 @@ export function CreateChannelDialog({ open, onClose, projectId, me, onCreated }:
           // bridge endpoint generates so behaviour is consistent across
           // entry points (contracts UI vs chat UI).
           const contractsBase = (window as any).BULLDOG_CONTRACTS_BASE
-            || "https://contracts.bulldogops.com";
+            || (import.meta as any).env?.VITE_CONTRACTS_BASE_URL
+            || "https://vectorcontracts.bulldogops.com";
           body.linkedContract = {
             contractId: picked.id,
             title: picked.title || `Contract ${picked.id}`,

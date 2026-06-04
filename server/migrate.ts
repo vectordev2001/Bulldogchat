@@ -858,4 +858,45 @@ export function runMigrations() {
   } catch (e) {
     console.warn("[migrate] v20 stale card cleanup skipped:", e);
   }
+
+  // v21 (Phase 1.9.10) — contracts subdomain rename. The old
+  // contracts.bulldogops.com host never existed in DNS (NXDOMAIN); the real
+  // prod host is vectorcontracts.bulldogops.com. Rewrite every stored URL.
+  // Idempotent: once rewritten the LIKE filter matches nothing.
+  try {
+    const newHost = "vectorcontracts.bulldogops.com";
+    // Match contracts.bulldogops.com only when NOT already prefixed by
+    // "vector" — without this guard, rewriting an already-correct
+    // vectorcontracts.bulldogops.com would produce vectorvectorcontracts...
+    // The negative lookbehind keeps the migration idempotent.
+    const re = /(?<!vector)contracts\.bulldogops\.com/g;
+
+    // 1. channels.linked_contract (JSON string) — replace inside the JSON blob.
+    const channelsToFix = rawDb.prepare(
+      "SELECT id, linked_contract FROM channels WHERE linked_contract IS NOT NULL AND linked_contract LIKE ?"
+    ).all(`%contracts.bulldogops.com%`) as Array<{ id: number; linked_contract: string }>;
+    let channelsUpdated = 0;
+    for (const ch of channelsToFix) {
+      const newLc = ch.linked_contract.replace(re, newHost);
+      if (newLc === ch.linked_contract) continue; // only vectorcontracts already — skip
+      rawDb.prepare("UPDATE channels SET linked_contract = ? WHERE id = ?").run(newLc, ch.id);
+      channelsUpdated++;
+    }
+
+    // 2. messages.meta — contract system cards store appUrl/pdfUrl in meta.
+    const messagesToFix = rawDb.prepare(
+      "SELECT id, meta FROM messages WHERE meta IS NOT NULL AND meta LIKE ?"
+    ).all(`%contracts.bulldogops.com%`) as Array<{ id: number; meta: string }>;
+    let messagesUpdated = 0;
+    for (const m of messagesToFix) {
+      const newMeta = m.meta.replace(re, newHost);
+      if (newMeta === m.meta) continue; // only vectorcontracts already — skip
+      rawDb.prepare("UPDATE messages SET meta = ? WHERE id = ?").run(newMeta, m.id);
+      messagesUpdated++;
+    }
+
+    console.log(`[migrate v21] contracts URL backfill: channels=${channelsUpdated} messages=${messagesUpdated}`);
+  } catch (e: any) {
+    console.warn("[migrate v21] error:", e?.message);
+  }
 }
