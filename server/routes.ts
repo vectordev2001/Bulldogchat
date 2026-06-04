@@ -19,6 +19,7 @@ import { bulldogSsoBridge } from "./bulldog-sso";
 import { dialPhoneIntoRoom, sipConfigured } from "./sip";
 import { signCallJoinToken, verifyCallJoinToken, sendSms, smsAvailable, buildCallInviteSmsBody } from "./sms";
 import { registerScheduledCallRoutes, startReminderLoop } from "./scheduled-calls";
+import { syncDeactivatedFromAuth } from "./users-sync";
 import {
   startClerk,
   stopClerk,
@@ -251,76 +252,47 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
   // phone was set in auth and never re-synced (e.g. John Hotek).
   app.get("/api/org/members", requireAuth, async (req, res) => {
     const u = (req as AuthedRequest).user;
-    let list = storage.listUsersByOrg(u.orgId).map(sanitize);
 
-    // Admin sync from bulldog-auth: backfill phones AND soft-delete ghost
-    // users (deleted/deactivated in auth but still showing in chat). We
-    // only run this when the caller is an admin because auth's admin API
-    // 403s for everyone else. Cheap operations — we just hit
-    // /api/admin/users once.
+    // Opportunistic sync from bulldog-auth: when an admin with a live
+    // bulldog_access cookie loads the roster, backfill phones and soft-
+    // deactivate ghost users. Forwarding the caller's cookie is the only
+    // way to reach auth's admin API (it 403s otherwise). The background
+    // job in index.ts cannot do this (no cookie), so this admin-driven
+    // path is still the most reliable refresh trigger.
     const me = storage.getUser(u.id);
     if (me?.role === "admin") {
-      try {
-        // Forward the caller's bulldog-auth cookie verbatim. If they don't
-        // have one (e.g. legacy HS256-only chat login) we silently skip.
-        const cookieHeader = req.headers.cookie || "";
-        const hasAuthCookie = /(?:^|;\s*)bulldog_access=/.test(cookieHeader);
-        if (hasAuthCookie) {
-          const authBase = process.env.BULLDOG_AUTH_URL || "https://auth.bulldogops.com";
-          const resp = await fetch(`${authBase}/api/admin/users`, {
-            headers: { Cookie: cookieHeader },
-          });
-          if (resp.ok) {
-            // Auth wraps the list as { users: [...] }; tolerate either shape.
-            const body = (await resp.json()) as
-              | { users?: Array<{ email?: string; phone?: string | null; active?: boolean }> }
-              | Array<{ email?: string; phone?: string | null; active?: boolean }>;
-            const authUsers = Array.isArray(body) ? body : (body.users ?? []);
-            const phoneByEmail = new Map<string, string>();
-            const activeEmails = new Set<string>();
-            for (const au of authUsers) {
-              if (!au.email) continue;
-              const e = au.email.toLowerCase();
-              if (au.active !== false) activeEmails.add(e);
-              if (au.phone) phoneByEmail.set(e, au.phone);
-            }
-            // 1) Persist phones into chat DB so subsequent calls don't re-hit auth.
-            for (const m of list) {
-              if (m.phone) continue;
-              const fresh = phoneByEmail.get(m.email.toLowerCase());
-              if (fresh) {
-                try { storage.updateUser(m.id, { phone: fresh }); }
-                catch (e) { console.warn("[org/members] phone backfill update failed:", e); }
-              }
-            }
-            // 2) Ghost roster cleanup: any chat user whose email is NOT in
-            //    auth's active set gets soft-deactivated. Skip the caller
-            //    themselves (no self-lockout), already-deactivated rows,
-            //    and system-deleted emails (deleted-*@deleted.local).
-            for (const m of list) {
-              if (m.deactivated) continue;
-              if (m.id === u.id) continue;
-              const e = m.email.toLowerCase();
-              if (e.endsWith("@deleted.local")) continue;
-              if (!activeEmails.has(e)) {
-                try {
-                  storage.setUserDeactivated(m.id, true);
-                  console.log(`[org/members] ghost cleanup: deactivated chat user ${m.id} (${m.email}) — not in auth active set`);
-                } catch (err) {
-                  console.warn("[org/members] ghost cleanup failed:", err);
-                }
-              }
-            }
-            // Re-read so the response reflects backfills + deactivations.
-            list = storage.listUsersByOrg(u.orgId).map(sanitize);
-          }
+      const cookieHeader = req.headers.cookie || "";
+      if (/(?:^|;\s*)bulldog_access=/.test(cookieHeader)) {
+        try {
+          await syncDeactivatedFromAuth({ cookieHeader, callerUserId: u.id });
+        } catch (e) {
+          console.warn("[org/members] auth sync failed:", e);
         }
-      } catch (e) {
-        console.warn("[org/members] auth sync failed:", e);
       }
     }
 
+    // Only return active users — deactivated rows (deleted/disabled in auth)
+    // must not appear in the sidebar/roster. This is the user-visible fix:
+    // previously the full list (including deactivated) was returned.
+    const list = storage
+      .listUsersByOrg(u.orgId)
+      .filter((m) => !m.deactivated)
+      .map(sanitize);
+
     res.json(list);
+  });
+
+  // Manually trigger a roster sync from bulldog-auth. Admin-only. Forwards the
+  // caller's bulldog_access cookie so we can reach auth's admin API. Returns
+  // the {checked, deactivated, reactivated, source} counts.
+  app.post("/api/admin/sync-users", requireAuth, requireRole(["admin"]), async (req, res) => {
+    const u = (req as AuthedRequest).user;
+    const result = await syncDeactivatedFromAuth({
+      cookieHeader: req.headers.cookie || "",
+      callerUserId: u.id,
+      orgId: u.orgId,
+    });
+    res.json(result);
   });
 
   // ── PRESENCE (Phase 1.9) ──

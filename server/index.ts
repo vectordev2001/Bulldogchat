@@ -3,6 +3,7 @@ import express, { Response, NextFunction } from 'express';
 import type { Request } from 'express';
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
+import { syncDeactivatedFromAuth } from "./users-sync";
 import { createServer } from "node:http";
 
 const app = express();
@@ -102,4 +103,15 @@ app.use((req, res, next) => {
       log(`serving on port ${port}`);
     },
   );
+
+  // Background roster sync from bulldog-auth. Cookieless, so it only does real
+  // work when SUITE_INTERNAL_SECRET is configured and auth accepts it; without
+  // a credential it logs source=none and no-ops. The user-visible guarantee is
+  // the /api/org/members deactivated filter — this just keeps the flag fresh.
+  syncDeactivatedFromAuth()
+    .then((r) => log(`[user-sync] startup checked=${r.checked} deactivated=${r.deactivated} reactivated=${r.reactivated} source=${r.source}`))
+    .catch((e) => console.warn("[user-sync] startup error:", e?.message));
+  setInterval(() => {
+    syncDeactivatedFromAuth().catch(() => {});
+  }, 5 * 60 * 1000);
 })();
