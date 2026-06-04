@@ -1,8 +1,8 @@
 import { useMemo, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { ClipboardList, ChevronRight, X, Plus, Loader2, MapPin, Briefcase, FileEdit, AlertTriangle } from "lucide-react";
+import { ClipboardList, ChevronRight, X, Plus, Loader2, MapPin, Briefcase, FileEdit, AlertTriangle, Hash, RefreshCw } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import type { ApiUser } from "@/types/api";
+import type { ApiUser, ApiChannel } from "@/types/api";
 import { CreateWorkObjectDialog } from "./CreateWorkObjectDialog";
 import { WorkObjectDetailDrawer } from "./WorkObjectDetailDrawer";
 
@@ -24,25 +24,12 @@ interface WorkObject {
   closedAt: string | null;
 }
 
-interface WorkObjectActivity {
-  id: number;
-  workObjectId: number;
-  actorUserId: number | null;
-  type: string;
-  payload: Record<string, unknown> | string | null;
-  createdAt: string;
-}
-
-interface WorkObjectDetail extends WorkObject {
-  activity: WorkObjectActivity[];
-  channels: { channelId: number; linkType: string }[];
-}
-
 interface Props {
   channelId: number;
   me: ApiUser;
   orgMembers: ApiUser[];
   onClose?: () => void;
+  onSelectChannel?: (channelId: number) => void;
 }
 
 const KIND_META: Record<WorkObjectKind, { label: string; icon: typeof MapPin; tone: string }> = {
@@ -70,42 +57,40 @@ function statusPill(status: string): string {
   return STATUS_TONE[status] ?? "bg-[hsl(0_0%_30%)]/30 text-[hsl(0_0%_70%)]";
 }
 
-type KindFilter = "all" | WorkObjectKind;
-type StatusFilter = "open" | "all";
-
-export function WorkObjectPanel({ channelId, me, orgMembers, onClose }: Props) {
+export function WorkObjectPanel({ channelId, me, orgMembers, onClose, onSelectChannel }: Props) {
   const [linkInput, setLinkInput] = useState("");
   const [linkError, setLinkError] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
+  // When the user wants to swap the linked job we re-open the inline link
+  // form even though a job is already attached.
+  const [changing, setChanging] = useState(false);
   // Detail drawer launches over this panel; null = closed.
   const [detailId, setDetailId] = useState<number | null>(null);
-  // Phase 1.8: filter controls. "open" status hides closed/resolved/rejected
-  // jobs by default — most users only care about active work. "all" shows
-  // everything. Kind filter is a single chip selection.
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>("open");
-  const [kindFilter, setKindFilter] = useState<KindFilter>("all");
 
   const canLink = me.role === "admin" || me.role === "foreman";
 
+  // The data model is one-to-many: a job has many channels, but a channel has
+  // at most one job. The link endpoint can technically return several rows, so
+  // we treat the first as the channel's job.
   const listQ = useQuery<WorkObject[]>({
     queryKey: ["/api/channels", channelId, "work-objects"],
     queryFn: () => apiRequest<WorkObject[]>("GET", `/api/channels/${channelId}/work-objects`),
   });
 
-  // Client-side filter. We don't push these to the server because the
-  // channel-scoped list is usually tiny (a handful of jobs at most) and
-  // refetching for every chip toggle would feel laggy.
-  const filtered = useMemo(() => {
-    const rows = listQ.data ?? [];
-    return rows.filter((wo) => {
-      if (kindFilter !== "all" && wo.kind !== kindFilter) return false;
-      if (statusFilter === "open") {
-        // Treat anything terminal as closed for the panel's purposes.
-        if (wo.status === "closed" || wo.status === "resolved" || wo.status === "rejected") return false;
-      }
-      return true;
-    });
-  }, [listQ.data, kindFilter, statusFilter]);
+  const linkedJob = useMemo(() => listQ.data?.[0] ?? null, [listQ.data]);
+
+  // Sibling channels that share this channel's job. Only fetched once we know
+  // which job is linked.
+  const siblingsQ = useQuery<ApiChannel[]>({
+    queryKey: ["/api/work-objects", linkedJob?.id, "channels"],
+    queryFn: () => apiRequest<ApiChannel[]>("GET", `/api/work-objects/${linkedJob!.id}/channels`),
+    enabled: linkedJob != null,
+  });
+
+  const siblings = useMemo(
+    () => (siblingsQ.data ?? []).filter((c) => c.id !== channelId),
+    [siblingsQ.data, channelId],
+  );
 
   const linkMutation = useMutation({
     mutationFn: async (ref: string) =>
@@ -113,19 +98,12 @@ export function WorkObjectPanel({ channelId, me, orgMembers, onClose }: Props) {
     onSuccess: () => {
       setLinkInput("");
       setLinkError(null);
+      setChanging(false);
       queryClient.invalidateQueries({ queryKey: ["/api/channels", channelId, "work-objects"] });
       queryClient.invalidateQueries({ queryKey: ["/api/work-objects"] });
     },
     onError: (err: Error) => {
       setLinkError(err.message || "Could not link job");
-    },
-  });
-
-  const unlinkMutation = useMutation({
-    mutationFn: async (workObjectId: number) =>
-      apiRequest<{ ok: true }>("DELETE", `/api/channels/${channelId}/work-objects/${workObjectId}`),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/channels", channelId, "work-objects"] });
     },
   });
 
@@ -139,37 +117,24 @@ export function WorkObjectPanel({ channelId, me, orgMembers, onClose }: Props) {
   return (
     <aside
       className="hidden md:flex md:flex-col w-60 border-l border-[hsl(232_40%_22%)] bg-[hsl(232_60%_8%)] shrink-0"
-      data-testid="panel-work-objects"
+      data-testid="panel-linked-job"
     >
       <header className="px-3 py-3 border-b border-[hsl(232_40%_22%)] flex items-center justify-between">
         <div className="flex items-center gap-2 text-[hsl(0_0%_85%)] text-sm font-semibold uppercase tracking-wide">
           <ClipboardList className="w-4 h-4" />
-          Jobs in this channel
+          Linked job
         </div>
-        <div className="flex items-center gap-1">
-          {canLink && (
-            <button
-              type="button"
-              onClick={() => setCreateOpen(true)}
-              className="p-1 rounded hover-elevate text-[hsl(0_0%_60%)] hover:text-white"
-              title="New job"
-              data-testid="button-new-work-object"
-            >
-              <Plus className="w-4 h-4" />
-            </button>
-          )}
-          {onClose && (
-            <button
-              type="button"
-              onClick={onClose}
-              className="p-1 rounded hover-elevate text-[hsl(0_0%_60%)] hover:text-white"
-              title="Hide jobs"
-              data-testid="button-close-work-objects"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          )}
-        </div>
+        {onClose && (
+          <button
+            type="button"
+            onClick={onClose}
+            className="p-1 rounded hover-elevate text-[hsl(0_0%_60%)] hover:text-white"
+            title="Hide panel"
+            data-testid="button-close-linked-job"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        )}
       </header>
 
       <CreateWorkObjectDialog
@@ -180,55 +145,32 @@ export function WorkObjectPanel({ channelId, me, orgMembers, onClose }: Props) {
         orgMembers={orgMembers}
       />
 
-      {/* Filters. Kept compact — this rail is only 240px wide so we wrap
-          the kind chips and let the status toggle sit on its own row. */}
-      <div className="px-2 py-2 border-b border-[hsl(232_40%_22%)] space-y-1.5">
-        <div className="flex flex-wrap items-center gap-1" data-testid="filter-panel-kind">
-          <PanelChip label="All" active={kindFilter === "all"} onClick={() => setKindFilter("all")} testid="filter-panel-kind-all" />
-          {(Object.entries(KIND_META) as [WorkObjectKind, typeof KIND_META[WorkObjectKind]][]).map(([k, meta]) => (
-            <PanelChip
-              key={k}
-              label={meta.label}
-              Icon={meta.icon}
-              active={kindFilter === k}
-              onClick={() => setKindFilter(k)}
-              testid={`filter-panel-kind-${k}`}
-            />
-          ))}
-        </div>
-        <div className="flex items-center gap-1" data-testid="filter-panel-status">
-          <PanelChip label="Open" active={statusFilter === "open"} onClick={() => setStatusFilter("open")} testid="filter-panel-status-open" />
-          <PanelChip label="All statuses" active={statusFilter === "all"} onClick={() => setStatusFilter("all")} testid="filter-panel-status-all" />
-          <span className="ml-auto text-[10px] text-[hsl(0_0%_45%)] font-mono" data-testid="text-filter-count">
-            {filtered.length}/{listQ.data?.length ?? 0}
-          </span>
-        </div>
-      </div>
-
-      <div className="flex-1 overflow-y-auto px-2 py-2 space-y-1">
+      <div className="flex-1 overflow-y-auto px-2 py-2 space-y-3">
         {listQ.isLoading && (
-          <div className="flex items-center justify-center py-6 text-[hsl(0_0%_60%)]">
+          <div className="flex items-center justify-center py-6 text-[hsl(0_0%_60%)]" data-testid="linked-job-loading">
             <Loader2 className="w-4 h-4 animate-spin" />
           </div>
         )}
         {listQ.isError && (
-          <div className="px-2 py-2 text-xs text-[hsl(2_85%_72%)]">
-            Failed to load jobs
+          <div className="px-2 py-2 text-xs text-[hsl(2_85%_72%)]" data-testid="linked-job-error">
+            Failed to load job
           </div>
         )}
-        {!listQ.isLoading && (listQ.data?.length ?? 0) > 0 && filtered.length === 0 && (
-          <div className="px-2 py-3 text-xs text-[hsl(0_0%_55%)] leading-relaxed" data-testid="text-empty-filtered">
-            No jobs match those filters. <button
-              type="button"
-              onClick={() => { setKindFilter("all"); setStatusFilter("open"); }}
-              className="underline text-[hsl(0_0%_75%)] hover:text-white"
-              data-testid="button-reset-filters"
-            >Reset</button>.
-          </div>
+
+        {/* ── Linked job card ── */}
+        {!listQ.isLoading && !listQ.isError && linkedJob && !changing && (
+          <JobCard
+            wo={linkedJob}
+            canLink={canLink}
+            onOpen={() => setDetailId(linkedJob.id)}
+            onChange={() => { setChanging(true); setLinkInput(""); setLinkError(null); }}
+          />
         )}
-        {!listQ.isLoading && (listQ.data?.length ?? 0) === 0 && (
-          <div className="px-2 py-4 text-xs text-[hsl(0_0%_55%)] leading-relaxed space-y-2">
-            <div className="text-[hsl(0_0%_75%)] font-medium">No jobs linked yet.</div>
+
+        {/* ── No job linked ── */}
+        {!listQ.isLoading && !listQ.isError && !linkedJob && !changing && (
+          <div className="px-1 py-2 text-xs text-[hsl(0_0%_55%)] leading-relaxed space-y-2" data-testid="linked-job-empty">
+            <div className="text-[hsl(0_0%_75%)] font-medium">No job linked.</div>
             <div>
               A job is the real-world thing this channel is about — a site, a project, a change order, or a safety incident. Link one so everyone knows what work the conversation tracks.
             </div>
@@ -248,95 +190,81 @@ export function WorkObjectPanel({ channelId, me, orgMembers, onClose }: Props) {
           </div>
         )}
 
-        {filtered.map((wo) => {
-          const meta = KIND_META[wo.kind];
-          const Icon = meta.icon;
-          return (
-            <div
-              key={wo.id}
-              className="group relative rounded border border-[hsl(232_40%_22%)] bg-[hsl(232_60%_10%)] overflow-hidden hover:border-[hsl(232_40%_32%)] transition-colors"
-              data-testid={`card-work-object-${wo.id}`}
-            >
+        {/* ── Inline link / change form ── */}
+        {canLink && (changing || (!linkedJob && !listQ.isLoading && !listQ.isError)) && (
+          <form onSubmit={handleLinkSubmit} className="space-y-1" data-testid="linked-job-link-form">
+            <div className="flex items-center gap-1">
+              <input
+                type="text"
+                value={linkInput}
+                onChange={(e) => { setLinkInput(e.target.value); setLinkError(null); }}
+                placeholder="Link by ref (e.g. BOE-FIBER-01)"
+                className="flex-1 bg-[hsl(232_60%_10%)] border border-[hsl(232_40%_22%)] rounded px-2 py-1.5 text-xs text-white placeholder:text-[hsl(0_0%_45%)] focus:outline-none focus:border-vs-red"
+                data-testid="input-link-ref"
+              />
+              <button
+                type="submit"
+                disabled={!linkInput.trim() || linkMutation.isPending}
+                className="p-1.5 rounded bg-vs-red/20 border border-vs-red/40 text-vs-red hover:bg-vs-red/30 disabled:opacity-40 disabled:cursor-not-allowed"
+                title="Link job"
+                data-testid="button-link-work-object"
+              >
+                {linkMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
+              </button>
+            </div>
+            {changing && (
               <button
                 type="button"
-                onClick={() => setDetailId(wo.id)}
-                className="w-full flex items-start gap-2 px-2 py-2 text-left"
-                data-testid={`button-open-work-object-${wo.id}`}
+                onClick={() => { setChanging(false); setLinkInput(""); setLinkError(null); }}
+                className="text-[10px] text-[hsl(0_0%_55%)] hover:text-white underline"
+                data-testid="button-cancel-change-link"
               >
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-1.5 mb-1">
-                    <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium border ${meta.tone}`}>
-                      <Icon className="w-3 h-3" />
-                      {meta.label}
-                    </span>
-                    <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${statusPill(wo.status)}`}>
-                      {wo.status.replace(/_/g, " ")}
-                    </span>
-                  </div>
-                  <div className="text-[11px] font-mono text-[hsl(0_0%_60%)] truncate" data-testid={`text-ref-${wo.id}`}>
-                    {wo.ref}
-                  </div>
-                  <div className="text-[13px] text-white leading-tight truncate" data-testid={`text-title-${wo.id}`}>
-                    {wo.title}
-                  </div>
-                </div>
-                <ChevronRight className="w-3.5 h-3.5 text-[hsl(0_0%_40%)] shrink-0 mt-0.5" />
+                Cancel
               </button>
-              {canLink && (
-                <button
-                  type="button"
-                  onClick={(e) => { e.stopPropagation(); unlinkMutation.mutate(wo.id); }}
-                  disabled={unlinkMutation.isPending}
-                  className="absolute top-1 right-1 p-1 rounded text-[hsl(0_0%_50%)] hover:text-vs-red hover:bg-[hsl(232_60%_15%)] opacity-0 group-hover:opacity-100 transition-opacity disabled:opacity-30"
-                  title="Unlink from this channel"
-                  data-testid={`button-unlink-work-object-${wo.id}`}
-                >
-                  {unlinkMutation.isPending && unlinkMutation.variables === wo.id
-                    ? <Loader2 className="w-3 h-3 animate-spin" />
-                    : <X className="w-3 h-3" />}
-                </button>
-              )}
-            </div>
-          );
-        })}
-      </div>
+            )}
+            {linkError && <div className="text-[11px] text-[hsl(2_85%_72%)] px-1">{linkError}</div>}
+          </form>
+        )}
 
-      {canLink && (
-        <form
-          onSubmit={handleLinkSubmit}
-          className="border-t border-[hsl(232_40%_22%)] p-2 space-y-1"
-        >
-          <div className="flex items-center gap-1">
-            <input
-              type="text"
-              value={linkInput}
-              onChange={(e) => { setLinkInput(e.target.value); setLinkError(null); }}
-              placeholder="Link by ref (e.g. BOE-FIBER-01)"
-              className="flex-1 bg-[hsl(232_60%_10%)] border border-[hsl(232_40%_22%)] rounded px-2 py-1.5 text-xs text-white placeholder:text-[hsl(0_0%_45%)] focus:outline-none focus:border-vs-red"
-              data-testid="input-link-ref"
-            />
-            <button
-              type="submit"
-              disabled={!linkInput.trim() || linkMutation.isPending}
-              className="p-1.5 rounded bg-vs-red/20 border border-vs-red/40 text-vs-red hover:bg-vs-red/30 disabled:opacity-40 disabled:cursor-not-allowed"
-              title="Link job"
-              data-testid="button-link-work-object"
-            >
-              {linkMutation.isPending ? (
+        {/* ── Other channels in this job ── */}
+        {linkedJob && !changing && (
+          <div className="pt-1 border-t border-[hsl(232_40%_22%)]" data-testid="other-channels-section">
+            <div className="px-1 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-wide text-[hsl(0_0%_55%)]">
+              Other channels in this job
+            </div>
+            {siblingsQ.isLoading && (
+              <div className="flex items-center justify-center py-3 text-[hsl(0_0%_60%)]" data-testid="other-channels-loading">
                 <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              ) : (
-                <Plus className="w-3.5 h-3.5" />
-              )}
-            </button>
+              </div>
+            )}
+            {siblingsQ.isError && (
+              <div className="px-1 py-2 text-[11px] text-[hsl(2_85%_72%)]" data-testid="other-channels-error">
+                Failed to load channels
+              </div>
+            )}
+            {!siblingsQ.isLoading && !siblingsQ.isError && siblings.length === 0 && (
+              <div className="px-1 py-2 text-[11px] text-[hsl(0_0%_50%)]" data-testid="other-channels-empty">
+                No other channels in this job.
+              </div>
+            )}
+            <div className="space-y-0.5">
+              {siblings.map((c) => (
+                <button
+                  key={c.id}
+                  type="button"
+                  onClick={() => onSelectChannel?.(c.id)}
+                  disabled={!onSelectChannel}
+                  className="w-full flex items-center gap-1.5 px-2 py-1.5 rounded text-left text-[13px] text-[hsl(0_0%_80%)] hover-elevate hover:text-white disabled:cursor-default"
+                  data-testid={`link-sibling-channel-${c.id}`}
+                >
+                  <Hash className="w-3.5 h-3.5 text-[hsl(0_0%_45%)] shrink-0" />
+                  <span className="truncate">{c.name}</span>
+                </button>
+              ))}
+            </div>
           </div>
-          {linkError && (
-            <div className="text-[11px] text-[hsl(2_85%_72%)] px-1">{linkError}</div>
-          )}
-          <div className="text-[10px] text-[hsl(0_0%_45%)] px-1 leading-tight">
-            Tip: in chat, use <span className="font-mono text-[hsl(0_0%_65%)]">/job REF</span> to link.
-          </div>
-        </form>
-      )}
+        )}
+      </div>
 
       <WorkObjectDetailDrawer
         open={detailId != null}
@@ -349,27 +277,56 @@ export function WorkObjectPanel({ channelId, me, orgMembers, onClose }: Props) {
   );
 }
 
-// Compact filter chip for the narrow right-rail panel. Mirrors the FilterPill
-// in WorkObjectsListDialog but sized for 240px and uses the same red-active /
-// muted-inactive treatment so the two views feel consistent.
-function PanelChip({
-  label, Icon, active, onClick, testid,
-}: { label: string; Icon?: typeof MapPin; active: boolean; onClick: () => void; testid?: string }) {
+// The single job card shown when a channel has a linked job. Replaces the old
+// per-row list since a channel maps to at most one job.
+function JobCard({
+  wo, canLink, onOpen, onChange,
+}: { wo: WorkObject; canLink: boolean; onOpen: () => void; onChange: () => void }) {
+  const meta = KIND_META[wo.kind];
+  const Icon = meta.icon;
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      data-testid={testid}
-      className={[
-        "inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold transition-colors",
-        active
-          ? "bg-vs-red text-white"
-          : "text-[hsl(0_0%_70%)] hover:text-white hover:bg-[hsl(232_45%_22%)]",
-      ].join(" ")}
+    <div
+      className="rounded border border-[hsl(232_40%_22%)] bg-[hsl(232_60%_10%)] overflow-hidden hover:border-[hsl(232_40%_32%)] transition-colors"
+      data-testid={`linked-job-card-${wo.id}`}
     >
-      {Icon && <Icon className="w-2.5 h-2.5" />}
-      {label}
-    </button>
+      <button
+        type="button"
+        onClick={onOpen}
+        className="w-full flex items-start gap-2 px-2 py-2 text-left"
+        data-testid={`button-open-work-object-${wo.id}`}
+      >
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-1.5 mb-1">
+            <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium border ${meta.tone}`}>
+              <Icon className="w-3 h-3" />
+              {meta.label}
+            </span>
+            <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${statusPill(wo.status)}`}>
+              {wo.status.replace(/_/g, " ")}
+            </span>
+          </div>
+          <div className="text-[11px] font-mono text-[hsl(0_0%_60%)] truncate" data-testid={`text-ref-${wo.id}`}>
+            {wo.ref}
+          </div>
+          <div className="text-[13px] text-white leading-tight truncate" data-testid={`text-title-${wo.id}`}>
+            {wo.title}
+          </div>
+        </div>
+        <ChevronRight className="w-3.5 h-3.5 text-[hsl(0_0%_40%)] shrink-0 mt-0.5" />
+      </button>
+      {canLink && (
+        <div className="border-t border-[hsl(232_40%_22%)] px-2 py-1.5">
+          <button
+            type="button"
+            onClick={onChange}
+            className="flex items-center gap-1.5 text-[11px] text-[hsl(0_0%_60%)] hover:text-white"
+            title="Link a different job to this channel"
+            data-testid="button-change-link"
+          >
+            <RefreshCw className="w-3 h-3" /> Change link
+          </button>
+        </div>
+      )}
+    </div>
   );
 }
-

@@ -1,6 +1,6 @@
 /* Bulldog Chat service worker — push + notification click */
 
-const SW_VERSION = "bulldog-chat-1.2.43";
+const SW_VERSION = "bulldog-chat-1.2.44";
 
 self.addEventListener("install", (event) => {
   self.skipWaiting();

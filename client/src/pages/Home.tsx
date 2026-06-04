@@ -515,6 +515,7 @@ export default function Home() {
                 me={user as ApiUser}
                 orgMembers={members}
                 onClose={() => setWorkObjectsOpen(false)}
+                onSelectChannel={selectChannel}
               />
             )}
             {membersOpen && (

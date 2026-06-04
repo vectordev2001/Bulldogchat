@@ -11,6 +11,7 @@
  *   PATCH  /api/work-objects/:id              update (title, status, owner, attributes)
  *   POST   /api/work-objects/:id/close        close
  *   POST   /api/work-objects/:id/reopen       reopen
+ *   GET    /api/work-objects/:id/channels     list channels linked to this object
  *
  *   GET    /api/channels/:id/work-objects     list linked objects
  *   POST   /api/channels/:id/work-objects     link an existing object by id or ref
@@ -376,6 +377,35 @@ export function registerWorkObjectRoutes(app: Express) {
   });
 
   /* ─── channel ↔ work object links ─── */
+
+  // List the channels linked to a work object (its "sibling" channels).
+  // Used by the right-rail panel's "Other channels in this job" section.
+  // Only returns channels the caller is allowed to see.
+  app.get("/api/work-objects/:id/channels", requireAuth, (req, res) => {
+    const u = (req as AuthedRequest).user;
+    const id = Number(req.params.id);
+    const wo = loadOwned(req, res, id);
+    if (!wo) return;
+    const user = storage.getUser(u.id);
+    if (!user) return res.status(403).json({ message: "Not allowed" });
+    const visible = storage
+      .listChannelsForWorkObject(id)
+      .filter((c) => storage.userCanSeeChannel(c, user))
+      .map((c) => ({
+        id: c.id,
+        projectId: c.projectId,
+        workObjectId: c.workObjectId ?? null,
+        name: c.name,
+        type: c.type,
+        topic: c.topic,
+        position: c.position,
+        scope: c.scope,
+        entityId: c.entityId,
+        teamRole: c.teamRole,
+        createdAt: c.createdAt,
+      }));
+    res.json(visible);
+  });
 
   // List linked objects on a channel. Used by the right-rail panel.
   app.get("/api/channels/:id/work-objects", requireAuth, (req, res) => {
