@@ -21,11 +21,6 @@ export function serveStatic(app: Express) {
       if (name === "index.html" || name === "sw.js") {
         res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
         res.setHeader("Pragma", "no-cache");
-        // Phase 1.9.11 one-time scorched-earth purge: forces every connected
-        // client to drop cache + storage + SW so they pick up the v21
-        // contracts-URL backfill and current bundles. Remove on the next
-        // deploy after every user has hit the site once.
-        res.setHeader("Clear-Site-Data", '"cache", "storage"');
       } else if (filePath.includes(`${path.sep}assets${path.sep}`)) {
         // Hashed bundle assets are immutable.
         res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
@@ -37,8 +32,6 @@ export function serveStatic(app: Express) {
   app.use("/{*path}", (_req, res) => {
     res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
     res.setHeader("Pragma", "no-cache");
-    // Phase 1.9.11 one-time scorched-earth purge. Remove on next deploy.
-    res.setHeader("Clear-Site-Data", '"cache", "storage"');
     res.sendFile(path.resolve(distPath, "index.html"));
   });
 }
