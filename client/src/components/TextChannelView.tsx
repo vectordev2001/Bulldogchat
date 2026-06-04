@@ -1,5 +1,12 @@
-import { Hash, Pin, Plus, Smile, Paperclip, Send, Users, Search, Loader2, MessageSquare, X, Reply, Phone, Video, ClipboardList, MapPin, FileText, AlertTriangle, Link2, Unlink, Lock, Unlock, UserCog, PenLine, CheckCircle2, Trash2, Calendar as CalendarIcon, Mic, Ban, Check, HelpCircle } from "lucide-react";
+import { Hash, Pin, Plus, Smile, Paperclip, Send, Users, Search, Loader2, MessageSquare, X, Reply, Phone, Video, ClipboardList, MapPin, FileText, AlertTriangle, Link2, Unlink, Lock, Unlock, UserCog, PenLine, CheckCircle2, Trash2, Calendar as CalendarIcon, Mic, Ban, Check, HelpCircle, MoreHorizontal, ChevronDown } from "lucide-react";
 import { ChannelCallDialog } from "@/components/ChannelCallDialog";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+} from "@/components/ui/dropdown-menu";
 import { useCalls } from "@/lib/CallContext";
 import { Avatar } from "./Avatar";
 import { useState, useRef, useEffect, KeyboardEvent, useCallback, useMemo } from "react";
@@ -291,7 +298,10 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers, me
         )}
         <div className="ml-auto flex items-center gap-1 text-[hsl(0_0%_65%)]">
           {/* Group-call quick actions — ring channel members from the
-              text view without having to navigate to a voice channel. */}
+              text view without having to navigate to a voice channel. The
+              phone icon starts an instant voice call; the camera icon opens
+              a small menu so "Schedule meeting" is discoverable on mobile
+              (where the slash command is hard to type). */}
           <button
             type="button"
             onClick={() => setCallDialog("voice")}
@@ -302,52 +312,119 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers, me
           >
             <Phone className="w-4 h-4" />
           </button>
-          <button
-            type="button"
-            onClick={() => setCallDialog("video")}
-            disabled={callBusy}
-            className="p-2 rounded hover-elevate text-[hsl(0_0%_70%)] hover:text-white disabled:opacity-40 disabled:cursor-not-allowed"
-            title={callBusy ? "Already in a call" : "Start video call"}
-            data-testid="button-channel-video"
-          >
-            <Video className="w-4 h-4" />
-          </button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                className="p-2 rounded hover-elevate text-[hsl(0_0%_70%)] hover:text-white inline-flex items-center"
+                title="Call & meeting options"
+                data-testid="button-channel-video"
+              >
+                <Video className="w-4 h-4" />
+                <ChevronDown className="w-3 h-3 -mr-0.5 opacity-70" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-52">
+              <DropdownMenuItem
+                disabled={callBusy}
+                onSelect={() => setCallDialog("video")}
+                data-testid="menu-start-video-call"
+              >
+                <Video className="w-4 h-4 mr-2" /> Start video call
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                disabled={callBusy}
+                onSelect={() => setCallDialog("voice")}
+                data-testid="menu-start-voice-call"
+              >
+                <Phone className="w-4 h-4 mr-2" /> Start voice call
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                onSelect={() => onSlashSchedule?.(`Meeting in #${channel.name}`)}
+                data-testid="menu-schedule-meeting"
+              >
+                <CalendarIcon className="w-4 h-4 mr-2" /> Schedule meeting…
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
           <span className="w-px h-5 bg-[hsl(232_40%_22%)] mx-1" />
-          <HeaderIcon
-            title={pinned ? "Jump to pinned message" : "No pinned message"}
-            onClick={pinned ? scrollToPinned : undefined}
-            disabled={!pinned}
-            data-testid="button-pinned"
-          >
-            <Pin className="w-4 h-4" />
-          </HeaderIcon>
-          <HeaderIcon
-            title={workObjectsOpen ? "Hide jobs" : "Show jobs"}
-            onClick={onToggleWorkObjects}
-            active={!!workObjectsOpen}
-            data-testid="button-work-objects-toggle"
-          >
-            <ClipboardList className="w-4 h-4" />
-          </HeaderIcon>
-          <HeaderIcon
-            title={membersOpen ? "Hide members" : "Show members"}
-            onClick={onToggleMembers}
-            active={!!membersOpen}
-            data-testid="button-members-toggle"
-          >
-            <Users className="w-4 h-4" />
-          </HeaderIcon>
-          <button
-            type="button"
-            onClick={() => setSearchOpen(true)}
-            className="ml-1 flex items-center gap-2 bg-[hsl(232_60%_9%)] border border-[hsl(232_40%_22%)] text-xs text-[hsl(0_0%_65%)] hover:text-white hover:border-vs-red transition-colors rounded-md px-2 py-1"
-            title="Search (⌘K)"
-            data-testid="button-open-search"
-          >
-            <Search className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Search</span>
-            <kbd className="hidden sm:inline font-mono text-[10px] text-[hsl(0_0%_55%)] border border-[hsl(232_40%_22%)] rounded px-1">⌘K</kbd>
-          </button>
+
+          {/* Desktop (≥sm): pin / jobs / members shown inline. On mobile they
+              collapse into the overflow menu below so the channel title has
+              room and isn't truncated. */}
+          <div className="hidden sm:flex items-center gap-1">
+            <HeaderIcon
+              title={pinned ? "Jump to pinned message" : "No pinned message"}
+              onClick={pinned ? scrollToPinned : undefined}
+              disabled={!pinned}
+              data-testid="button-pinned"
+            >
+              <Pin className="w-4 h-4" />
+            </HeaderIcon>
+            <HeaderIcon
+              title={workObjectsOpen ? "Hide jobs" : "Show jobs"}
+              onClick={onToggleWorkObjects}
+              active={!!workObjectsOpen}
+              data-testid="button-work-objects-toggle"
+            >
+              <ClipboardList className="w-4 h-4" />
+            </HeaderIcon>
+            <HeaderIcon
+              title={membersOpen ? "Hide members" : "Show members"}
+              onClick={onToggleMembers}
+              active={!!membersOpen}
+              data-testid="button-members-toggle"
+            >
+              <Users className="w-4 h-4" />
+            </HeaderIcon>
+            <button
+              type="button"
+              onClick={() => setSearchOpen(true)}
+              className="ml-1 flex items-center gap-2 bg-[hsl(232_60%_9%)] border border-[hsl(232_40%_22%)] text-xs text-[hsl(0_0%_65%)] hover:text-white hover:border-vs-red transition-colors rounded-md px-2 py-1"
+              title="Search (⌘K)"
+              data-testid="button-open-search"
+            >
+              <Search className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Search</span>
+              <kbd className="hidden sm:inline font-mono text-[10px] text-[hsl(0_0%_55%)] border border-[hsl(232_40%_22%)] rounded px-1">⌘K</kbd>
+            </button>
+          </div>
+
+          {/* Mobile (<sm): overflow menu holding pin / jobs / members / search. */}
+          <div className="sm:hidden">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  type="button"
+                  className="p-2 rounded hover-elevate text-[hsl(0_0%_70%)] hover:text-white"
+                  title="More"
+                  data-testid="button-header-overflow"
+                >
+                  <MoreHorizontal className="w-4 h-4" />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-48">
+                <DropdownMenuItem
+                  disabled={!pinned}
+                  onSelect={() => pinned && scrollToPinned()}
+                  data-testid="menu-pinned"
+                >
+                  <Pin className="w-4 h-4 mr-2" /> {pinned ? "Jump to pinned" : "No pinned message"}
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => onToggleWorkObjects?.()} data-testid="menu-work-objects">
+                  <ClipboardList className="w-4 h-4 mr-2" /> {workObjectsOpen ? "Hide jobs" : "Show jobs"}
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => onToggleMembers?.()} data-testid="menu-members">
+                  <Users className="w-4 h-4 mr-2" /> {membersOpen ? "Hide members" : "Show members"}
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onSelect={() => setSearchOpen(true)} data-testid="menu-search">
+                  <Search className="w-4 h-4 mr-2" /> Search
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
         </div>
       </header>
 

@@ -794,4 +794,32 @@ export function runMigrations() {
   } catch (e) {
     console.warn("[migrate] v18 reminder columns skipped:", e);
   }
+
+  // v19 (Phase 1.9.7) — clean orphan scheduled-call cards. When a scheduled
+  // call is deleted, its in-channel system-message cards should be removed too
+  // (see scheduled-calls.ts DELETE handler), but older rows / failed deletes
+  // can leave cards whose meta.scheduledCallId no longer resolves to a live
+  // scheduled_calls row. Sweep them on startup. Idempotent: once cleaned, the
+  // SELECT returns nothing and this is a no-op.
+  try {
+    const orphans = rawDb.prepare(
+      `SELECT id FROM messages
+       WHERE meta LIKE '%"scheduledCallId":%'
+         AND CAST(json_extract(meta, '$.scheduledCallId') AS INTEGER)
+             NOT IN (SELECT id FROM scheduled_calls)`,
+    ).all() as Array<{ id: number }>;
+    if (orphans.length > 0) {
+      const ids = orphans.map((o) => o.id);
+      const tx = rawDb.transaction(() => {
+        const placeholders = ids.map(() => "?").join(",");
+        rawDb.prepare(`DELETE FROM message_mentions WHERE message_id IN (${placeholders})`).run(...ids);
+        rawDb.prepare(`DELETE FROM reactions WHERE message_id IN (${placeholders})`).run(...ids);
+        rawDb.prepare(`DELETE FROM messages WHERE id IN (${placeholders})`).run(...ids);
+      });
+      tx();
+    }
+    console.log(`[migrate v19] cleaned ${orphans.length} orphan scheduled-call cards`);
+  } catch (e) {
+    console.warn("[migrate] v19 orphan card cleanup skipped:", e);
+  }
 }
