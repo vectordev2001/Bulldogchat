@@ -357,7 +357,10 @@ async function dispatchInvites(call: ScheduledCall): Promise<void> {
           attachments: [{
             filename: "meeting.ics",
             content: Buffer.from(icsContent, "utf8"),
-            contentType: "text/calendar; method=REQUEST; charset=utf-8",
+            // SendGrid's attachments[].type field rejects semicolons. Use the
+            // bare MIME type here; calendar clients pick up the METHOD from
+            // the body of the .ics file itself.
+            contentType: "text/calendar",
           }],
         });
         if (res.sent) {

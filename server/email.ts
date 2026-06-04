@@ -68,7 +68,9 @@ export async function sendEmail(opts: {
           attachments: opts.attachments.map((a) => ({
             content: a.content.toString("base64"),
             filename: a.filename,
-            type: a.contentType,
+            // SendGrid rejects semicolons/CRLF in the type field. Strip params
+            // (e.g. text/calendar; method=REQUEST) down to the bare MIME.
+            type: String(a.contentType).split(";")[0].trim(),
             disposition: "attachment",
           })),
         }
