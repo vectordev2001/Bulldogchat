@@ -319,7 +319,7 @@ export function VoiceChannelView(props: Props) {
           {/* Phase 1.9.4 — AI clerk start/stop. Same role gate as recording
               (admin + foreman). Renders inline status for everyone while a
               session is active. */}
-          <MeetingClerkButton channelId={channel.id} canControl={canRecord} />
+          <MeetingClerkButton channelId={channel.id} canControl={canRecord} roomName={livekitInfo?.roomName} />
           {/* Phase 1.9.4 — past meeting notes for this channel. */}
           <button
             type="button"

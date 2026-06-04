@@ -19,6 +19,8 @@ interface Props {
   channelId: number;
   // Whether the current user is allowed to start/stop (admin/foreman).
   canControl: boolean;
+  /** LiveKit room name for participant tracking. Passed when button is used inside a call. */
+  roomName?: string;
 }
 
 interface ClerkConfig {
@@ -44,7 +46,7 @@ interface NoteRow {
   synologyStatus?: string | null;
 }
 
-export function MeetingClerkButton({ channelId, canControl }: Props) {
+export function MeetingClerkButton({ channelId, canControl, roomName }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [activeNoteId, setActiveNoteId] = useState<number | null>(null);
 
@@ -120,9 +122,11 @@ export function MeetingClerkButton({ channelId, canControl }: Props) {
   const startMutation = useMutation({
     mutationFn: async () => {
       // 1) Ask the server to create a note + open the Deepgram session.
+      // Include roomName if available so the server can track actual call participants.
       const res = await apiRequest<{ noteId: number; status: string }>(
         "POST",
         `/api/channels/${channelId}/meeting-notes/start`,
+        roomName ? { roomName } : undefined,
       );
       const noteId = res.noteId;
 

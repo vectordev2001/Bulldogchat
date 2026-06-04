@@ -21,10 +21,39 @@ import { storage } from "./storage";
 import { emitMessageNew, type WireMessage } from "./events";
 import { sendEmail } from "./email";
 import { marked } from "marked";
+import { listRoomParticipantIdentities } from "./livekit";
 
 export interface StartClerkOpts {
   channelId: number;
   startedByUserId: number;
+  /** LiveKit room name for polling actual call participants. Optional. */
+  roomName?: string;
+}
+
+// Module-level maps for participant polling:
+// - participantIntervals: noteId → polling interval handle
+// - collectedUserIds: noteId → Set of user IDs seen in the room during the call
+const participantIntervals = new Map<number, ReturnType<typeof setInterval>>();
+const collectedUserIds = new Map<number, Set<number>>();
+
+/** Poll LiveKit once and union any `u_<id>` identities into the set. */
+async function collectParticipants(noteId: number, roomName: string): Promise<void> {
+  try {
+    const identities = await listRoomParticipantIdentities(roomName);
+    let set = collectedUserIds.get(noteId);
+    if (!set) { set = new Set<number>(); collectedUserIds.set(noteId, set); }
+    for (const ident of identities) {
+      // User identities are formatted as u_<userId> by the token generator.
+      // SIP-bridged participants use sip_* or similar — skip those.
+      const m = ident.match(/^u_(\d+)$/);
+      if (m) set.add(Number(m[1]));
+    }
+    // Persist to DB so the data survives a restart between poll cycles.
+    rawDb.prepare("UPDATE meeting_notes SET participant_user_ids_json = ? WHERE id = ?")
+      .run(JSON.stringify(Array.from(set)), noteId);
+  } catch (err) {
+    console.warn("[meeting-clerk] collectParticipants error:", (err as Error).message);
+  }
 }
 
 export interface ClerkConfigSummary {
@@ -63,6 +92,8 @@ interface MeetingNoteRow {
   error_message: string | null;
   created_at: number;
   updated_at: number;
+  room_name: string | null;
+  participant_user_ids_json: string | null;
 }
 
 function nowMs(): number { return Date.now(); }
@@ -91,10 +122,23 @@ export async function startClerk(opts: StartClerkOpts): Promise<{ noteId: number
 
   const startedAt = nowMs();
   const result = rawDb.prepare(`
-    INSERT INTO meeting_notes (channel_id, started_by_user_id, started_at, status, created_at, updated_at)
-    VALUES (?, ?, ?, 'recording', ?, ?)
-  `).run(opts.channelId, opts.startedByUserId, startedAt, startedAt, startedAt);
+    INSERT INTO meeting_notes (channel_id, started_by_user_id, started_at, status, room_name, created_at, updated_at)
+    VALUES (?, ?, ?, 'recording', ?, ?, ?)
+  `).run(opts.channelId, opts.startedByUserId, startedAt, opts.roomName ?? null, startedAt, startedAt);
   const noteId = Number(result.lastInsertRowid);
+
+  // If a room name was provided, start polling for actual call participants
+  // every 10 seconds. The interval handle is stored in participantIntervals
+  // so stopClerk can clear it.
+  if (opts.roomName) {
+    const rn = opts.roomName;
+    // Seed the set so stopClerk always has something to read.
+    collectedUserIds.set(noteId, new Set<number>());
+    // Do an immediate first poll, then continue every 10s.
+    void collectParticipants(noteId, rn);
+    const handle = setInterval(() => { void collectParticipants(noteId, rn); }, 10_000);
+    participantIntervals.set(noteId, handle);
+  }
 
   // Kick off the Deepgram session. If creds are missing this returns a stub.
   try {
@@ -142,6 +186,14 @@ export async function stopClerk(noteId: number): Promise<{ ok: boolean; status: 
 
   const session = getActiveSession(noteId);
   const endedAt = nowMs();
+
+  // Stop the participant-polling interval (if one is running for this note).
+  const pollHandle = participantIntervals.get(noteId);
+  if (pollHandle !== undefined) {
+    clearInterval(pollHandle);
+    participantIntervals.delete(noteId);
+  }
+
   updateNote(noteId, { status: "transcribing", ended_at: endedAt });
 
   // Fire the post-processing chain in the background so the FE returns
@@ -164,11 +216,41 @@ export async function stopClerk(noteId: number): Promise<{ ok: boolean; status: 
       const contractTitle = (channel as any)?.linkedContract?.title || null;
       const contractAppUrl = (channel as any)?.linkedContract?.appUrl || null;
 
-      // Attendees from the channel members list — a decent proxy in absence
-      // of presence tracking. The summarizer will lean on speaker labels
-      // anyway, so this is mostly for the PDF header.
-      const memberIds = storage.listChannelMemberIds(row.channel_id);
-      const attendees = memberIds
+      // Attendees: prefer actual call participants tracked by the polling loop.
+      // Fall back to channel-member roster (old behaviour) so pre-roomName notes
+      // still work correctly.
+      const refreshedForAttendees = getNoteRow(noteId);
+      let attendeeUserIds: number[] = [];
+      const participantJson = refreshedForAttendees?.participant_user_ids_json ?? null;
+      if (participantJson) {
+        try {
+          const parsed = JSON.parse(participantJson) as number[];
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            // Always include the recorder themselves.
+            const ids = new Set<number>(parsed);
+            ids.add(row.started_by_user_id);
+            attendeeUserIds = Array.from(ids);
+          }
+        } catch { /* fall through to channel members */ }
+      }
+      // Also check the in-memory set (covers the case where the interval ran
+      // after the last DB persist).
+      if (attendeeUserIds.length === 0) {
+        const memSet = collectedUserIds.get(noteId);
+        if (memSet && memSet.size > 0) {
+          const ids = new Set<number>(memSet);
+          ids.add(row.started_by_user_id);
+          attendeeUserIds = Array.from(ids);
+        }
+      }
+      // Final fallback: channel member roster.
+      if (attendeeUserIds.length === 0) {
+        attendeeUserIds = storage.listChannelMemberIds(row.channel_id);
+      }
+      // Clean up in-memory set for this note.
+      collectedUserIds.delete(noteId);
+
+      const attendees = attendeeUserIds
         .map(id => storage.getUser(id))
         .filter((u): u is NonNullable<typeof u> => !!u)
         .map(u => ({ name: u.name || u.email, email: u.email }));

@@ -900,6 +900,25 @@ export function runMigrations() {
     console.warn("[migrate v21] error:", e?.message);
   }
 
+  // v23 (Phase 1.9.23) — meeting_notes: add room_name and participant_user_ids_json
+  // columns so the clerk can track actual call participants rather than channel
+  // roster. room_name ties the note to a LiveKit room; participant_user_ids_json
+  // is a JSON array of user IDs polled during the call.
+  try {
+    const mnCols = rawDb.prepare(`PRAGMA table_info(meeting_notes)`).all() as Array<{ name: string }>;
+    const mnHave = new Set(mnCols.map(c => c.name));
+    if (!mnHave.has("room_name")) {
+      rawDb.exec(`ALTER TABLE meeting_notes ADD COLUMN room_name TEXT;`);
+      console.log("[migrate] v23 added meeting_notes.room_name column");
+    }
+    if (!mnHave.has("participant_user_ids_json")) {
+      rawDb.exec(`ALTER TABLE meeting_notes ADD COLUMN participant_user_ids_json TEXT;`);
+      console.log("[migrate] v23 added meeting_notes.participant_user_ids_json column");
+    }
+  } catch (e) {
+    console.warn("[migrate] v23 meeting_notes columns skipped:", e);
+  }
+
   // v22 (Phase 1.9.13) — the contracts SPA uses hash-based routing
   // (wouter useHashLocation), so real deep links are
   // https://vectorcontracts.bulldogops.com/#/contracts/N. Chat previously

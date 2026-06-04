@@ -620,8 +620,11 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     if (!Number.isFinite(channelId)) return res.status(400).json({ message: "Invalid channel id" });
     const access = userCanAccessChannel(u.id, u.orgId, channelId);
     if (!access || !access.channel) return res.status(404).json({ message: "Channel not found" });
+    // Accept optional roomName from the client so we can poll actual call
+    // participants rather than falling back to the full channel roster.
+    const clerkRoomName = typeof req.body?.roomName === "string" ? req.body.roomName.trim() : undefined;
     try {
-      const result = await startClerk({ channelId, startedByUserId: u.id });
+      const result = await startClerk({ channelId, startedByUserId: u.id, roomName: clerkRoomName });
       // Drop a system message into the channel so everyone knows the clerk
       // is recording. Required for two-party consent (WA is two-party).
       try {
@@ -2107,6 +2110,8 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
 
     // Email the join link to any external addresses. We don't add them to
     // the LiveKit room directly — they get a one-click web join URL.
+    // We also always copy the caller (u) so they have a confirmation of who
+    // they scheduled/invited — deduped case-insensitively.
     const emailedAddresses: string[] = [];
     const emailWarnings: string[] = [];
     if (emailAddresses.length > 0) {
@@ -2123,9 +2128,21 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
   <p style="margin:16px 0;"><a href="${joinUrl}" style="display:inline-block;padding:10px 18px;background:#3b82f6;color:#fff;text-decoration:none;border-radius:6px;font-weight:600;">Join the call</a></p>
   <p style="margin:0;color:#888;font-size:12px;">Or paste this link into your browser: ${joinUrl}</p>
 </div>`;
-        for (const addr of emailAddresses) {
+        // Build the full recipient list: original addresses + caller (CC-style confirmation).
+        // Deduped case-insensitively so the caller doesn't get duplicate mail if
+        // they typed their own address into the invite list.
+        const callerEmail = (u as { email?: string }).email?.trim().toLowerCase() ?? "";
+        const allRecipients: string[] = [
+          ...emailAddresses,
+          ...(callerEmail && !emailAddresses.includes(callerEmail) ? [callerEmail] : []),
+        ];
+        for (const addr of allRecipients) {
+          const isCallerConfirmation = addr === callerEmail && !emailAddresses.includes(callerEmail);
+          const recipientSubject = isCallerConfirmation
+            ? `[Confirmation] You invited people to a ${kind} call`
+            : subject;
           try {
-            await sendEmail({ to: addr, subject, text, html });
+            await sendEmail({ to: addr, subject: recipientSubject, text, html });
             emailedAddresses.push(addr);
           } catch (err) {
             const msg = (err as { message?: string })?.message ?? "failed";

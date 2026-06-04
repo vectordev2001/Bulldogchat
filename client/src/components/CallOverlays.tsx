@@ -3,11 +3,10 @@
  * calls. Mounts once at the app root so the modal appears no matter
  * which page the user is on when the phone rings.
  */
-import { useCallback, useEffect, useMemo, useRef } from "react";
-import { Phone, PhoneOff, Mic, MicOff, Video, VideoOff, MonitorUp, Loader2, Volume2, UserPlus, X, Check, Search, PhoneCall, FileText, Sparkles, LayoutGrid } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Phone, PhoneOff, Mic, MicOff, Video, VideoOff, MonitorUp, Loader2, Volume2, UserPlus, X, Check, Search, PhoneCall, FileText, Sparkles, LayoutGrid, MessageSquare, Users, MoreHorizontal } from "lucide-react";
 import { useCalls } from "@/lib/CallContext";
 import { useLiveKitRoom, attachTrack } from "@/lib/useLiveKitRoom";
-import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Avatar } from "./Avatar";
@@ -128,12 +127,35 @@ function OutgoingCallModal() {
 
 /* ────────────────── Active call overlay ────────────────── */
 
+/** Format elapsed seconds as HH:MM:SS (or MM:SS for < 1 hour). */
+function formatCallTimer(totalSeconds: number): string {
+  const h = Math.floor(totalSeconds / 3600);
+  const m = Math.floor((totalSeconds % 3600) / 60);
+  const s = totalSeconds % 60;
+  const mm = String(m).padStart(2, "0");
+  const ss = String(s).padStart(2, "0");
+  return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
+}
+
 function ActiveCallOverlay() {
   const { active, endActive } = useCalls();
   const [micMuted, setMicMuted] = useState(false);
   const [videoOn, setVideoOn] = useState(active?.kind === "video");
   const [screenSharing, setScreenSharing] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
+
+  // Call timer — tracks seconds since this component mounted (proxy for call start).
+  const callStartRef = useRef<number>(Date.now());
+  const [timerSecs, setTimerSecs] = useState(0);
+  useEffect(() => {
+    callStartRef.current = Date.now();
+    setTimerSecs(0);
+    const id = setInterval(() => {
+      setTimerSecs(Math.floor((Date.now() - callStartRef.current) / 1000));
+    }, 1000);
+    return () => clearInterval(id);
+  }, [active?.callId, active?.roomName]);
 
   // ── In-call HUD upgrades (Phase 1.9.14) ───────────────────────────────
   const channelId = useMemo(() => channelIdFromRoomName(active?.roomName), [active?.roomName]);
@@ -153,6 +175,7 @@ function ActiveCallOverlay() {
     setScreenSharing(false);
     setContractOpen(false);
     setBgOpen(false);
+    setMoreOpen(false);
   }, [active?.callId, active?.kind, active?.roomName]);
 
   const lk = useLiveKitRoom({
@@ -231,22 +254,207 @@ function ActiveCallOverlay() {
 
   return (
     <div className="fixed inset-0 z-[100] flex flex-col bg-[hsl(232_65%_8%)] text-white" data-testid="overlay-active-call">
-      {/* Header */}
-      <header className="h-14 px-4 flex items-center gap-3 border-b border-[hsl(232_40%_22%)] shrink-0 bg-[hsl(232_60%_12%)]/60 backdrop-blur-sm">
-        <Volume2 className="w-5 h-5 text-vs-blue shrink-0" />
-        <div className="font-display text-white text-base truncate">{active.otherName}</div>
-        <span className="text-xs text-[hsl(0_0%_65%)] font-mono whitespace-nowrap hidden sm:inline">
-          · {active.kind === "video" ? "Video" : "Voice"} call
-        </span>
-        <div className="ml-auto text-xs font-mono text-[hsl(0_0%_65%)] whitespace-nowrap">
-          {lk.status === "connecting" || lk.status === "reconnecting" ? "Connecting…"
-            : lk.status === "failed" ? <span className="text-vs-red">Connection failed</span>
-            : <span className="text-vs-green">Connected</span>}
+
+      {/* ── Teams-style top toolbar (Phase 1.9.24) ─────────────────────── */}
+      <div className="shrink-0 px-4 py-2 border-b border-[hsl(232_40%_22%)] bg-[hsl(232_60%_11%)] flex items-center gap-0">
+        {/* Call timer — upper left */}
+        <div className="flex items-center gap-1.5 mr-4 shrink-0">
+          <Volume2 className="w-4 h-4 text-vs-blue" />
+          <span className="font-mono text-sm text-white tabular-nums">{formatCallTimer(timerSecs)}</span>
         </div>
-      </header>
+
+        {/* Spacer — pushes buttons to center */}
+        <div className="flex-1" />
+
+        {/* Toolbar buttons row */}
+        <div className="flex items-center gap-1">
+
+          {/* Chat — no-op indicator if no side panel wired here */}
+          <TopBarBtn
+            icon={<MessageSquare className="w-5 h-5" />}
+            label="Chat"
+            active={false}
+            onClick={() => {
+              // In the overlay context there is no side-panel wiring; toast is best-effort.
+              window.dispatchEvent(new CustomEvent("bulldog:toast", { detail: "Chat is in the channel" }));
+            }}
+            testid="call-toolbar-chat"
+          />
+
+          {/* People — show count badge */}
+          <TopBarBtn
+            icon={
+              <span className="relative inline-flex">
+                <Users className="w-5 h-5" />
+                {lk.participants.length > 0 && (
+                  <span className="absolute -top-1 -right-1 h-3.5 min-w-3.5 rounded-full bg-vs-blue text-[hsl(232_60%_9%)] text-[9px] font-bold flex items-center justify-center px-0.5">
+                    {lk.participants.length}
+                  </span>
+                )}
+              </span>
+            }
+            label="People"
+            active={false}
+            onClick={() => {
+              window.dispatchEvent(new CustomEvent("bulldog:toast", { detail: `${lk.participants.length} participant(s) in this call` }));
+            }}
+            testid="call-toolbar-people"
+          />
+
+          {/* View — cycles layout */}
+          <TopBarBtn
+            icon={<LayoutGrid className="w-5 h-5" />}
+            label={layout.charAt(0).toUpperCase() + layout.slice(1)}
+            active={true}
+            onClick={cycleLayout}
+            testid="call-toolbar-view"
+          />
+
+          {/* Divider */}
+          <div className="w-px h-8 bg-[hsl(232_40%_22%)] mx-1" />
+
+          {/* Camera */}
+          <TopBarBtn
+            icon={videoOn ? <Video className="w-5 h-5" /> : <VideoOff className="w-5 h-5" />}
+            label="Camera"
+            active={videoOn}
+            onClick={() => setVideoOn(v => !v)}
+            disabled={lk.status !== "connected"}
+            testid="call-video"
+          />
+
+          {/* Mic */}
+          <TopBarBtn
+            icon={micMuted ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
+            label={micMuted ? "Unmute" : "Mute"}
+            active={!micMuted}
+            onClick={() => setMicMuted(m => !m)}
+            disabled={lk.status !== "connected"}
+            testid="call-mic"
+          />
+
+          {/* Share screen */}
+          <TopBarBtn
+            icon={<MonitorUp className="w-5 h-5" />}
+            label={screenSharing ? "Sharing" : "Share"}
+            active={screenSharing}
+            onClick={() => setScreenSharing(s => !s)}
+            disabled={lk.status !== "connected"}
+            testid="call-screen"
+          />
+
+          {/* More — popover containing Backgrounds, Meeting Clerk, Add people, Contract */}
+          <div className="relative">
+            <TopBarBtn
+              icon={<MoreHorizontal className="w-5 h-5" />}
+              label="More"
+              active={moreOpen}
+              onClick={() => setMoreOpen(o => !o)}
+              testid="call-toolbar-more"
+            />
+            {moreOpen && (
+              <div
+                className="absolute right-0 top-full mt-1 z-[120] w-56 rounded-lg bg-[hsl(232_55%_13%)] border border-[hsl(232_40%_25%)] shadow-2xl overflow-hidden"
+                onMouseLeave={() => setMoreOpen(false)}
+              >
+                {/* Background effects */}
+                <button
+                  type="button"
+                  onClick={() => { setBgOpen(o => !o); setMoreOpen(false); }}
+                  disabled={!videoOn}
+                  className="w-full px-3 py-2.5 flex items-center gap-3 text-sm text-white hover:bg-[hsl(232_50%_20%)] disabled:opacity-40 disabled:cursor-not-allowed text-left"
+                >
+                  <Sparkles className="w-4 h-4 text-vs-blue-light shrink-0" />
+                  Background effects
+                </button>
+                {/* AI Meeting Clerk */}
+                {hasChannel && (
+                  <div className="px-3 py-2 border-t border-[hsl(232_40%_22%)]">
+                    <MeetingClerkButton channelId={channelId} canControl={true} roomName={active.roomName} />
+                  </div>
+                )}
+                {/* Add people */}
+                <button
+                  type="button"
+                  onClick={() => { setAddOpen(true); setMoreOpen(false); }}
+                  className="w-full px-3 py-2.5 flex items-center gap-3 text-sm text-white hover:bg-[hsl(232_50%_20%)] border-t border-[hsl(232_40%_22%)] text-left"
+                >
+                  <UserPlus className="w-4 h-4 text-vs-blue-light shrink-0" />
+                  Add people
+                </button>
+                {/* Contract side-panel (only when linked) */}
+                {contractPdfUrl && (
+                  <button
+                    type="button"
+                    onClick={() => { setContractOpen(o => !o); setMoreOpen(false); }}
+                    className="w-full px-3 py-2.5 flex items-center gap-3 text-sm text-white hover:bg-[hsl(232_50%_20%)] border-t border-[hsl(232_40%_22%)] text-left"
+                  >
+                    <FileText className="w-4 h-4 text-vs-blue-light shrink-0" />
+                    {contractOpen ? "Hide contract" : "View contract"}
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Divider */}
+          <div className="w-px h-8 bg-[hsl(232_40%_22%)] mx-1" />
+
+          {/* Leave — red */}
+          <button
+            type="button"
+            onClick={endCallWithClerkStop}
+            className="flex flex-col items-center gap-0.5 px-3 py-1.5 rounded-md bg-vs-red hover:bg-[hsl(2_75%_60%)] text-white transition-colors min-w-[48px]"
+            data-testid="button-end-call"
+            title="Leave call"
+          >
+            <PhoneOff className="w-5 h-5" />
+            <span className="text-[10px] font-medium">Leave</span>
+          </button>
+        </div>
+
+        {/* Spacer */}
+        <div className="flex-1" />
+
+        {/* Connection status — right side */}
+        <div className="ml-4 shrink-0 text-xs font-mono text-[hsl(0_0%_65%)] whitespace-nowrap">
+          {lk.status === "connecting" || lk.status === "reconnecting" ? "Connecting…"
+            : lk.status === "failed" ? <span className="text-vs-red">Failed</span>
+            : null}
+        </div>
+      </div>
+
+      {/* Status warning bar (shown only when not connected) */}
+      {lk.status !== "connected" && (
+        <div className="shrink-0 px-4 py-1.5 bg-[hsl(40_80%_45%/0.12)] border-b border-[hsl(40_80%_45%/0.3)] text-[11px] uppercase tracking-wider font-mono text-[hsl(40_80%_60%)] text-center">
+          {lk.status === "connecting" || lk.status === "reconnecting"
+            ? "Connecting… controls active once joined"
+            : lk.status === "failed"
+            ? "Call failed to connect. Leave and try again."
+            : "Waiting for media…"}
+        </div>
+      )}
 
       {/* Clerk banner — visible to every participant while a clerk runs. */}
       {hasChannel && <MeetingClerkBanner channelId={channelId} />}
+
+      {/* Virtual background picker (floats above stage when open) */}
+      {bgOpen && (
+        <div className="shrink-0 border-b border-[hsl(232_40%_22%)] bg-[hsl(232_55%_11%)] px-4 py-2">
+          <VirtualBackgroundPicker
+            current={bgSel}
+            onSelect={(sel) => { setBgSel(sel); setBgOpen(false); }}
+            onClose={() => setBgOpen(false)}
+          />
+        </div>
+      )}
+
+      {/* Error banner */}
+      {lk.error && (
+        <div className="px-4 py-2 bg-[hsl(2_70%_55%/0.15)] border-b border-[hsl(2_70%_55%/0.4)] text-xs text-[hsl(2_85%_75%)] text-center">
+          {lk.error}
+        </div>
+      )}
 
       {/* Body: video stage + optional contract side-panel. */}
       <div className="flex-1 min-h-0 flex">
@@ -267,80 +475,6 @@ function ActiveCallOverlay() {
 
       {/* Hidden audio sink so the remote can be heard. */}
       <RemoteAudio participant={firstRemote} />
-
-      {/* Error banner */}
-      {lk.error && (
-        <div className="px-4 py-2 bg-[hsl(2_70%_55%/0.15)] border-y border-[hsl(2_70%_55%/0.4)] text-xs text-[hsl(2_85%_75%)] text-center">
-          {lk.error}
-        </div>
-      )}
-
-      {/* Controls */}
-      <div className="relative shrink-0 px-6 py-4 border-t border-[hsl(232_40%_22%)] bg-[hsl(232_55%_11%)] flex flex-col items-center gap-2">
-        {lk.status !== "connected" && (
-          <div className="text-[11px] uppercase tracking-wider font-mono text-[hsl(40_80%_60%)]">
-            {lk.status === "connecting" || lk.status === "reconnecting"
-              ? "Connecting… controls active once connected"
-              : lk.status === "failed"
-              ? "Call failed to connect. End and try again."
-              : "Waiting for media…"}
-          </div>
-        )}
-        {bgOpen && (
-          <VirtualBackgroundPicker
-            current={bgSel}
-            onSelect={(sel) => { setBgSel(sel); setBgOpen(false); }}
-            onClose={() => setBgOpen(false)}
-          />
-        )}
-        <div className="flex items-center justify-center gap-3 flex-wrap">
-        <CtrlBtn on={!micMuted} onClick={() => setMicMuted(m => !m)} disabled={lk.status !== "connected"} onIcon={<Mic className="w-5 h-5" />} offIcon={<MicOff className="w-5 h-5" />} title={micMuted ? "Unmute" : "Mute"} testid="call-mic" />
-        <CtrlBtn on={videoOn} onClick={() => setVideoOn(v => !v)} disabled={lk.status !== "connected"} onIcon={<Video className="w-5 h-5" />} offIcon={<VideoOff className="w-5 h-5" />} title={videoOn ? "Stop video" : "Start video"} testid="call-video" />
-        <CtrlBtn on={screenSharing} onClick={() => setScreenSharing(s => !s)} disabled={lk.status !== "connected"} onIcon={<MonitorUp className="w-5 h-5" />} offIcon={<MonitorUp className="w-5 h-5" />} title={screenSharing ? "Stop sharing" : "Share screen"} testid="call-screen" />
-        {/* Virtual background picker toggle. */}
-        <CtrlBtn on={bgSel.id !== "none"} onClick={() => setBgOpen(o => !o)} disabled={!videoOn} onIcon={<Sparkles className="w-5 h-5" />} offIcon={<Sparkles className="w-5 h-5" />} title={videoOn ? "Background effects" : "Turn on video to use effects"} testid="call-background" />
-        {/* Layout switcher cycles Grid → Speaker → Sidebar. */}
-        <CtrlBtn on={true} onClick={cycleLayout} onIcon={<LayoutGrid className="w-5 h-5" />} offIcon={<LayoutGrid className="w-5 h-5" />} title={`Layout: ${layout}`} testid="call-layout" />
-        {/* Add people to this call. */}
-        <button
-          type="button"
-          onClick={() => setAddOpen(true)}
-          className="w-12 h-12 rounded-full flex items-center justify-center bg-[hsl(232_45%_27%)] hover:bg-[hsl(232_45%_32%)] text-white transition-colors"
-          title="Add people to this call"
-          aria-label="Add people to this call"
-          data-testid="button-call-add"
-        >
-          <UserPlus className="w-5 h-5" />
-        </button>
-        {/* AI Meeting Clerk — record/transcribe/summarize for the channel. */}
-        {hasChannel && (
-          <div className="px-1">
-            <MeetingClerkButton channelId={channelId} canControl={true} />
-          </div>
-        )}
-        {/* Contract side-panel toggle (only when a linked contract PDF exists). */}
-        {contractPdfUrl && (
-          <CtrlBtn
-            on={contractOpen}
-            onClick={() => setContractOpen(o => !o)}
-            onIcon={<FileText className="w-5 h-5" />}
-            offIcon={<FileText className="w-5 h-5" />}
-            title="View contract"
-            testid="call-contract"
-          />
-        )}
-        <div className="w-3" />
-        <button
-          type="button"
-          onClick={endCallWithClerkStop}
-          className="h-12 px-6 rounded-full bg-vs-red hover:bg-[hsl(2_75%_60%)] text-white flex items-center gap-2 shadow-lg transition-colors"
-          data-testid="button-end-call"
-        >
-          <PhoneOff className="w-4 h-4" />
-          <span className="text-sm font-semibold">End</span>
-        </button>
-        </div>
-      </div>
 
       {addOpen && <InCallAddDialog onClose={() => setAddOpen(false)} />}
     </div>
@@ -758,6 +892,36 @@ function CtrlBtn({
       ].join(" ")}
     >
       {on ? onIcon : offIcon}
+    </button>
+  );
+}
+
+/** Teams-style top-bar button: icon on top + small label underneath. */
+function TopBarBtn({
+  icon, label, active, onClick, disabled, testid,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  active: boolean;
+  onClick(): void;
+  disabled?: boolean;
+  testid?: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      data-testid={testid}
+      title={label}
+      className={[
+        "flex flex-col items-center gap-0.5 px-3 py-1.5 rounded-md transition-colors min-w-[48px]",
+        disabled ? "opacity-40 cursor-not-allowed" : "hover:bg-[hsl(232_50%_20%)]",
+        active ? "text-white" : "text-[hsl(0_0%_70%)]",
+      ].join(" ")}
+    >
+      {icon}
+      <span className="text-[10px] font-medium whitespace-nowrap">{label}</span>
     </button>
   );
 }
