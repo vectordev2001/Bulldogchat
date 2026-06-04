@@ -22,7 +22,7 @@ import type { Request, Response, Express } from "express";
 import { db, rawDb } from "./db";
 import { storage } from "./storage";
 import { signCallJoinToken, sendSms, buildScheduledCallSmsBody, buildReminderSmsBody, generateRsvpCode, buildIcsForScheduledCall, parseRsvpSms, smsAvailable, verifyTwilioSignature } from "./sms";
-import { emitMessageNew } from "./events";
+import { emitMessageNew, emitMessageDelete } from "./events";
 import { requireAuth, type AuthedRequest } from "./auth";
 import { sendEmail, isEmailConfigured, emailFromAddress, emailFromName } from "./email";
 import { sendNotificationToUsers } from "./push";
@@ -773,9 +773,25 @@ export function registerScheduledCallRoutes(app: Express) {
     if (!call || call.orgId !== u.orgId) return res.status(404).json({ message: "not found" });
     if (call.organizerId !== u.id && me?.role !== "admin") return res.status(403).json({ message: "not allowed" });
     try {
+      // Find every system-message card that references this scheduled call
+      // (created / updated / cancelled / started) so we can delete them and
+      // notify live clients to drop them from the channel + jobs feed.
+      const cards = rawDb.prepare(
+        `SELECT id, channel_id FROM messages
+         WHERE meta IS NOT NULL
+           AND meta LIKE '%"scheduledCallId":' || ? || '%'`,
+      ).all(callId) as Array<{ id: number; channel_id: number }>;
       rawDb.prepare(`DELETE FROM scheduled_call_invitees WHERE scheduled_call_id = ?`).run(callId);
       rawDb.prepare(`DELETE FROM scheduled_calls WHERE id = ?`).run(callId);
-      res.json({ ok: true, deleted: callId });
+      for (const c of cards) {
+        try {
+          rawDb.prepare(`DELETE FROM message_mentions WHERE message_id = ?`).run(c.id);
+          rawDb.prepare(`DELETE FROM reactions WHERE message_id = ?`).run(c.id);
+        } catch (_) {}
+        rawDb.prepare(`DELETE FROM messages WHERE id = ?`).run(c.id);
+        try { emitMessageDelete(u.orgId, { channelId: c.channel_id, messageId: c.id }); } catch (_) {}
+      }
+      res.json({ ok: true, deleted: callId, cardsRemoved: cards.length });
     } catch (err: any) {
       console.error("[delete-scheduled-call]", err);
       res.status(500).json({ message: "failed to delete meeting" });
