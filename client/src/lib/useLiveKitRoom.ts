@@ -525,7 +525,16 @@ export function useLiveKitRoom(args: Args): LiveKitHookResult {
     // On iOS we drive camera state imperatively via toggleCamera(); the
     // reconciliation effect would race against it. Off-state still flows
     // through here (no permission needed, no gesture race).
-    if (isIOS && videoOn) return;
+    //
+    // CRITICAL RACE FIX: also bail when desiredVideoRef.current is true
+    // even if the videoOn prop is still false. toggleCamera() sets the
+    // ref synchronously after publishTrack() succeeds, but the prop only
+    // catches up one React tick later when the parent calls setVideoOn().
+    // During that gap, refreshParticipants() triggers a re-render which
+    // can re-run this effect with (videoOn=false, currentlyPublished=true)
+    // and the off-path would tear down the track we just published —
+    // "camera blinks on for a second and then shuts off".
+    if (isIOS && (videoOn || desiredVideoRef.current)) return;
 
     const room = roomRef.current;
     if (!room || status !== "connected") return;
