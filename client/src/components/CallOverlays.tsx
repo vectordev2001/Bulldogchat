@@ -392,22 +392,34 @@ function ActiveCallOverlay() {
           {/* Divider */}
           <div className="w-px h-8 bg-[hsl(232_40%_22%)] mx-1" />
 
-          {/* Camera */}
+          {/* Camera — Phase 1.9.30: route through lk.toggleCamera() so the
+              iOS gesture-safe imperative path is preserved. Previously we
+              just flipped a React state which never invoked the iOS-only
+              manual publish path — so on iOS the camera toggle was a no-op
+              and the local tile stayed an avatar. */}
           <TopBarBtn
             icon={videoOn ? <Video className="w-5 h-5" /> : <VideoOff className="w-5 h-5" />}
             label="Camera"
             active={videoOn}
-            onClick={() => setVideoOn(v => !v)}
+            onClick={() => {
+              // Fire toggleCamera() inside the click gesture so iOS
+              // getUserMedia() runs while the user-activation token is
+              // still valid. The returned promise resolves to the new
+              // "on" state — mirror it into React state for the UI.
+              lk.toggleCamera().then((nowOn) => setVideoOn(nowOn)).catch(() => {});
+            }}
             disabled={lk.status !== "connected"}
             testid="call-video"
           />
 
-          {/* Mic */}
+          {/* Mic — same iOS gesture-safe routing as Camera (Phase 1.9.30). */}
           <TopBarBtn
             icon={micMuted ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
             label={micMuted ? "Unmute" : "Mute"}
             active={!micMuted}
-            onClick={() => setMicMuted(m => !m)}
+            onClick={() => {
+              lk.toggleMic().then((nowMuted) => setMicMuted(nowMuted)).catch(() => {});
+            }}
             disabled={lk.status !== "connected"}
             testid="call-mic"
           />
