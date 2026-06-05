@@ -198,6 +198,24 @@ export function ChannelSidebar({
         </div>
       </div>
 
+      {/* Phase 1.9.32 — Meetings pinned above the scrollable jobs/channels list
+          so it's always reachable without scrolling past every job and channel.
+          Lives between the search bar and the scroll region. */}
+      {onOpenMeetings && (
+        <div className="px-2 pt-2">
+          <button
+            type="button"
+            onClick={onOpenMeetings}
+            data-testid="button-open-meetings-top"
+            title="Upcoming and recent Bulldog calls—schedule a new one or RSVP."
+            className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-sm text-white bg-[hsl(232_45%_22%)] hover:bg-[hsl(232_45%_30%)] transition-colors"
+          >
+            <Calendar className="w-4 h-4 shrink-0 text-vs-blue-light" />
+            <span className="truncate font-medium">Meetings</span>
+          </button>
+        </div>
+      )}
+
       <div className="flex-1 overflow-y-auto px-2 py-3 space-y-4">
         {/* Direct Messages — pinned at the TOP of the sidebar above Jobs and
             global Channels. DMs are project-agnostic; the section lives here
@@ -281,22 +299,8 @@ export function ChannelSidebar({
           </div>
         )}
 
-        {/* Phase 1.9.1 — Meetings (scheduled calls) launcher. Org-wide,
-            not project-scoped: same dialog from any sidebar. */}
-        {onOpenMeetings && (
-          <div className="pt-1">
-            <button
-              type="button"
-              onClick={onOpenMeetings}
-              data-testid="button-open-meetings"
-              title="Upcoming and recent Bulldog calls—schedule a new one or RSVP."
-              className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-sm text-[hsl(0_0%_75%)] hover:bg-[hsl(232_45%_25%)] hover:text-white transition-colors"
-            >
-              <Calendar className="w-4 h-4 shrink-0 text-vs-blue-light" />
-              <span className="truncate font-medium">Meetings</span>
-            </button>
-          </div>
-        )}
+        {/* Phase 1.9.32 — Meetings launcher moved to the pinned area above
+            the scroll region. The button there has the same handler. */}
       </div>
 
       {/* User card */}

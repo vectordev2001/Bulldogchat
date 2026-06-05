@@ -203,6 +203,12 @@ export function useLiveKitRoom(args: Args): LiveKitHookResult {
   const roomRef = useRef<Room | null>(null);
   const micTrackRef = useRef<LocalAudioTrack | null>(null);
   const cameraTrackRef = useRef<LocalVideoTrack | null>(null);
+  // Raw MediaStreamTrack stashed during publish so the virtual-background
+  // processor (which reads from it) keeps getting frames after we unpublish
+  // the LocalVideoTrack wrapper and republish a processed canvas track in
+  // its place. Without this, applying any background effect kills the
+  // camera because LiveKit's default unpublish stops the underlying track.
+  const rawCameraTrackRef = useRef<MediaStreamTrack | null>(null);
   // Promise chain that serializes camera enable/disable ops. iOS Safari
   // hangs if two setCameraEnabled() calls overlap; we await the prior
   // op before firing the next one.
@@ -338,6 +344,10 @@ export function useLiveKitRoom(args: Args): LiveKitHookResult {
       if (roomRef.current === room) roomRef.current = null;
       micTrackRef.current = null;
       cameraTrackRef.current = null;
+      if (rawCameraTrackRef.current) {
+        try { rawCameraTrackRef.current.stop(); } catch { /* ignore */ }
+        rawCameraTrackRef.current = null;
+      }
       setMicPublished(false);
       setCameraPublished(false);
       setScreenPublished(false);
@@ -569,6 +579,12 @@ export function useLiveKitRoom(args: Args): LiveKitHookResult {
             try { cameraTrackRef.current.stop(); } catch { /* ignore */ }
             cameraTrackRef.current = null;
           }
+          // Stop the stashed raw track (effects path may have detached it
+          // from the LocalVideoTrack wrapper via stopOnUnpublish=false).
+          if (rawCameraTrackRef.current) {
+            try { rawCameraTrackRef.current.stop(); } catch { /* ignore */ }
+            rawCameraTrackRef.current = null;
+          }
           setCameraPublished(false);
           refreshParticipants();
           return;
@@ -595,6 +611,9 @@ export function useLiveKitRoom(args: Args): LiveKitHookResult {
         if (cancelled) return;
         const pub = room.localParticipant.getTrackPublication(Track.Source.Camera);
         cameraTrackRef.current = (pub?.track as LocalVideoTrack | undefined) ?? null;
+        // Stash the raw MediaStreamTrack so background effects can read from
+        // it without losing frames when we republish a processed track.
+        rawCameraTrackRef.current = (cameraTrackRef.current as { mediaStreamTrack?: MediaStreamTrack } | null)?.mediaStreamTrack ?? null;
         setCameraPublished(!!cameraTrackRef.current);
         refreshParticipants();
       } catch (err) {
@@ -681,6 +700,9 @@ export function useLiveKitRoom(args: Args): LiveKitHookResult {
         name: "camera",
       });
       cameraTrackRef.current = lkTrack;
+      // Stash the raw MediaStreamTrack so virtual-background effects can
+      // read from it without losing frames when we republish over the top.
+      rawCameraTrackRef.current = msTrack;
       setCameraPublished(true);
       // Mirror into the ref so the reconciliation effect's iOS guard
       // (`if (isIOS && videoOn) return;`) keeps the parent prop from
@@ -748,6 +770,14 @@ export function useLiveKitRoom(args: Args): LiveKitHookResult {
   const processedTrackRef = useRef<MediaStreamTrack | null>(null);
 
   const getRawCameraTrack = useCallback((): MediaStreamTrack | null => {
+    // Prefer the stashed raw MediaStreamTrack — it survives across
+    // unpublish/republish cycles driven by replaceCameraTrack, while the
+    // current publication's mediaStreamTrack may be the *processed* canvas
+    // track once an effect is active. Returning the processed track to the
+    // VirtualBackgroundProcessor would create a feedback loop.
+    if (rawCameraTrackRef.current && rawCameraTrackRef.current.readyState === "live") {
+      return rawCameraTrackRef.current;
+    }
     const room = roomRef.current;
     if (!room) return null;
     const pub = room.localParticipant.getTrackPublication(Track.Source.Camera);
@@ -765,9 +795,22 @@ export function useLiveKitRoom(args: Args): LiveKitHookResult {
       if (processed) {
         // Republish: drop the current camera publication, publish the
         // processed MediaStreamTrack as the camera source.
+        //
+        // CRITICAL: pass stopOnUnpublish=false. The VirtualBackgroundProcessor
+        // is reading from the raw MediaStreamTrack that is wrapped by the
+        // current LocalVideoTrack. The default unpublishTrack(track) call
+        // also stops the underlying MediaStreamTrack — which kills the
+        // processor's input, so the canvas it writes to never gets a frame
+        // and the new "processed" track we publish is a dead canvas stream.
+        // User-visible symptom: camera "shuts off" the moment effects are
+        // turned on, because the new publication has no frames.
+        //
+        // We rely on rawCameraTrackRef.current (stashed before this call) to
+        // hold the raw MediaStreamTrack alive; the LocalVideoTrack wrapper
+        // is disposable.
         const existing = lp.getTrackPublication(Track.Source.Camera);
         if (existing?.track) {
-          try { await lp.unpublishTrack(existing.track as LocalVideoTrack); } catch { /* ignore */ }
+          try { await lp.unpublishTrack(existing.track as LocalVideoTrack, false); } catch { /* ignore */ }
         }
         const lkTrack = new LocalVideoTrack(processed);
         await lp.publishTrack(lkTrack, { source: Track.Source.Camera, name: "camera" });
@@ -778,28 +821,44 @@ export function useLiveKitRoom(args: Args): LiveKitHookResult {
         return true;
       }
 
-      // Revert: unpublish the processed track and let the camera
-      // reconciliation effect re-enable the raw camera (videoOn stays true).
+      // Revert: unpublish the processed canvas-derived track and republish
+      // the original raw camera. Stopping the processed track here is fine
+      // — it's just a canvas captureStream and the processor.stop() call in
+      // the caller will dispose the rest of the pipeline.
       const existing = lp.getTrackPublication(Track.Source.Camera);
       if (existing?.track) {
-        try { await lp.unpublishTrack(existing.track as LocalVideoTrack); } catch { /* ignore */ }
+        try { await lp.unpublishTrack(existing.track as LocalVideoTrack, true); } catch { /* ignore */ }
       }
       processedTrackRef.current = null;
       cameraTrackRef.current = null;
-      // Re-acquire a fresh raw camera so the user still sees themselves.
-      try {
-        await lp.setCameraEnabled(true, { facingMode: "user" });
-        const pub = lp.getTrackPublication(Track.Source.Camera);
-        cameraTrackRef.current = (pub?.track as LocalVideoTrack | undefined) ?? null;
-        setCameraPublished(!!cameraTrackRef.current);
-      } catch { /* ignore — caller may toggle camera manually */ }
+
+      // Republish: prefer the stashed raw MediaStreamTrack if it's still live
+      // (iOS path — we acquired it inside a user gesture and must not call
+      // getUserMedia again outside one). Otherwise on desktop, setCameraEnabled
+      // re-runs getUserMedia which is fine without a gesture.
+      const rawAlive = !!rawCameraTrackRef.current && rawCameraTrackRef.current.readyState === "live";
+      if (rawAlive && rawCameraTrackRef.current) {
+        try {
+          const lkTrack = new LocalVideoTrack(rawCameraTrackRef.current);
+          await lp.publishTrack(lkTrack, { source: Track.Source.Camera, name: "camera" });
+          cameraTrackRef.current = lkTrack;
+          setCameraPublished(true);
+        } catch { /* ignore */ }
+      } else if (!isIOS) {
+        try {
+          await lp.setCameraEnabled(true, { facingMode: "user" });
+          const pub = lp.getTrackPublication(Track.Source.Camera);
+          cameraTrackRef.current = (pub?.track as LocalVideoTrack | undefined) ?? null;
+          setCameraPublished(!!cameraTrackRef.current);
+        } catch { /* ignore */ }
+      }
       refreshParticipants();
       return true;
     } catch (err) {
       onTrackError?.("camera", err);
       return false;
     }
-  }, [refreshParticipants, onTrackError]);
+  }, [refreshParticipants, onTrackError, isIOS]);
 
   // Quick capability check the UI uses to disable screen-share on
   // platforms that don't support getDisplayMedia (iOS Safari/PWA).
