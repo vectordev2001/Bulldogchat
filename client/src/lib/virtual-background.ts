@@ -38,10 +38,33 @@ interface SelfieSegmentationInstance {
 // processor init so they always fill the frame at the right resolution
 // (inline SVGs tiled / rendered at the wrong size).
 const PRESET_GRADIENTS: Record<string, [string, string]> = {
-  office: ["#4a5568", "#2d3748"],
-  library: ["#7c4a2d", "#5d3520"],
-  outdoor: ["#5b9bd5", "#3a7ca5"],
   gradient: ["#667eea", "#764ba2"],
+  sunset: ["#ff7e5f", "#feb47b"],
+  ocean: ["#2e3192", "#1bffff"],
+  forest: ["#134e5e", "#71b280"],
+};
+
+// Real photo backgrounds. Hosted on Unsplash's CDN with CORS support so
+// they can be drawn to a tainted-free canvas and published via captureStream.
+// `w=1280&q=80&auto=format&fit=crop` keeps them appropriately sized.
+const PRESET_PHOTOS: Record<string, string> = {
+  office:
+    "https://images.unsplash.com/photo-1497366216548-37526070297c?w=1280&q=80&auto=format&fit=crop",
+  conference:
+    "https://images.unsplash.com/photo-1517502884422-41eaead166d4?w=1280&q=80&auto=format&fit=crop",
+  library:
+    "https://images.unsplash.com/photo-1521587760476-6c12a4b040da?w=1280&q=80&auto=format&fit=crop",
+  outdoor:
+    "https://images.unsplash.com/photo-1441974231531-c6227db76b6e?w=1280&q=80&auto=format&fit=crop",
+  beach:
+    "https://images.unsplash.com/photo-1507525428034-b723cf961d3e?w=1280&q=80&auto=format&fit=crop",
+  bokeh:
+    "https://images.unsplash.com/photo-1519681393784-d120267933ba?w=1280&q=80&auto=format&fit=crop",
+};
+
+export const VIRTUAL_BG_PRESETS = {
+  gradients: Object.keys(PRESET_GRADIENTS),
+  photos: Object.keys(PRESET_PHOTOS),
 };
 
 export class VirtualBackgroundProcessor {
@@ -174,12 +197,19 @@ export class VirtualBackgroundProcessor {
       this.bgImage = c;
       return;
     }
+    // Photo presets resolve to a hosted CDN URL. We fall through to the same
+    // <img> load path as custom uploads.
+    let resolvedSrc = src;
+    if (src.startsWith("photo:")) {
+      const id = src.slice("photo:".length);
+      resolvedSrc = PRESET_PHOTOS[id] ?? PRESET_PHOTOS.office;
+    }
     await new Promise<void>((resolve, reject) => {
       const img = new Image();
       img.crossOrigin = "anonymous";
       img.onload = () => { this.bgImage = img; resolve(); };
       img.onerror = () => reject(new Error("background image failed to load"));
-      img.src = src;
+      img.src = resolvedSrc;
     });
   }
 
@@ -247,13 +277,38 @@ export class VirtualBackgroundProcessor {
     mctx.drawImage(src, 0, 0, w, h);
     const img = mctx.getImageData(0, 0, w, h);
     const data = img.data;
-    // Convert luminance → alpha. Many MediaPipe builds output grayscale where
-    // R=G=B=intensity; we read R as the intensity and use it as alpha.
+    // Convert luminance → alpha with a sigmoid-style remap that pushes
+    // confident-person pixels closer to fully opaque and confident-background
+    // pixels closer to fully transparent while leaving a soft transition band
+    // in the uncertain middle. This kills the greenscreen-style speckle along
+    // hair/shoulder edges without producing a hard cut-out silhouette.
+    //   t<0.35 → 0   (clearly background)
+    //   t>0.65 → 255 (clearly person)
+    //   between → smoothstep, then blurred below for a feathered border.
     for (let i = 0; i < data.length; i += 4) {
-      data[i + 3] = data[i];
+      const t = data[i] / 255;
+      let a: number;
+      if (t <= 0.35) a = 0;
+      else if (t >= 0.65) a = 255;
+      else {
+        // Hermite smoothstep on the [0.35, 0.65] band.
+        const x = (t - 0.35) / 0.3;
+        a = Math.round(x * x * (3 - 2 * x) * 255);
+      }
+      data[i + 3] = a;
       data[i] = 0; data[i + 1] = 0; data[i + 2] = 0;
     }
     mctx.putImageData(img, 0, 0);
+    // Feather the alpha boundary with a small Gaussian blur. We re-draw the
+    // canvas to itself through ctx.filter — works on all modern browsers we
+    // target. The blur radius scales with frame width so a 1280-wide feed
+    // gets a wider feather than a 320-wide one.
+    const featherPx = Math.max(2, Math.round(w / 320));
+    mctx.save();
+    mctx.globalCompositeOperation = "copy";
+    mctx.filter = `blur(${featherPx}px)`;
+    mctx.drawImage(mc, 0, 0, w, h);
+    mctx.restore();
     return mc;
   }
 
