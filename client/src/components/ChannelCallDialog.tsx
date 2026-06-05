@@ -150,7 +150,10 @@ export function ChannelCallDialog({ channel, fallbackMembers, meId, open, initia
     });
   }
 
-  const canSubmit = totalTargets > 0 && !submitting && !active && !outgoing;
+  // Phase 1.9.27: allow solo meeting start. Previously required at least one
+  // target. Now an empty selection mints a solo room — the user can invite
+  // people mid-call via the in-call "Add people" button.
+  const canSubmit = !submitting && !active && !outgoing;
 
   async function submit() {
     if (!canSubmit) return;
@@ -408,7 +411,7 @@ export function ChannelCallDialog({ channel, fallbackMembers, meId, open, initia
             {submitting
               ? "Starting…"
               : totalTargets === 0
-                ? "Pick a person or add a number"
+                ? "Start solo — invite people later"
                 : `Ring ${totalTargets} ${totalTargets === 1 ? "line" : "lines"}`}
           </Button>
         </DialogFooter>

@@ -1666,15 +1666,17 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
           ),
         )
       : [];
-    if (
+    // Phase 1.9.27: solo meeting start. Previously we 400'd if no invitees
+    // were supplied. Josh wants to start a meeting by himself (e.g. to use
+    // the AI clerk for solo dictation), then invite people mid-call. So we
+    // accept an empty target set and just mint the room + token for the
+    // organizer. Per-invitee logic below already no-ops on empty arrays.
+    const _solo =
       inviteeIds.length === 0 &&
       phoneNumbers.length === 0 &&
       phoneInviteeIds.length === 0 &&
       smsInviteeIds.length === 0 &&
-      smsPhoneNumbers.length === 0
-    ) {
-      return res.status(400).json({ message: "inviteeIds[], phoneInviteeIds[], smsInviteeIds[], phoneNumbers[], or smsPhoneNumbers[] required" });
-    }
+      smsPhoneNumbers.length === 0;
 
     const access = userCanAccessChannel(u.id, u.orgId, channelId);
     if (!access) return res.status(404).json({ message: "Channel not found" });
@@ -1703,8 +1705,18 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
       .filter((x) => x.user && x.user.orgId === u.orgId && !x.user.deactivated)
       .map((x) => ({ id: x.id, name: x.user!.name, phone: (x.user as { phone?: string | null }).phone ?? null }));
 
-    if (validInvitees.length === 0 && phoneNumbers.length === 0 && phoneInviteeRecords.filter((r) => r.phone).length === 0) {
-      return res.status(400).json({ message: "No reachable invitees" });
+    // Phase 1.9.27: don't 400 when there are no reachable invitees — the
+    // caller may have intentionally started a solo meeting. The room + the
+    // organizer's token below are still useful even with zero invitees.
+    // We only surface this as a warning if the caller explicitly tried to
+    // ring people who couldn't be reached (had IDs/phones but none valid).
+    if (
+      validInvitees.length === 0 &&
+      phoneNumbers.length === 0 &&
+      phoneInviteeRecords.filter((r) => r.phone).length === 0 &&
+      (inviteeIds.length > 0 || phoneInviteeIds.length > 0)
+    ) {
+      // Continue — caller gets a solo room. We surface a dialWarning later.
     }
 
     // Create one direct_call row per invitee, all sharing the same room.

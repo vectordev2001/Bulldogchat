@@ -395,43 +395,45 @@ function ActiveCallOverlay() {
             </div>
           )}
 
-          {/* More — popover containing Add people, Contract */}
-          <div className="relative">
-            <TopBarBtn
-              icon={<MoreHorizontal className="w-5 h-5" />}
-              label="More"
-              active={moreOpen}
-              onClick={() => setMoreOpen(o => !o)}
-              testid="call-toolbar-more"
-            />
-            {moreOpen && (
-              <div
-                className="absolute right-0 top-full mt-1 z-[120] w-56 rounded-lg bg-[hsl(232_55%_13%)] border border-[hsl(232_40%_25%)] shadow-2xl overflow-hidden"
-                onMouseLeave={() => setMoreOpen(false)}
-              >
-                {/* Add people */}
-                <button
-                  type="button"
-                  onClick={() => { setAddOpen(true); setMoreOpen(false); }}
-                  className="w-full px-3 py-2.5 flex items-center gap-3 text-sm text-white hover:bg-[hsl(232_50%_20%)] text-left"
+          {/* Add people — first-class toolbar button (Phase 1.9.27). Promoted
+              out of the More popover because solo-meeting users need to invite
+              people mid-call; it was previously buried two taps deep. */}
+          <TopBarBtn
+            icon={<UserPlus className="w-5 h-5" />}
+            label="Add"
+            active={addOpen}
+            onClick={() => setAddOpen(true)}
+            testid="call-toolbar-addpeople"
+          />
+
+          {/* More — popover holds only contextual extras now (Contract). The
+              popover is hidden entirely when there's nothing to show. */}
+          {contractPdfUrl && (
+            <div className="relative">
+              <TopBarBtn
+                icon={<MoreHorizontal className="w-5 h-5" />}
+                label="More"
+                active={moreOpen}
+                onClick={() => setMoreOpen(o => !o)}
+                testid="call-toolbar-more"
+              />
+              {moreOpen && (
+                <div
+                  className="absolute right-0 top-full mt-1 z-[120] w-56 rounded-lg bg-[hsl(232_55%_13%)] border border-[hsl(232_40%_25%)] shadow-2xl overflow-hidden"
+                  onMouseLeave={() => setMoreOpen(false)}
                 >
-                  <UserPlus className="w-4 h-4 text-vs-blue-light shrink-0" />
-                  Add people
-                </button>
-                {/* Contract side-panel (only when linked) */}
-                {contractPdfUrl && (
                   <button
                     type="button"
                     onClick={() => { setContractOpen(o => !o); setMoreOpen(false); }}
-                    className="w-full px-3 py-2.5 flex items-center gap-3 text-sm text-white hover:bg-[hsl(232_50%_20%)] border-t border-[hsl(232_40%_22%)] text-left"
+                    className="w-full px-3 py-2.5 flex items-center gap-3 text-sm text-white hover:bg-[hsl(232_50%_20%)] text-left"
                   >
                     <FileText className="w-4 h-4 text-vs-blue-light shrink-0" />
                     {contractOpen ? "Hide contract" : "View contract"}
                   </button>
-                )}
-              </div>
-            )}
-          </div>
+                </div>
+              )}
+            </div>
+          )}
 
         </div>
         </div>
