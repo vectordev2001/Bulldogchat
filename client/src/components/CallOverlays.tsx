@@ -15,6 +15,8 @@ import type { ApiUser, ApiChannel } from "@/types/api";
 import { useAuth } from "@/lib/auth";
 import { MeetingClerkButton, MeetingClerkBanner } from "./MeetingClerkButton";
 import { CallVideoStage, type CallLayout, type StageParticipant } from "./call/CallVideoStage";
+import { InCallChatPanel } from "./InCallChatPanel";
+import { useToast } from "@/hooks/use-toast";
 import { ContractPanel } from "./call/ContractPanel";
 import { VirtualBackgroundPicker, loadSavedSelection, type BgSelection } from "./call/VirtualBackgroundPicker";
 import { VirtualBackgroundProcessor } from "@/lib/virtual-background";
@@ -177,6 +179,25 @@ function ActiveCallOverlay() {
   const hasChannel = typeof channelId === "number";
 
   const [contractOpen, setContractOpen] = useState(false);
+  // In-call chat side panel (Phase 1.9.28). The Chat toolbar button was
+  // previously a no-op toast; now it opens this panel which shows the channel's
+  // recent messages and lets the user send without leaving the call overlay.
+  const [chatOpen, setChatOpen] = useState(false);
+
+  // Wire bulldog:toast events into the global toast system so the
+  // camera/mic/screen failure messages from onTrackError actually render
+  // (Phase 1.9.28). Without this listener, the events were no-ops and the
+  // user saw nothing when the camera failed.
+  const { toast } = useToast();
+  useEffect(() => {
+    function onToast(e: Event) {
+      const detail = (e as CustomEvent).detail;
+      if (!detail) return;
+      toast({ description: String(detail), duration: 8000 });
+    }
+    window.addEventListener("bulldog:toast", onToast);
+    return () => window.removeEventListener("bulldog:toast", onToast);
+  }, [toast]);
   const [panelWidth, setPanelWidth] = useState(400);
   const [layout, setLayout] = useState<CallLayout>(loadSavedLayout);
   const [bgOpen, setBgOpen] = useState(false);
@@ -210,6 +231,31 @@ function ActiveCallOverlay() {
       console.warn(`[call] ${kind} error`, err);
       if (kind === "camera") setVideoOn(false);
       if (kind === "screen") setScreenSharing(false);
+      // Phase 1.9.28 — surface the real failure to the user. Previously we
+      // silently flipped the toggle off and the user had no idea why. Map
+      // the common DOMException names to actionable messages.
+      const e = err as Error & { name?: string };
+      const name = e?.name || "";
+      const msg = e?.message || String(err);
+      let toast = `${kind === "camera" ? "Camera" : kind === "mic" ? "Microphone" : "Screen share"} couldn't start.`;
+      if (name === "NotAllowedError" || /permission|denied/i.test(msg)) {
+        toast = kind === "camera"
+          ? "Camera permission denied. In iOS: Settings → Bulldog → Camera → enable. In Safari: tap aA → Website Settings → Camera → Allow, then reload."
+          : kind === "mic"
+          ? "Microphone permission denied. iOS: Settings → Bulldog → Microphone → enable."
+          : "Screen-share permission denied.";
+      } else if (name === "NotFoundError" || /no.*device|not.*found/i.test(msg)) {
+        toast = `No ${kind === "camera" ? "camera" : kind === "mic" ? "microphone" : "screen"} found on this device.`;
+      } else if (name === "NotReadableError" || /in use|busy/i.test(msg)) {
+        toast = `${kind === "camera" ? "Camera" : "Mic"} is in use by another app. Close FaceTime / Zoom / Camera and try again.`;
+      } else if (name === "OverconstrainedError") {
+        toast = `${kind} constraints not supported by this device.`;
+      } else if (/getUserMedia is not implemented|not supported|secure context/i.test(msg)) {
+        toast = "This browser/WebView doesn't expose the camera. Open chat.bulldogops.com in Safari instead.";
+      } else if (msg) {
+        toast = `${toast} (${msg})`;
+      }
+      window.dispatchEvent(new CustomEvent("bulldog:toast", { detail: toast }));
     },
   });
 
@@ -304,15 +350,13 @@ function ActiveCallOverlay() {
         <div className="flex-1 min-w-0 overflow-x-auto no-scrollbar">
         <div className="flex items-center gap-1 w-max mx-auto">
 
-          {/* Chat — no-op indicator if no side panel wired here */}
+          {/* Chat (Phase 1.9.28) — toggles the in-call chat side panel so the
+              user can read and send channel messages without leaving the call. */}
           <TopBarBtn
             icon={<MessageSquare className="w-5 h-5" />}
             label="Chat"
-            active={false}
-            onClick={() => {
-              // In the overlay context there is no side-panel wiring; toast is best-effort.
-              window.dispatchEvent(new CustomEvent("bulldog:toast", { detail: "Chat is in the channel" }));
-            }}
+            active={chatOpen}
+            onClick={() => setChatOpen(o => !o)}
             testid="call-toolbar-chat"
           />
 
@@ -520,6 +564,12 @@ function ActiveCallOverlay() {
             width={panelWidth}
             onWidthChange={setPanelWidth}
             onClose={() => setContractOpen(false)}
+          />
+        )}
+        {chatOpen && hasChannel && (
+          <InCallChatPanel
+            channelId={channelId!}
+            onClose={() => setChatOpen(false)}
           />
         )}
       </div>
