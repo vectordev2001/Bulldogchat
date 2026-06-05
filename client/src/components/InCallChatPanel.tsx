@@ -105,7 +105,36 @@ export function InCallChatPanel({ channelId, onClose }: Props) {
             No messages yet. Say hi.
           </div>
         ) : (
-          messages.slice(-50).map((m) => {
+          // Filter out AI clerk system messages ("AI CLERK STARTED", "AI CLERK
+            // STOPPED", "MEETING NOTES READY") and call lifecycle pings before
+            // rendering. The in-call chat panel should show people talking, not
+            // a noisy log of every clerk toggle (Phase 1.9.29).
+            messages
+            .filter((m) => {
+              if (!m.meta) return true; // keep regular user messages
+              // System messages have meta.kind. Drop the noisy clerk/call
+              // lifecycle ones; keep meaningful ones like contract_attached.
+              try {
+                const meta = m.meta as { kind?: string } | null;
+                const noisyKinds = new Set([
+                  "clerk_started",
+                  "clerk_stopped",
+                  "meeting_notes_ready",
+                  "notes_ready",
+                  "call_started",
+                  "call_ended",
+                  "call_joined",
+                ]);
+                if (meta && meta.kind && noisyKinds.has(meta.kind)) return false;
+              } catch { /* fall through */ }
+              // Belt + suspenders: also filter by content for older rows
+              // that may not have a kind set.
+              const text = (m.content || "").toLowerCase();
+              if (/ai clerk|meeting notes ready|call (started|ended|joined)/.test(text)) return false;
+              return true;
+            })
+            .slice(-50)
+            .map((m) => {
             const mine = me != null && m.userId === me.id;
             const isSystem = m.meta != null;
             // For system messages just render a centered hint.
