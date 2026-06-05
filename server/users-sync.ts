@@ -24,6 +24,7 @@ export interface SyncResult {
   checked: number;
   deactivated: number;
   reactivated: number;
+  provisioned: number;
   source: "cookie" | "secret" | "none";
 }
 
@@ -43,19 +44,35 @@ function authBase(): string {
 // credential or the call fails — caller treats null as "skip, don't mutate".
 async function fetchAuthRoster(
   opts: SyncOpts,
-): Promise<{ activeEmails: Set<string>; phoneByEmail: Map<string, string>; source: "cookie" | "secret" } | null> {
+): Promise<{
+  activeEmails: Set<string>;
+  phoneByEmail: Map<string, string>;
+  rowByEmail: Map<string, AuthRosterRow>;
+  source: "cookie" | "secret";
+} | null> {
   const base = authBase();
+  const secret = process.env.SUITE_INTERNAL_SECRET;
 
-  // Prefer the admin cookie path (the proven, existing integration).
+  // Prefer the secret path against /api/internal/users?app=chat — it filters
+  // server-side by appAccess (only users the admin granted chat access to)
+  // and works from cookieless contexts (background job + on-demand admin
+  // triggers without forwarding cookies).
+  if (secret) {
+    const parsed = await tryFetch(`${base}/api/internal/users?app=chat`, { "x-suite-secret": secret });
+    if (parsed) return { ...parsed, source: "secret" };
+  }
+
+  // Fall back to the admin cookie path (works for an admin user driving the
+  // UI). Returns the full roster — no app-access filtering on this path,
+  // but provisioning is a no-op for users we already know about so the cost
+  // is acceptable.
   if (opts.cookieHeader && /(?:^|;\s*)bulldog_access=/.test(opts.cookieHeader)) {
     const parsed = await tryFetch(`${base}/api/admin/users`, { Cookie: opts.cookieHeader });
     if (parsed) return { ...parsed, source: "cookie" };
   }
 
-  // Optional cookieless path for the background job: only if a shared secret
-  // is configured. We try the same admin route with the suite secret header;
-  // if auth doesn't accept it, this fails closed (null) and we no-op.
-  const secret = process.env.SUITE_INTERNAL_SECRET;
+  // Last-resort secret call to the admin route (older auth versions before
+  // /api/internal/users shipped).
   if (secret) {
     const parsed = await tryFetch(`${base}/api/admin/users`, { "x-suite-secret": secret });
     if (parsed) return { ...parsed, source: "secret" };
@@ -64,10 +81,25 @@ async function fetchAuthRoster(
   return null;
 }
 
+// One row of the auth roster we keep around for provisioning. We carry
+// displayName/role/appAccess so newly-created chat rows match what the
+// admin configured in auth.
+interface AuthRosterRow {
+  email: string;
+  displayName?: string | null;
+  role?: string | null;
+  phone?: string | null;
+  appAccess?: string[] | null;
+}
+
 async function tryFetch(
   url: string,
   headers: Record<string, string>,
-): Promise<{ activeEmails: Set<string>; phoneByEmail: Map<string, string> } | null> {
+): Promise<{
+  activeEmails: Set<string>;
+  phoneByEmail: Map<string, string>;
+  rowByEmail: Map<string, AuthRosterRow>;
+} | null> {
   try {
     const resp = await fetch(url, { headers });
     if (!resp.ok) {
@@ -75,40 +107,64 @@ async function tryFetch(
       return null;
     }
     const body = (await resp.json()) as
-      | { users?: Array<{ email?: string; phone?: string | null; active?: boolean }> }
-      | Array<{ email?: string; phone?: string | null; active?: boolean }>;
+      | { users?: Array<AuthRosterRow & { active?: boolean }> }
+      | Array<AuthRosterRow & { active?: boolean }>;
     const authUsers = Array.isArray(body) ? body : body.users ?? [];
     const activeEmails = new Set<string>();
     const phoneByEmail = new Map<string, string>();
+    const rowByEmail = new Map<string, AuthRosterRow>();
     for (const au of authUsers) {
       if (!au.email) continue;
       const e = au.email.toLowerCase();
       if (au.active !== false) activeEmails.add(e);
       if (au.phone) phoneByEmail.set(e, au.phone);
+      rowByEmail.set(e, {
+        email: e,
+        displayName: au.displayName ?? null,
+        role: au.role ?? null,
+        phone: au.phone ?? null,
+        appAccess: au.appAccess ?? null,
+      });
     }
-    return { activeEmails, phoneByEmail };
+    return { activeEmails, phoneByEmail, rowByEmail };
   } catch (e: any) {
     console.warn(`[user-sync] fetch ${url} failed:`, e?.message);
     return null;
   }
 }
 
+// Map an auth role string onto chat's role enum. Chat enum: admin/foreman/
+// office/field/safety. Auth uses admin/manager/foreman/safety/field/etc.
+function mapAuthRoleToChatRole(authRole: string | null | undefined):
+  "admin" | "foreman" | "office" | "field" | "safety" {
+  const r = (authRole || "").toLowerCase();
+  if (r === "admin") return "admin";
+  if (r === "manager") return "office";
+  if (r === "foreman") return "foreman";
+  if (r === "safety") return "safety";
+  return "field";
+}
+
 export async function syncDeactivatedFromAuth(opts: SyncOpts = {}): Promise<SyncResult> {
   const orgId = opts.orgId ?? DEFAULT_ORG_ID;
   const roster = await fetchAuthRoster(opts);
   if (!roster) {
-    return { checked: 0, deactivated: 0, reactivated: 0, source: "none" };
+    return { checked: 0, deactivated: 0, reactivated: 0, provisioned: 0, source: "none" };
   }
-  const { activeEmails, phoneByEmail, source } = roster;
+  const { activeEmails, phoneByEmail, rowByEmail, source } = roster;
 
   const chatUsers = storage.listUsersByOrg(orgId);
   let deactivated = 0;
   let reactivated = 0;
+  let provisioned = 0;
 
+  // 1. Reconcile state on existing chat users.
+  const chatEmails = new Set<string>();
   for (const cu of chatUsers) {
     if (!cu.email) continue;
     if (cu.id === opts.callerUserId) continue; // never lock out the caller
     const e = cu.email.toLowerCase();
+    chatEmails.add(e);
     if (e.endsWith("@deleted.local")) continue; // already system-deleted
 
     // Backfill phone from auth if we don't have one locally.
@@ -140,6 +196,57 @@ export async function syncDeactivatedFromAuth(opts: SyncOpts = {}): Promise<Sync
     }
   }
 
-  console.log(`[user-sync] done source=${source} checked=${chatUsers.length} deactivated=${deactivated} reactivated=${reactivated}`);
-  return { checked: chatUsers.length, deactivated, reactivated, source };
+  // 2. Provision new users from auth that don't exist in chat yet.
+  // This is the fix for: 'I added TestJosh in auth but can't see them in chat'.
+  // Without this step new auth users were invisible to chat until they
+  // personally logged in (which triggered the per-request SSO bridge).
+  //
+  // We only provision users that are (a) active in auth and (b) either have
+  // chat in their appAccess (when filtered roster came from /api/internal/users)
+  // OR have a null/legacy appAccess. The /api/internal/users?app=chat endpoint
+  // already pre-filters, so on the secret path we trust the roster verbatim.
+  rowByEmail.forEach((row, email) => {
+    if (chatEmails.has(email)) return;        // already provisioned
+    if (!activeEmails.has(email)) return;     // skip deactivated
+    if (email.endsWith("@deleted.local")) return;
+
+    // When the roster came from the legacy /api/admin/users path we did not
+    // pre-filter by appAccess. Respect explicit revocations: if appAccess is
+    // an array and chat is not in it, skip provisioning. null/undefined =
+    // legacy 'all apps' — provision.
+    const access = row.appAccess;
+    if (Array.isArray(access) && !access.includes("chat")) return;
+
+    try {
+      const created = storage.createUser({
+        orgId,
+        email,
+        passwordHash: "", // SSO-only login
+        name: (row.displayName || "").trim() || email,
+        role: mapAuthRoleToChatRole(row.role),
+        phone: row.phone ?? null,
+      } as Parameters<typeof storage.createUser>[0]);
+
+      // Seed project membership so the new user shows up in every job's
+      // member list and in @-mention / Add-User pickers immediately. This
+      // mirrors what bulldogSsoBridge does on first login.
+      try {
+        const orgProjects = storage.listProjectsByOrg(orgId);
+        for (const p of orgProjects) {
+          try { storage.addProjectMember(p.id, created.id, "member"); }
+          catch { /* duplicate is fine */ }
+        }
+      } catch (err) {
+        console.warn("[user-sync] seed project membership failed:", err);
+      }
+
+      provisioned++;
+      console.log(`[user-sync] provisioned user id=${created.id} email=${email} (created from auth)`);
+    } catch (err) {
+      console.warn(`[user-sync] provision failed for ${email}:`, err);
+    }
+  });
+
+  console.log(`[user-sync] done source=${source} checked=${chatUsers.length} deactivated=${deactivated} reactivated=${reactivated} provisioned=${provisioned}`);
+  return { checked: chatUsers.length, deactivated, reactivated, provisioned, source };
 }
