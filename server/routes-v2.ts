@@ -425,10 +425,15 @@ export function registerV2Routes(app: Express) {
     res.json(storage.listRecordingsForChannel(channelId));
   });
 
-  // LiveKit webhook — receives egress completion events
+  // LiveKit webhook — receives egress completion + participant lifecycle
+  // events. We use the participant_* events to surface SIP dial-out failure
+  // reasons in our own logs (LiveKit forwards the SIP cause code / hangup
+  // reason from Twilio when a phone call drops or rejects).
   app.post("/api/livekit/webhook", async (req, res) => {
     try {
       const event = req.body;
+
+      // ── Egress (recording) finished ──
       const egressInfo = event?.egressInfo || event?.egress_info;
       if (event?.event === "egress_ended" && egressInfo?.egressId) {
         const rec = storage.findRecordingByEgressId(egressInfo.egressId);
@@ -446,6 +451,26 @@ export function registerV2Routes(app: Express) {
           });
         }
       }
+
+      // ── SIP participant lifecycle ──
+      // Our SIP dial-outs register with identity "sip_<digits>_<ts>" — we
+      // log connect / disconnect events for those so failed phone calls
+      // leave a readable trail (current state: a successful createSipParticipant
+      // can still hang up immediately if Twilio rejects, and we'd never know).
+      const part = event?.participant;
+      const identity: string | undefined = part?.identity;
+      if (identity && identity.startsWith("sip_")) {
+        const room: string = event?.room?.name ?? "(unknown)";
+        if (event?.event === "participant_joined") {
+          console.log(`[sip] participant_joined ${identity} room=${room}`);
+        } else if (event?.event === "participant_disconnected") {
+          // disconnectReason is an enum; LiveKit also passes through a
+          // human-readable string in some builds.
+          const reason = part?.disconnectReason ?? part?.disconnect_reason ?? "(no reason)";
+          console.warn(`[sip] participant_disconnected ${identity} room=${room} reason=${reason}`);
+        }
+      }
+
       res.json({ ok: true });
     } catch (err) {
       console.warn("[livekit webhook] error:", err);

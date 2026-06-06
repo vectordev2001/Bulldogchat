@@ -186,7 +186,7 @@ export async function dialPhoneIntoRoom(opts: {
     ? `Bulldog · ${opts.channelLabel}`
     : "Bulldog").slice(0, 64);
   try {
-    await client().createSipParticipant(
+    const result = await client().createSipParticipant(
       trunkId,
       e164,
       opts.roomName,
@@ -202,7 +202,10 @@ export async function dialPhoneIntoRoom(opts: {
         playDialtone: true,
       },
     );
-    console.log(`[sip] Dialed ${e164} (raw=${opts.phone}) → room ${opts.roomName} as ${identity} (From: "${callerDisplay}")`);
+    // Log the LiveKit-issued sipCallId so failed dials can be cross-referenced
+    // with Twilio's call log (Voice → Logs → Calls, search by SIP Call-ID).
+    const sipCallId = (result as { sipCallId?: string })?.sipCallId ?? "(none)";
+    console.log(`[sip] Dialed ${e164} (raw=${opts.phone}) → room ${opts.roomName} as ${identity} sip_call_id=${sipCallId} (From: "${callerDisplay}")`);
     return identity;
   } catch (e) {
     console.error(`[sip] createSipParticipant failed for ${e164} (raw=${opts.phone}) → ${opts.roomName}:`, e);
