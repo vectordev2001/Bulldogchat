@@ -182,10 +182,13 @@ export function MeetingNotesHistory({ channelId, open, onClose }: Props) {
                       </button>
                     </div>
                   ) : (
+                    // Phase 1.9.36 — always visible (was hover-only, which
+                    // made delete invisible on touch). Faint by default,
+                    // brightens on hover/tap.
                     <button
                       type="button"
                       onClick={() => setPendingDeleteId(row.id)}
-                      className="p-3 text-[hsl(0_0%_55%)] hover:text-vs-red opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
+                      className="p-3 text-[hsl(0_0%_45%)] hover:text-vs-red transition-colors shrink-0"
                       title="Delete this meeting note"
                       data-testid={`button-delete-note-${row.id}`}
                       aria-label="Delete"

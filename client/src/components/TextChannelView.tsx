@@ -107,6 +107,45 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers, me
     },
   });
 
+  const { toast: channelToast } = useToast();
+
+  // Phase 1.9.36 — admin-only "clear channel". Double-confirmed because
+  // the operation tombstones every message in the channel. Server fans
+  // out SSE message-update + message-delete per id so live clients
+  // re-render rows as tombstones in real time.
+  const clearChannelMut = useMutation({
+    mutationFn: async () =>
+      apiRequest<{ ok: true; clearedCount: number }>(
+        "DELETE",
+        `/api/channels/${channel.id}/messages`,
+      ),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/channels", channel.id, "messages"] });
+      channelToast({
+        title: "Channel cleared",
+        description: `${data?.clearedCount ?? 0} message${data?.clearedCount === 1 ? "" : "s"} marked as deleted.`,
+      });
+    },
+    onError: (err: any) => {
+      channelToast({
+        title: "Clear failed",
+        description: err?.message ?? "Unknown error",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const onClearChannel = () => {
+    if (clearChannelMut.isPending) return;
+    if (!window.confirm(
+      `Clear ALL messages in #${channel.name}?\n\nThis tombstones every message in the channel. Meeting notes, scheduled meetings, and jobs are kept. This can't be undone.`
+    )) return;
+    if (!window.confirm(
+      `Final confirmation — wipe every message in #${channel.name}?`
+    )) return;
+    clearChannelMut.mutate();
+  };
+
   // Global Cmd+K / Ctrl+K to open search
   useEffect(() => {
     const h = (e: globalThis.KeyboardEvent) => {
@@ -392,6 +431,16 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers, me
               <span className="hidden sm:inline">Search</span>
               <kbd className="hidden sm:inline font-mono text-[10px] text-[hsl(0_0%_55%)] border border-[hsl(232_40%_22%)] rounded px-1">⌘K</kbd>
             </button>
+            {me.role === "admin" && (
+              <HeaderIcon
+                title="Clear all messages (admin)"
+                onClick={onClearChannel}
+                disabled={clearChannelMut.isPending}
+                data-testid="button-clear-channel"
+              >
+                <Trash2 className="w-4 h-4" />
+              </HeaderIcon>
+            )}
           </div>
 
           {/* Mobile (<sm): overflow menu holding pin / jobs / members / search. */}
@@ -425,6 +474,19 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers, me
                 <DropdownMenuItem onSelect={() => setSearchOpen(true)} data-testid="menu-search">
                   <Search className="w-4 h-4 mr-2" /> Search
                 </DropdownMenuItem>
+                {me.role === "admin" && (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      onSelect={onClearChannel}
+                      disabled={clearChannelMut.isPending}
+                      data-testid="menu-clear-channel"
+                      className="text-[hsl(2_85%_72%)] focus:text-[hsl(2_85%_82%)]"
+                    >
+                      <Trash2 className="w-4 h-4 mr-2" /> Clear all messages
+                    </DropdownMenuItem>
+                  </>
+                )}
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
@@ -857,18 +919,26 @@ function MessageRow({ msg, grouped, isMe, meId, myRole, onOpenThread, onJoinMeet
     deleteMut.mutate();
   };
 
-  // Long-press on mobile (no hover) surfaces the action bar. We use a
-  // 450ms touch hold; tap-cancel clears the timer so taps don't accidentally
-  // trigger the action bar.
-  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [mobileActionsOpen, setMobileActionsOpen] = useState(false);
-  const onTouchStart = () => {
-    if (longPressTimer.current) clearTimeout(longPressTimer.current);
-    longPressTimer.current = setTimeout(() => setMobileActionsOpen(true), 450);
-  };
-  const onTouchEnd = () => {
-    if (longPressTimer.current) { clearTimeout(longPressTimer.current); longPressTimer.current = null; }
-  };
+  // Phase 1.9.36 — replaced the old 450ms long-press with an always-visible
+  // "⋯" kebab on every message row. Long-press was undiscoverable on touch.
+  // The kebab is rendered inline (top-right of the row) and toggles a small
+  // action sheet anchored beneath it. Desktop hover bar is kept so power
+  // users keep the muscle memory; the kebab is just an additional, always-
+  // visible entry point.
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onDocClick = (e: MouseEvent | TouchEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false);
+    };
+    document.addEventListener("mousedown", onDocClick);
+    document.addEventListener("touchstart", onDocClick);
+    return () => {
+      document.removeEventListener("mousedown", onDocClick);
+      document.removeEventListener("touchstart", onDocClick);
+    };
+  }, [menuOpen]);
 
   return (
     <motion.div
@@ -880,9 +950,6 @@ function MessageRow({ msg, grouped, isMe, meId, myRole, onOpenThread, onJoinMeet
         grouped ? "" : "mt-4",
       ].join(" ")}
       data-testid={`message-${msg.id}`}
-      onTouchStart={onTouchStart}
-      onTouchEnd={onTouchEnd}
-      onTouchCancel={onTouchEnd}
     >
       <div className="w-10 shrink-0">
         {!grouped ? (
@@ -933,18 +1000,15 @@ function MessageRow({ msg, grouped, isMe, meId, myRole, onOpenThread, onJoinMeet
         )}
       </div>
 
-      {/* Hover action bar (desktop): reply + delete (when permitted).
-          On mobile, long-press toggles mobileActionsOpen which forces this
-          panel visible (opacity-100 via the data attr). */}
+      {/* Desktop hover action bar — quick access for mouse users. Hidden
+          on touch (no hover state); touch users use the kebab below. */}
       <div
-        className={`transition-opacity absolute top-0 right-2 flex items-center gap-1 -translate-y-2 bg-[hsl(232_55%_14%)] border border-[hsl(232_40%_25%)] rounded-md px-1 py-0.5 shadow-md ${
-          mobileActionsOpen ? "opacity-100" : "opacity-0 group-hover:opacity-100"
-        }`}
+        className="transition-opacity absolute top-0 right-10 hidden md:flex items-center gap-1 -translate-y-2 bg-[hsl(232_55%_14%)] border border-[hsl(232_40%_25%)] rounded-md px-1 py-0.5 shadow-md opacity-0 group-hover:opacity-100"
         onClick={(e) => e.stopPropagation()}
       >
         <button
           type="button"
-          onClick={() => { setMobileActionsOpen(false); onOpenThread(); }}
+          onClick={onOpenThread}
           className="p-1 rounded hover:bg-[hsl(232_45%_22%)] text-[hsl(0_0%_70%)] hover:text-vs-red"
           title="Reply in comms"
           data-testid={`button-reply-thread-${msg.id}`}
@@ -954,7 +1018,7 @@ function MessageRow({ msg, grouped, isMe, meId, myRole, onOpenThread, onJoinMeet
         {canDelete && (
           <button
             type="button"
-            onClick={() => { setMobileActionsOpen(false); onDelete(); }}
+            onClick={onDelete}
             disabled={deleteMut.isPending}
             className="p-1 rounded hover:bg-[hsl(232_45%_22%)] text-[hsl(0_0%_70%)] hover:text-vs-red disabled:opacity-40"
             title={isMe ? "Delete message" : "Delete message (admin)"}
@@ -963,16 +1027,54 @@ function MessageRow({ msg, grouped, isMe, meId, myRole, onOpenThread, onJoinMeet
             <Trash2 className="w-3.5 h-3.5" />
           </button>
         )}
-        {mobileActionsOpen && (
-          <button
-            type="button"
-            onClick={() => setMobileActionsOpen(false)}
-            className="p-1 rounded hover:bg-[hsl(232_45%_22%)] text-[hsl(0_0%_70%)] hover:text-white"
-            title="Close"
-            data-testid={`button-close-mobile-actions-${msg.id}`}
+      </div>
+
+      {/* Phase 1.9.36 — always-visible kebab. Discoverable on mobile,
+          unobtrusive on desktop (faint until hover). Opens an action sheet
+          anchored to the row with Reply / Delete options. */}
+      <div
+        ref={menuRef}
+        className="absolute top-1 right-2 z-10"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <button
+          type="button"
+          onClick={() => setMenuOpen(v => !v)}
+          className="p-1.5 rounded-md text-[hsl(0_0%_55%)] hover:text-white hover:bg-[hsl(232_45%_22%)] md:opacity-40 md:group-hover:opacity-100 transition-opacity"
+          title="Message actions"
+          aria-label="Message actions"
+          data-testid={`button-message-menu-${msg.id}`}
+        >
+          <MoreHorizontal className="w-4 h-4" />
+        </button>
+        {menuOpen && (
+          <div
+            className="absolute top-full right-0 mt-1 min-w-[160px] rounded-md border border-[hsl(232_40%_25%)] bg-[hsl(232_55%_12%)] shadow-xl py-1"
+            role="menu"
+            data-testid={`menu-message-${msg.id}`}
           >
-            <X className="w-3.5 h-3.5" />
-          </button>
+            <button
+              type="button"
+              onClick={() => { setMenuOpen(false); onOpenThread(); }}
+              className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[hsl(0_0%_85%)] hover:bg-[hsl(232_45%_18%)] hover:text-white text-left"
+              data-testid={`menu-item-reply-${msg.id}`}
+            >
+              <Reply className="w-3.5 h-3.5" />
+              Reply in thread
+            </button>
+            {canDelete && (
+              <button
+                type="button"
+                onClick={() => { setMenuOpen(false); onDelete(); }}
+                disabled={deleteMut.isPending}
+                className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[hsl(2_85%_72%)] hover:bg-[hsl(232_45%_18%)] hover:text-[hsl(2_85%_82%)] text-left disabled:opacity-40"
+                data-testid={`menu-item-delete-${msg.id}`}
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                Delete message
+              </button>
+            )}
+          </div>
         )}
       </div>
     </motion.div>

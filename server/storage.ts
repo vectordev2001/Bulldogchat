@@ -106,6 +106,7 @@ export interface IStorage {
   updateMessage(id: number, content: string): Message | undefined;
   deleteMessage(id: number): void;
   tombstoneMessage(id: number, deletedByUserId: number): void;
+  tombstoneChannelMessages(channelId: number, deletedByUserId: number): { ids: number[] };
   pinMessage(id: number, pinned: boolean): Message | undefined;
 
   /* Reactions */
@@ -519,6 +520,28 @@ class DatabaseStorage implements IStorage {
       deletedAt: new Date(),
       deletedByUserId,
     }).where(eq(messages.id, id)).run();
+  }
+  // Bulk tombstone every non-deleted message in a channel. Same semantics as
+  // tombstoneMessage but in one transaction so admins can clear a channel
+  // without N round-trips. Returns the ids that were tombstoned so the
+  // caller can fan out a single delete event per id over SSE.
+  tombstoneChannelMessages(channelId: number, deletedByUserId: number): { ids: number[] } {
+    const rows = rawDb.prepare(
+      "SELECT id FROM messages WHERE channel_id = ? AND deleted_at IS NULL"
+    ).all(channelId) as Array<{ id: number }>;
+    const ids = rows.map(r => r.id);
+    if (ids.length === 0) return { ids: [] };
+    const placeholders = ids.map(() => "?").join(",");
+    const tx = rawDb.transaction(() => {
+      rawDb.prepare(`DELETE FROM reactions WHERE message_id IN (${placeholders})`).run(...ids);
+      rawDb.prepare(`DELETE FROM mentions  WHERE message_id IN (${placeholders})`).run(...ids);
+      rawDb.prepare(`UPDATE attachments SET message_id = NULL WHERE message_id IN (${placeholders})`).run(...ids);
+      rawDb.prepare(
+        `UPDATE messages SET content = '', attachments = NULL, deleted_at = strftime('%s','now') * 1000, deleted_by_user_id = ? WHERE id IN (${placeholders})`
+      ).run(deletedByUserId, ...ids);
+    });
+    tx();
+    return { ids };
   }
   pinMessage(id: number, pinned: boolean) {
     return db.update(messages).set({ isPinned: pinned }).where(eq(messages.id, id)).returning().get();

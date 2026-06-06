@@ -1218,6 +1218,25 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     res.json({ ok: true, message: wire });
   });
 
+  // Phase 1.9.36 — admin-only "clear channel" bulk tombstone. Wipes every
+  // non-deleted message in the channel and fans out a delete+update event
+  // per id so all live clients re-render rows as tombstones. We deliberately
+  // do NOT touch meeting-notes, scheduled calls, or work objects — those
+  // have their own delete paths. Use double-confirm in the UI.
+  app.delete("/api/channels/:id/messages", requireAuth, requireRole(["admin"]), (req, res) => {
+    const u = (req as AuthedRequest).user;
+    const channelId = Number(req.params.id);
+    const access = userCanAccessChannel(u.id, u.orgId, channelId);
+    if (!access) return res.status(404).json({ message: "Not found" });
+    const { ids } = storage.tombstoneChannelMessages(channelId, u.id);
+    for (const id of ids) {
+      const wire = buildWireMessage(id);
+      if (wire) emitMessageUpdate(u.orgId, wire);
+      emitMessageDelete(u.orgId, { channelId, messageId: id });
+    }
+    res.json({ ok: true, clearedCount: ids.length });
+  });
+
   app.post("/api/messages/:id/pin", requireAuth, requireRole(["admin", "foreman", "safety"]), (req, res) => {
     const u = (req as AuthedRequest).user;
     const id = Number(req.params.id);
