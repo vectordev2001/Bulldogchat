@@ -6,7 +6,8 @@ import {
   signupSchema, loginSchema, acceptInviteSchema, sendMessageSchema, reactionSchema,
   insertProjectSchema, insertChannelSchema, insertInviteSchema, channelCreateSchema, linkedContractAttachSchema,
 } from "@shared/schema";
-import { hashPassword, verifyPassword, signJwt, requireAuth, requireRole, setAuthCookie, clearAuthCookie, AuthedRequest, AUTH_COOKIE } from "./auth";
+import { hashPassword, verifyPassword, signJwt, requireAuth, requireRole, requireCap, setAuthCookie, clearAuthCookie, AuthedRequest, AUTH_COOKIE } from "./auth";
+import { can } from "@shared/permissions";
 import { addSubscriber, removeSubscriber, emitMessageNew, emitMessageDelete, emitMessageUpdate, emitReactionChange, emitChannelDelete, emitCallIncoming, emitCallAccepted, emitCallEnded, emitPresenceChange, type CallEventPayload, WireMessage } from "./events";
 import { generateLivekitToken, livekitConfigured, listRoomParticipantIdentities } from "./livekit";
 import { setupWebPush, pushConfigured, getPublicVapidKey, sendNotificationToUsers } from "./push";
@@ -335,7 +336,7 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     res.json(projects);
   });
 
-  app.post("/api/projects", requireAuth, requireRole(["admin"]), (req, res) => {
+  app.post("/api/projects", requireAuth, requireCap(can.chat.createProject), (req, res) => {
     const u = (req as AuthedRequest).user;
     const parsed = insertProjectSchema.omit({ orgId: true }).safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: "Invalid input" });
@@ -372,7 +373,7 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     res.json(storage.listChannelsForUserInProject(id, u.id));
   });
 
-  app.post("/api/projects/:id/channels", requireAuth, requireRole(["admin", "foreman"]), (req, res) => {
+  app.post("/api/projects/:id/channels", requireAuth, requireCap(can.chat.createChannel), (req, res) => {
     const u = (req as AuthedRequest).user;
     const id = Number(req.params.id);
     if (!userCanAccessProject(u.id, u.orgId, id)) return res.status(404).json({ message: "Not found" });
@@ -447,7 +448,7 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
   // Phase 1.9.3 — attach (or replace) a contract on an existing channel.
   // Admin/foreman only — same role as channel create. Posts a system
   // message announcing the attachment.
-  app.post("/api/channels/:id/linked-contract", requireAuth, requireRole(["admin", "foreman"]), (req, res) => {
+  app.post("/api/channels/:id/linked-contract", requireAuth, requireCap(can.chat.createChannel), (req, res) => {
     const u = (req as AuthedRequest).user;
     const channelId = Number(req.params.id);
     if (!Number.isFinite(channelId)) return res.status(400).json({ message: "Invalid channel id" });
@@ -760,7 +761,7 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
 
   // Add members to a private channel. Admins only — keeps the surface
   // small. Foreman can be added later if needed.
-  app.post("/api/channels/:id/members", requireAuth, requireRole(["admin"]), (req, res) => {
+  app.post("/api/channels/:id/members", requireAuth, requireCap(can.chat.manageChannelMembers), (req, res) => {
     const u = (req as AuthedRequest).user;
     const channelId = Number(req.params.id);
     const access = userCanAccessChannel(u.id, u.orgId, channelId);
@@ -861,7 +862,7 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
   // reactions, mentions, read receipts, member grants, recordings, and
   // livekit room rows. The channel's company must belong to the caller's
   // org. This is destructive and irreversible.
-  app.delete("/api/channels/:id", requireAuth, requireRole(["admin"]), (req, res) => {
+  app.delete("/api/channels/:id", requireAuth, requireCap(can.chat.deleteChannel), (req, res) => {
     const u = (req as AuthedRequest).user;
     const channelId = Number(req.params.id);
     if (!Number.isFinite(channelId)) return res.status(400).json({ message: "Invalid id" });
@@ -1223,7 +1224,7 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
   // per id so all live clients re-render rows as tombstones. We deliberately
   // do NOT touch meeting-notes, scheduled calls, or work objects — those
   // have their own delete paths. Use double-confirm in the UI.
-  app.delete("/api/channels/:id/messages", requireAuth, requireRole(["admin"]), (req, res) => {
+  app.delete("/api/channels/:id/messages", requireAuth, requireCap(can.chat.clearChannel), (req, res) => {
     const u = (req as AuthedRequest).user;
     const channelId = Number(req.params.id);
     const access = userCanAccessChannel(u.id, u.orgId, channelId);
@@ -1237,7 +1238,7 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     res.json({ ok: true, clearedCount: ids.length });
   });
 
-  app.post("/api/messages/:id/pin", requireAuth, requireRole(["admin", "foreman", "safety"]), (req, res) => {
+  app.post("/api/messages/:id/pin", requireAuth, requireCap(can.chat.pinMessage), (req, res) => {
     const u = (req as AuthedRequest).user;
     const id = Number(req.params.id);
     const msg = storage.getMessage(id);
@@ -1432,7 +1433,7 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
   // room, and rings the phone of anyone who's marked offline or has been
   // idle. Admin/foreman only — keeps random field users from auto-dialing
   // the whole crew by accident.
-  app.post("/api/channels/:id/dial-absent", requireAuth, requireRole(["admin", "foreman"]), async (req, res) => {
+  app.post("/api/channels/:id/dial-absent", requireAuth, requireCap(can.chat.createChannel), async (req, res) => {
     const u = (req as AuthedRequest).user;
     const channelId = Number(req.params.id);
     const access = userCanAccessChannel(u.id, u.orgId, channelId);
@@ -1505,7 +1506,7 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
   // ── DIAL ARBITRARY NUMBER (Phase 1.9) ──
   // "Dial in" input on the call dialog. Accepts a single E.164 number and
   // bridges it into the channel's LiveKit room. Admin/foreman only.
-  app.post("/api/channels/:id/dial-number", requireAuth, requireRole(["admin", "foreman"]), async (req, res) => {
+  app.post("/api/channels/:id/dial-number", requireAuth, requireCap(can.chat.createChannel), async (req, res) => {
     const u = (req as AuthedRequest).user;
     const channelId = Number(req.params.id);
     const access = userCanAccessChannel(u.id, u.orgId, channelId);

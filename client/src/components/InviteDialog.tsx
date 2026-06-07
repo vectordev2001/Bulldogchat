@@ -12,16 +12,14 @@ interface Props {
 }
 
 const ROLES: { value: UserRole; label: string; desc: string }[] = [
-  { value: "field", label: "Field Crew", desc: "Frontline crew — boots-on-site." },
-  { value: "foreman", label: "Foreman", desc: "Crew lead. Can create channels." },
-  { value: "office", label: "Office", desc: "Coordination, scheduling." },
-  { value: "safety", label: "Safety", desc: "Safety officer. Can pin notices." },
+  { value: "user", label: "User", desc: "Standard member — chat, calls, view." },
+  { value: "manager", label: "Manager", desc: "Can create channels/jobs, pin, record." },
   { value: "admin", label: "Admin", desc: "Full org control." },
 ];
 
 export function InviteDialog({ open, onClose, projects, defaultProjectId }: Props) {
   const [email, setEmail] = useState("");
-  const [role, setRole] = useState<UserRole>("field");
+  const [role, setRole] = useState<UserRole>("user");
   const [projectId, setProjectId] = useState<number | null>(defaultProjectId);
   const [loading, setLoading] = useState(false);
   const [link, setLink] = useState<string | null>(null);

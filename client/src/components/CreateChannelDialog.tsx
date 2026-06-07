@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { ApiChannel, ApiUser, ChannelScope, ChannelType, UserRole } from "@/types/api";
+import { isManagerish } from "@/types/api";
 import { Loader2, Hash, Globe, Building2, Users, Lock, Briefcase, Plus, X, FileText } from "lucide-react";
 
 interface ApiJob {
@@ -40,10 +41,8 @@ const SCOPES: { value: ChannelScope; label: string; desc: string; Icon: typeof G
 ];
 
 const ROLES: { value: UserRole; label: string }[] = [
-  { value: "field", label: "Field Crew" },
-  { value: "foreman", label: "Foreman" },
-  { value: "office", label: "Office" },
-  { value: "safety", label: "Safety" },
+  { value: "user", label: "User" },
+  { value: "manager", label: "Manager" },
   { value: "admin", label: "Admin" },
 ];
 
@@ -56,7 +55,7 @@ export function CreateChannelDialog({ open, onClose, projectId, me, onCreated }:
   const type: ChannelType = "text";
   const [scope, setScope] = useState<ChannelScope>("global");
   const [entityId, setEntityId] = useState("");
-  const [teamRole, setTeamRole] = useState<UserRole>("field");
+  const [teamRole, setTeamRole] = useState<UserRole>("user");
   const [memberIds, setMemberIds] = useState<Set<number>>(new Set());
   const [workObjectId, setWorkObjectId] = useState<string>("");
   const [loading, setLoading] = useState(false);
@@ -87,7 +86,7 @@ export function CreateChannelDialog({ open, onClose, projectId, me, onCreated }:
       // type is a const ("text") in Phase 1.9 unified channels — no setter.
       setScope("global");
       setEntityId("");
-      setTeamRole("field");
+      setTeamRole("user");
       setMemberIds(new Set());
       setWorkObjectId("");
       setError(null);
@@ -146,7 +145,7 @@ export function CreateChannelDialog({ open, onClose, projectId, me, onCreated }:
 
   // Roles allowed to create jobs (mirrors server-side requireRole). Showing
   // the inline creator to anyone else would just yield a 403, so hide it.
-  const canCreateJob = me?.role === "admin" || me?.role === "foreman";
+  const canCreateJob = isManagerish(me?.role);
 
   // Generate a URL-safe ref from the title — the server requires one and we
   // don't want to add another field. "BOE Fiber 2026" → "BOE-Fiber-2026".

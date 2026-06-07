@@ -6,16 +6,14 @@ import { useCalls } from "@/lib/CallContext";
 import { Phone, Video, X, UserPlus, Loader2, Check, Search, PhoneCall, Link as LinkIcon } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 
-const ROLE_ORDER: UserRole[] = ["admin", "foreman", "safety", "office", "field"];
+const ROLE_ORDER: UserRole[] = ["admin", "manager", "user"];
 const ROLE_TINT: Record<UserRole, string> = {
   admin:   "text-[hsl(2_85%_72%)]",
-  foreman: "text-vs-blue-light",
-  safety:  "text-[hsl(2_85%_72%)]",
-  office:  "text-[hsl(35_100%_70%)]",
-  field:   "text-vs-green",
+  manager: "text-vs-blue-light",
+  user:    "text-vs-green",
 };
 const ROLE_LABEL: Record<UserRole, string> = {
-  admin: "Admin", foreman: "Foreman", office: "Office", field: "Field Crew", safety: "Safety",
+  admin: "Admin", manager: "Manager", user: "User",
 };
 
 interface Props {

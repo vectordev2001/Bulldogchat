@@ -15,7 +15,11 @@ export type Organization = typeof organizations.$inferSelect;
 export type InsertOrganization = z.infer<typeof insertOrganizationSchema>;
 
 /* ─────────────────── USERS ─────────────────── */
-export const userRoles = ["admin", "foreman", "office", "field", "safety"] as const;
+// Phase 2.0 unified roles. Legacy values (foreman/office/field/safety/
+// dispatcher/field_crew) are remapped to "user" by the boot migration and by
+// mapAuthRoleToChatRole; "admin" is unchanged. super_admin from auth maps to
+// "admin" locally (chat has no super tier of its own).
+export const userRoles = ["user", "manager", "admin"] as const;
 export type UserRole = typeof userRoles[number];
 
 export const users = sqliteTable("users", {
@@ -27,7 +31,7 @@ export const users = sqliteTable("users", {
   title: text("title"),
   avatarUrl: text("avatar_url"),
   hue: integer("hue").notNull().default(220),
-  role: text("role", { enum: userRoles }).notNull().default("field"),
+  role: text("role", { enum: userRoles }).notNull().default("user"),
   status: text("status").notNull().default("online"),
   // Phase 1.9 presence state for the top-bar status dot. Distinct from
   // `status` (legacy free-form string). Drives DND push gating.
@@ -312,7 +316,7 @@ export const invites = sqliteTable("invites", {
   orgId: integer("org_id").notNull().references(() => organizations.id),
   projectId: integer("project_id").references(() => projects.id),
   email: text("email"),
-  role: text("role", { enum: userRoles }).notNull().default("field"),
+  role: text("role", { enum: userRoles }).notNull().default("user"),
   token: text("token").notNull().unique(),
   invitedByUserId: integer("invited_by_user_id").notNull().references(() => users.id),
   expiresAt: integer("expires_at", { mode: "timestamp" }).notNull(),

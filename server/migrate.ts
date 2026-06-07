@@ -963,4 +963,23 @@ export function runMigrations() {
   } catch (e: any) {
     console.warn("[migrate v22] error:", e?.message);
   }
+
+  // v24 (Phase 2.0) — unified role model. Collapse the legacy chat roles
+  // (field_crew/foreman/office/safety/dispatcher/field) onto the global
+  // user/manager/admin enum. 'admin' is preserved; everything non-admin maps
+  // to 'user' (managers are promoted from auth later via the SSO sync, not
+  // guessed from a legacy chat role). Sessions are unaffected — the JWT only
+  // carries {sub}, role is read live from this column. Idempotent: once every
+  // row is user/manager/admin the UPDATE matches nothing.
+  try {
+    const info = rawDb.prepare(
+      `UPDATE users SET role = 'user'
+       WHERE role NOT IN ('user', 'manager', 'admin')`,
+    ).run();
+    if (info.changes && info.changes > 0) {
+      console.log(`[migrate v24] remapped ${info.changes} legacy user.role rows → 'user'`);
+    }
+  } catch (e: any) {
+    console.warn("[migrate v24] role remap error:", e?.message);
+  }
 }

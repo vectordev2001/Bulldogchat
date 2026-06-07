@@ -25,7 +25,8 @@
  */
 import type { Express, Request, Response } from "express";
 import { storage, sanitize } from "./storage";
-import { requireAuth, requireRole, AuthedRequest } from "./auth";
+import { requireAuth, requireCap, AuthedRequest } from "./auth";
+import { can } from "@shared/permissions";
 import { broadcastWorkObjectEvent } from "./system-messages";
 import {
   workObjectCreateSchema,
@@ -127,7 +128,7 @@ export function registerWorkObjectRoutes(app: Express) {
   });
 
   /* ─── create ─── */
-  app.post("/api/work-objects", requireAuth, requireRole(["admin", "foreman"]), (req, res) => {
+  app.post("/api/work-objects", requireAuth, requireCap(can.chat.createChannel), (req, res) => {
     const u = (req as AuthedRequest).user;
     const parsed = workObjectCreateSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -204,7 +205,7 @@ export function registerWorkObjectRoutes(app: Express) {
   });
 
   /* ─── update ─── */
-  app.patch("/api/work-objects/:id", requireAuth, requireRole(["admin", "foreman"]), (req, res) => {
+  app.patch("/api/work-objects/:id", requireAuth, requireCap(can.chat.createChannel), (req, res) => {
     const u = (req as AuthedRequest).user;
     const id = Number(req.params.id);
     const wo = loadOwned(req, res, id);
@@ -303,7 +304,7 @@ export function registerWorkObjectRoutes(app: Express) {
   // messages, reactions, mentions, receipts, member grants, recordings,
   // and livekit rooms). Also tears down work_object_channel_links and
   // any work_object_activity rows. Org-scoped. Admin role required.
-  app.delete("/api/work-objects/:id", requireAuth, requireRole(["admin"]), (req, res) => {
+  app.delete("/api/work-objects/:id", requireAuth, requireCap(can.chat.deleteChannel), (req, res) => {
     const u = (req as AuthedRequest).user;
     const id = Number(req.params.id);
     if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
@@ -319,7 +320,7 @@ export function registerWorkObjectRoutes(app: Express) {
   });
 
   /* ─── close / reopen ─── */
-  app.post("/api/work-objects/:id/close", requireAuth, requireRole(["admin", "foreman"]), (req, res) => {
+  app.post("/api/work-objects/:id/close", requireAuth, requireCap(can.chat.createChannel), (req, res) => {
     const u = (req as AuthedRequest).user;
     const id = Number(req.params.id);
     const wo = loadOwned(req, res, id);
@@ -343,7 +344,7 @@ export function registerWorkObjectRoutes(app: Express) {
     res.json(publicWorkObject(updated ?? wo));
   });
 
-  app.post("/api/work-objects/:id/reopen", requireAuth, requireRole(["admin", "foreman"]), (req, res) => {
+  app.post("/api/work-objects/:id/reopen", requireAuth, requireCap(can.chat.createChannel), (req, res) => {
     const u = (req as AuthedRequest).user;
     const id = Number(req.params.id);
     const wo = loadOwned(req, res, id);
@@ -425,7 +426,7 @@ export function registerWorkObjectRoutes(app: Express) {
 
   // Link an existing work object to a channel. Accepts either { workObjectId }
   // or { ref } in the body. ref-based linking is what /object uses.
-  app.post("/api/channels/:id/work-objects", requireAuth, requireRole(["admin", "foreman"]), (req, res) => {
+  app.post("/api/channels/:id/work-objects", requireAuth, requireCap(can.chat.createChannel), (req, res) => {
     const u = (req as AuthedRequest).user;
     const channelId = Number(req.params.id);
     const channel = storage.getChannel(channelId);
@@ -468,7 +469,7 @@ export function registerWorkObjectRoutes(app: Express) {
     res.json(publicWorkObject(wo));
   });
 
-  app.delete("/api/channels/:id/work-objects/:woId", requireAuth, requireRole(["admin", "foreman"]), (req, res) => {
+  app.delete("/api/channels/:id/work-objects/:woId", requireAuth, requireCap(can.chat.createChannel), (req, res) => {
     const u = (req as AuthedRequest).user;
     const channelId = Number(req.params.id);
     const woId = Number(req.params.woId);

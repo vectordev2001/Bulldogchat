@@ -9,7 +9,7 @@ export interface PublicUser {
   title: string | null;
   avatarUrl: string | null;
   hue: number;
-  role: "admin" | "foreman" | "office" | "field" | "safety";
+  role: "user" | "manager" | "admin";
   status: string;
   lastSeenAt: string | null;
   createdAt: string;

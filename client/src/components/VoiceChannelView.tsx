@@ -9,6 +9,7 @@ import { MeetingNotesHistory } from "./MeetingNotesHistory";
 import { Avatar } from "./Avatar";
 import { motion } from "framer-motion";
 import type { ApiChannel, ApiUser, ApiRecording, VoiceTokenResponse } from "@/types/api";
+import { isManagerish } from "@/types/api";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import {
@@ -59,7 +60,7 @@ function formatDuration(secs: number): string {
 }
 
 const ROLE_LABEL: Record<ApiUser["role"], string> = {
-  admin: "Admin", foreman: "Foreman", office: "Office", field: "Field Crew", safety: "Safety",
+  admin: "Admin", manager: "Manager", user: "User",
 };
 
 export function VoiceChannelView(props: Props) {
@@ -78,7 +79,7 @@ export function VoiceChannelView(props: Props) {
   // Phase 1.9.4 — meeting notes history popover.
   const [showNotesHistory, setShowNotesHistory] = useState(false);
 
-  const canRecord = me.role === "admin" || me.role === "foreman";
+  const canRecord = isManagerish(me.role);
   const [showPast, setShowPast] = useState(false);
   const recordingsQ = useQuery<ApiRecording[]>({
     queryKey: ["/api/channels", channel.id, "recordings"],
@@ -167,7 +168,7 @@ export function VoiceChannelView(props: Props) {
             id: p.userId || (p.isLocal ? me.id : 0),
             name: member?.name ?? p.name,
             hue: member?.hue ?? 210,
-            role: member?.role ?? "field",
+            role: member?.role ?? "user",
             title: member?.title ?? null,
             live: p,
             handRaised: p.handRaised,
@@ -210,7 +211,7 @@ export function VoiceChannelView(props: Props) {
     if (previewMode !== false) return; // only auto-dial in real LK mode
     if (lk.status !== "connected") return; // wait until we're truly in the room
     if (dialAbsentFiredRef.current) return;
-    if (me.role !== "admin" && me.role !== "foreman") return; // gated client-side too
+    if (!isManagerish(me.role)) return; // gated client-side too
     const timer = setTimeout(async () => {
       dialAbsentFiredRef.current = true;
       try {

@@ -133,16 +133,15 @@ async function tryFetch(
   }
 }
 
-// Map an auth role string onto chat's role enum. Chat enum: admin/foreman/
-// office/field/safety. Auth uses admin/manager/foreman/safety/field/etc.
+// Map an auth role string onto chat's role enum. Phase 2.0 collapses chat to
+// user/manager/admin. Auth's super_admin maps to admin locally; manager stays
+// manager; every other (legacy) value becomes a plain user.
 function mapAuthRoleToChatRole(authRole: string | null | undefined):
-  "admin" | "foreman" | "office" | "field" | "safety" {
+  "admin" | "manager" | "user" {
   const r = (authRole || "").toLowerCase();
-  if (r === "admin") return "admin";
-  if (r === "manager") return "office";
-  if (r === "foreman") return "foreman";
-  if (r === "safety") return "safety";
-  return "field";
+  if (r === "admin" || r === "super_admin") return "admin";
+  if (r === "manager") return "manager";
+  return "user";
 }
 
 export async function syncDeactivatedFromAuth(opts: SyncOpts = {}): Promise<SyncResult> {

@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { ApiUser } from "@/types/api";
+import { isManagerish } from "@/types/api";
 import { CreateWorkObjectDialog } from "./CreateWorkObjectDialog";
 import { WorkObjectDetailDrawer } from "./WorkObjectDetailDrawer";
 
@@ -91,7 +92,7 @@ export function WorkObjectsListDialog({ open, onClose, me, orgMembers, activePro
   // Detail drawer state — clicking a row opens this without dismissing the list.
   const [detailId, setDetailId] = useState<number | null>(null);
 
-  const canCreate = me.role === "admin" || me.role === "foreman";
+  const canCreate = isManagerish(me.role);
 
   // Fetch all jobs in the user's org. includeClosed=1 when needed.
   // Backend already filters by org via the auth context, so we just paginate

@@ -11,7 +11,7 @@ import type { ApiUser, ApiProject, UserRole } from "@/types/api";
 type Tab = "users" | "projects" | "invites" | "settings";
 
 const ROLE_LABEL: Record<UserRole, string> = {
-  admin: "Admin", foreman: "Foreman", office: "Office", field: "Field Crew", safety: "Safety",
+  admin: "Admin", manager: "Manager", user: "User",
 };
 
 export default function AdminPanel() {
@@ -242,7 +242,7 @@ function ProjectsTab() {
 // ─────────── INVITES TAB ───────────
 function InvitesTab() {
   const invitesQ = useQuery<any[]>({ queryKey: ["/api/admin/invites"] });
-  const [role, setRole] = useState<UserRole>("field");
+  const [role, setRole] = useState<UserRole>("user");
   const [copiedId, setCopiedId] = useState<number | null>(null);
 
   const createInvite = useMutation({

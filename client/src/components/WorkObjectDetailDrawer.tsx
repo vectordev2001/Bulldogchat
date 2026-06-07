@@ -22,6 +22,7 @@ import {
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { ApiUser } from "@/types/api";
+import { isManagerish } from "@/types/api";
 
 type WorkObjectKind = "job_site" | "work_project" | "change_order" | "safety_incident";
 
@@ -90,7 +91,7 @@ export function WorkObjectDetailDrawer({ open, workObjectId, onClose, me, orgMem
   const { toast } = useToast();
   const [editMode, setEditMode] = useState(false);
 
-  const canEdit = me.role === "admin" || me.role === "foreman";
+  const canEdit = isManagerish(me.role);
 
   const detailQ = useQuery<WorkObjectDetail>({
     queryKey: ["/api/work-objects", workObjectId],

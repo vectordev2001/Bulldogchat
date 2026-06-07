@@ -3,6 +3,19 @@ import bcrypt from "bcryptjs";
 import type { Request, Response, NextFunction } from "express";
 import { storage } from "./storage";
 import type { User } from "@shared/schema";
+import { type Role } from "@shared/permissions";
+
+/**
+ * Resolve a chat user's local role onto the Phase 2.0 Role enum. Chat stores
+ * user/manager/admin now, but legacy rows may still read foreman/office/field/
+ * safety/dispatcher/field_crew until the boot migration converges them — treat
+ * any non-admin/non-manager value as "user".
+ */
+export function chatRole(u: { role: string }): Role {
+  if (u.role === "admin" || u.role === "super_admin") return "admin";
+  if (u.role === "manager") return "manager";
+  return "user";
+}
 
 const JWT_SECRET = process.env.JWT_SECRET || "vector-chat-dev-secret-change-me";
 const TOKEN_TTL_SECONDS = 60 * 60 * 24 * 14; // 14 days
@@ -78,6 +91,20 @@ export function requireRole(roles: User["role"][]) {
     const u = (req as AuthedRequest).user;
     if (!u) return res.status(401).json({ message: "Unauthorized" });
     if (!roles.includes(u.role)) return res.status(403).json({ message: "Forbidden" });
+    next();
+  };
+}
+
+/**
+ * Phase 2.0 capability gate. Pass a predicate from the `can.chat.*` matrix;
+ * it's evaluated against the caller's resolved Role. Replaces the old
+ * hardcoded requireRole([...]) lists for chat actions.
+ */
+export function requireCap(capFn: (r: Role) => boolean) {
+  return (req: Request, res: Response, next: NextFunction) => {
+    const u = (req as AuthedRequest).user;
+    if (!u) return res.status(401).json({ message: "Unauthorized" });
+    if (!capFn(chatRole(u))) return res.status(403).json({ message: "Forbidden" });
     next();
   };
 }

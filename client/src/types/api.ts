@@ -1,6 +1,12 @@
 // Frontend type shapes mirroring the backend wire format from server/routes.ts
 
-export type UserRole = "admin" | "foreman" | "office" | "field" | "safety";
+export type UserRole = "user" | "manager" | "admin";
+
+// Phase 2.0: managers and admins can perform elevated chat actions (create
+// channels/jobs, pin, record, manage members). Plain users cannot.
+export function isManagerish(role: UserRole | string | undefined | null): boolean {
+  return role === "manager" || role === "admin";
+}
 export type UserPresence = "online" | "away" | "busy" | "offline";
 
 export interface ApiUser {

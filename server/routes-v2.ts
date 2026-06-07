@@ -7,7 +7,8 @@ import { nanoid } from "nanoid";
 import sharp from "sharp";
 import { storage, sanitize } from "./storage";
 import { getStorageBackend } from "./storage-files";
-import { hashPassword, requireAuth, requireRole, AuthedRequest } from "./auth";
+import { hashPassword, requireAuth, requireRole, requireCap, AuthedRequest } from "./auth";
+import { can } from "@shared/permissions";
 import { rawDb } from "./db";
 import type { WireMessage } from "./events";
 import { emitMessageNew } from "./events";
@@ -250,7 +251,7 @@ export function registerV2Routes(app: Express) {
     const target = storage.getUser(id);
     if (!target || target.orgId !== u.orgId) return res.status(404).json({ message: "Not found" });
     const patch: any = {};
-    if (req.body?.role && ["admin","foreman","office","field","safety"].includes(req.body.role)) patch.role = req.body.role;
+    if (req.body?.role && ["user","manager","admin"].includes(req.body.role)) patch.role = req.body.role;
     if (req.body?.name) patch.name = String(req.body.name).slice(0, 80);
     if (req.body?.title !== undefined) patch.title = req.body.title ? String(req.body.title).slice(0, 80) : null;
     if (req.body?.status) patch.status = String(req.body.status);
@@ -377,7 +378,7 @@ export function registerV2Routes(app: Express) {
   });
 
   // ─────────── RECORDING ───────────
-  app.post("/api/channels/:id/recording/start", requireAuth, requireRole(["admin", "foreman"]), async (req, res) => {
+  app.post("/api/channels/:id/recording/start", requireAuth, requireCap(can.chat.createChannel), async (req, res) => {
     const u = (req as AuthedRequest).user;
     const channelId = Number(req.params.id);
     const ch = storage.getChannel(channelId);
@@ -402,7 +403,7 @@ export function registerV2Routes(app: Express) {
     });
   });
 
-  app.post("/api/channels/:id/recording/stop", requireAuth, requireRole(["admin", "foreman"]), async (req, res) => {
+  app.post("/api/channels/:id/recording/stop", requireAuth, requireCap(can.chat.createChannel), async (req, res) => {
     const u = (req as AuthedRequest).user;
     const channelId = Number(req.params.id);
     const ch = storage.getChannel(channelId);

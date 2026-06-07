@@ -18,6 +18,16 @@ import { AUTH_COOKIE, signJwt, setAuthCookie, verifyJwt } from "./auth";
 
 const AUTH_BASE = process.env.BULLDOG_AUTH_URL || "https://auth.bulldogops.com";
 
+// Phase 2.0: auth is the source of truth for roles. Collapse onto chat's
+// user/manager/admin enum — super_admin maps to admin, manager stays manager,
+// everything else (legacy or unset) is a plain user.
+function mapSsoRoleToChatRole(authRole: string | null | undefined): "admin" | "manager" | "user" {
+  const r = (authRole || "").toLowerCase();
+  if (r === "admin" || r === "super_admin") return "admin";
+  if (r === "manager") return "manager";
+  return "user";
+}
+
 const optionalVerifier: RequestHandler = bulldogAuth({
   authBaseUrl: AUTH_BASE,
   optional: true,
@@ -64,14 +74,8 @@ export function bulldogSsoBridge(): RequestHandler {
           // First-time SSO landing — provision a local shadow user so the rest
           // of chat (messages, project_members, etc.) has someone to attach to.
           try {
-            // Map bulldog-auth roles to chat roles. Chat enum: admin/foreman/office/field/safety.
-            const ssoRole = (req.user.role || "").toLowerCase();
-            const chatRole: "admin" | "foreman" | "office" | "field" | "safety" =
-              ssoRole === "admin" ? "admin"
-              : ssoRole === "manager" ? "office"
-              : ssoRole === "foreman" ? "foreman"
-              : ssoRole === "safety" ? "safety"
-              : "field";
+            // Phase 2.0: collapse auth roles onto chat's user/manager/admin.
+            const chatRole = mapSsoRoleToChatRole(req.user.role);
             local = storage.createUser({
               orgId: 1, // single-org install
               email: emailLower,
@@ -123,6 +127,14 @@ export function bulldogSsoBridge(): RequestHandler {
         if (authPhone !== ((local as { phone?: string | null }).phone ?? null)) {
           try { storage.updateUser(local.id, { phone: authPhone }); }
           catch (e) { console.warn("[chat bulldogSsoBridge] phone sync failed:", e); }
+        }
+        // Phase 2.0 role sync: auth owns role. Promote/demote the chat row on
+        // every bridge so manager/admin grants made in auth take effect on the
+        // user's next page load rather than waiting for an admin sync sweep.
+        const syncedRole = mapSsoRoleToChatRole(req.user.role);
+        if (syncedRole !== local.role) {
+          try { storage.updateUser(local.id, { role: syncedRole }); }
+          catch (e) { console.warn("[chat bulldogSsoBridge] role sync failed:", e); }
         }
         // Backfill: if an existing local user is in zero projects, seed them
         // into every org project. Cheap idempotent guard for users created

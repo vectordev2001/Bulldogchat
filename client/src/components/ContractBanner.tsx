@@ -12,6 +12,7 @@ import { ExternalLink, FileText, X, Loader2 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { ActionPill } from "@/components/ui/action-pill";
 import type { ApiChannel, ApiLinkedContract, ApiUser } from "@/types/api";
+import { isManagerish } from "@/types/api";
 
 interface Props {
   channel: ApiChannel;
@@ -21,7 +22,7 @@ interface Props {
 
 export function ContractBanner({ channel, contract, me }: Props) {
   const [detaching, setDetaching] = useState(false);
-  const canDetach = me?.role === "admin" || me?.role === "foreman";
+  const canDetach = isManagerish(me?.role);
 
   const onDetach = async () => {
     if (!confirm(`Detach "${contract.title}" from this channel?`)) return;

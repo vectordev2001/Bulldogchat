@@ -3,6 +3,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { ClipboardList, ChevronRight, X, Plus, Loader2, MapPin, Briefcase, FileEdit, AlertTriangle, Hash, RefreshCw } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { ApiUser, ApiChannel } from "@/types/api";
+import { isManagerish } from "@/types/api";
 import { CreateWorkObjectDialog } from "./CreateWorkObjectDialog";
 import { WorkObjectDetailDrawer } from "./WorkObjectDetailDrawer";
 
@@ -67,7 +68,7 @@ export function WorkObjectPanel({ channelId, me, orgMembers, onClose, onSelectCh
   // Detail drawer launches over this panel; null = closed.
   const [detailId, setDetailId] = useState<number | null>(null);
 
-  const canLink = me.role === "admin" || me.role === "foreman";
+  const canLink = isManagerish(me.role);
 
   // The data model is one-to-many: a job has many channels, but a channel has
   // at most one job. The link endpoint can technically return several rows, so

@@ -3,6 +3,7 @@ import { useMutation } from "@tanstack/react-query";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { ApiUser } from "@/types/api";
+import { isManagerish } from "@/types/api";
 import { Loader2, MapPin, Briefcase, FileEdit, AlertTriangle } from "lucide-react";
 
 type WorkObjectKind = "job_site" | "work_project" | "change_order" | "safety_incident";
@@ -141,7 +142,7 @@ export function CreateWorkObjectDialog({ open, onClose, channelId, projectId, me
     createMutation.mutate();
   };
 
-  const canCreate = me.role === "admin" || me.role === "foreman";
+  const canCreate = isManagerish(me.role);
   if (!canCreate) return null;
 
   const selectedKind = KINDS.find((k) => k.value === kind)!;

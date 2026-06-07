@@ -37,13 +37,11 @@ interface Props {
 
 const ROLE_COLOR: Record<UserRole, string> = {
   admin: "text-[hsl(2_85%_72%)]",
-  foreman: "text-vs-blue-light",
-  office: "text-[hsl(35_100%_70%)]",
-  field: "text-vs-green",
-  safety: "text-[hsl(2_85%_72%)]",
+  manager: "text-vs-blue-light",
+  user: "text-vs-green",
 };
 const ROLE_LABEL: Record<UserRole, string> = {
-  admin: "Admin", foreman: "Foreman", office: "Office", field: "Field Crew", safety: "Safety",
+  admin: "Admin", manager: "Manager", user: "User",
 };
 
 function fmtTime(iso: string): string {
@@ -1084,10 +1082,8 @@ function MessageRow({ msg, grouped, isMe, meId, myRole, onOpenThread, onJoinMeet
 function RoleBadge({ role }: { role: UserRole }) {
   const color = {
     admin:   "bg-[hsl(2_70%_55%/0.18)] text-[hsl(2_85%_72%)] border-[hsl(2_70%_55%/0.4)]",
-    foreman: "bg-[hsl(218_100%_68%/0.15)] text-vs-blue-light border-[hsl(218_100%_68%/0.4)]",
-    office:  "bg-[hsl(35_100%_60%/0.15)] text-[hsl(35_100%_72%)] border-[hsl(35_100%_60%/0.4)]",
-    field:   "bg-[hsl(145_60%_48%/0.15)] text-vs-green border-[hsl(145_60%_48%/0.4)]",
-    safety:  "bg-[hsl(2_70%_55%/0.15)] text-[hsl(2_85%_72%)] border-[hsl(2_70%_55%/0.4)]",
+    manager: "bg-[hsl(218_100%_68%/0.15)] text-vs-blue-light border-[hsl(218_100%_68%/0.4)]",
+    user:    "bg-[hsl(145_60%_48%/0.15)] text-vs-green border-[hsl(145_60%_48%/0.4)]",
   }[role];
 
   return (

@@ -273,7 +273,7 @@ export function registerIntegrationRoutes(app: Express) {
             email: attachedByEmail,
             passwordHash: "",
             name: attachedByName || attachedByEmail,
-            role: "field", // real role syncs on first SSO bridge
+            role: "user", // real role syncs on first SSO bridge
           });
           try {
             const orgProjects = storage.listProjectsByOrg(orgId);
@@ -339,7 +339,7 @@ export function registerIntegrationRoutes(app: Express) {
             email,
             passwordHash: "",
             name: email,
-            role: "field", // default; real role syncs on first SSO bridge
+            role: "user", // default; real role syncs on first SSO bridge
           });
           // Seed into every project in the org — same behaviour as bulldog-sso
           // first-login so they immediately see global channels.
