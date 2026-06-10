@@ -37,6 +37,10 @@ function channelIdFromRoomName(roomName: string | undefined | null): number | nu
 // (Phase 1.9.26 — user reported camera doesn't work in the in-app browser.)
 function detectIOSInAppBrowser(): boolean {
   if (typeof navigator === "undefined") return false;
+  // Running inside the Bulldog native iOS shell. The native WKWebView grants
+  // camera/mic via WKUIDelegate, so the banner is wrong here.
+  // @ts-expect-error — set by the iOS WebView user script.
+  if (typeof window !== "undefined" && window.bulldogNative === true) return false;
   const ua = navigator.userAgent;
   const isIOS = /iPad|iPhone|iPod/.test(ua) || (ua.includes("Mac") && (navigator as { maxTouchPoints?: number }).maxTouchPoints! > 1);
   if (!isIOS) return false;

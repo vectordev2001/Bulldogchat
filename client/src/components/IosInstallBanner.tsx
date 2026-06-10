@@ -31,6 +31,9 @@ function isIos(): boolean {
 
 function isStandalone(): boolean {
   if (typeof window === "undefined") return false;
+  // Running inside the Bulldog native iOS shell — never show install banner.
+  // @ts-expect-error — set by the iOS WebView user script.
+  if (window.bulldogNative === true) return true;
   // iOS Safari sets navigator.standalone === true when launched from a
   // home-screen install. Other browsers honor the display-mode media
   // query. Either signal means we're already full-screen — hide the banner.
