@@ -510,7 +510,7 @@ class DatabaseStorage implements IStorage {
     // Strip reactions and mentions — nothing meaningful to react to or be
     // mentioned in once the content is gone.
     db.delete(reactions).where(eq(reactions.messageId, id)).run();
-    rawDb.prepare("DELETE FROM mentions WHERE message_id = ?").run(id);
+    rawDb.prepare("DELETE FROM message_mentions WHERE message_id = ?").run(id);
     // Unlink attachments from this message. We leave the attachment rows
     // alone — they may be referenced elsewhere or kept for object-store GC.
     rawDb.prepare("UPDATE attachments SET message_id = NULL WHERE message_id = ?").run(id);
@@ -534,7 +534,7 @@ class DatabaseStorage implements IStorage {
     const placeholders = ids.map(() => "?").join(",");
     const tx = rawDb.transaction(() => {
       rawDb.prepare(`DELETE FROM reactions WHERE message_id IN (${placeholders})`).run(...ids);
-      rawDb.prepare(`DELETE FROM mentions  WHERE message_id IN (${placeholders})`).run(...ids);
+      rawDb.prepare(`DELETE FROM message_mentions WHERE message_id IN (${placeholders})`).run(...ids);
       rawDb.prepare(`UPDATE attachments SET message_id = NULL WHERE message_id IN (${placeholders})`).run(...ids);
       rawDb.prepare(
         `UPDATE messages SET content = '', attachments = NULL, deleted_at = strftime('%s','now') * 1000, deleted_by_user_id = ? WHERE id IN (${placeholders})`
