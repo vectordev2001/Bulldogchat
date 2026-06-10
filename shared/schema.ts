@@ -480,6 +480,12 @@ export const scheduledCalls = sqliteTable("scheduled_calls", {
   // ICS sequence number; bump on each edit so calendar clients update
   // the existing event rather than creating a duplicate.
   icsSequence: integer("ics_sequence").notNull().default(0),
+  // Microsoft Teams parallel-join support (Phase 2.1). Populated when a
+  // Teams online meeting is created via MS Graph at schedule time. Both are
+  // nullable: dev/standalone environments without M365 credentials simply
+  // run the Bulldog-only flow and leave these unset.
+  teamsJoinUrl: text("teams_join_url"),
+  teamsMeetingId: text("teams_meeting_id"),
   createdAt: integer("created_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
   updatedAt: integer("updated_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
 });
@@ -520,6 +526,8 @@ export const insertScheduledCallSchema = createInsertSchema(scheduledCalls).omit
   icsSequence: true,
   status: true,
   roomName: true,
+  teamsJoinUrl: true,
+  teamsMeetingId: true,
 });
 
 /* ─────────────────── WORK OBJECTS ─────────────────── */

@@ -982,4 +982,24 @@ export function runMigrations() {
   } catch (e: any) {
     console.warn("[migrate v24] role remap error:", e?.message);
   }
+
+  // v25 (Phase 2.1) — Microsoft Teams parallel-join. Add two nullable columns
+  // to scheduled_calls so a Teams online meeting created via MS Graph at
+  // schedule time can be surfaced alongside the Bulldog join link. Nullable so
+  // no backfill is needed and environments without M365 credentials are
+  // unaffected. Idempotent: skip the ALTER if the column already exists.
+  try {
+    const scCols = rawDb.prepare(`PRAGMA table_info(scheduled_calls)`).all() as Array<{ name: string }>;
+    const have = new Set(scCols.map(c => c.name));
+    if (!have.has("teams_join_url")) {
+      rawDb.exec(`ALTER TABLE scheduled_calls ADD COLUMN teams_join_url TEXT;`);
+      console.log("[migrate] v25 added scheduled_calls.teams_join_url column");
+    }
+    if (!have.has("teams_meeting_id")) {
+      rawDb.exec(`ALTER TABLE scheduled_calls ADD COLUMN teams_meeting_id TEXT;`);
+      console.log("[migrate] v25 added scheduled_calls.teams_meeting_id column");
+    }
+  } catch (e: any) {
+    console.warn("[migrate v25] teams columns skipped:", e?.message);
+  }
 }

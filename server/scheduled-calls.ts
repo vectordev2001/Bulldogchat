@@ -26,6 +26,7 @@ import { emitMessageNew, emitMessageDelete } from "./events";
 import { requireAuth, type AuthedRequest } from "./auth";
 import { sendEmail, isEmailConfigured, emailFromAddress, emailFromName } from "./email";
 import { sendNotificationToUsers } from "./push";
+import { createTeamsMeeting } from "./teams/createMeeting";
 import type { ScheduledCall, ScheduledCallInvitee, ScheduledCallSystemMessageMeta, RsvpResponse } from "@shared/schema";
 
 const CHAT_BASE_URL = process.env.CHAT_BASE_URL || "https://chat.bulldogops.com";
@@ -70,6 +71,8 @@ function rowToScheduledCall(r: any): ScheduledCall {
     status: r.status,
     reminderSentAt: r.reminder_sent_at ? new Date(r.reminder_sent_at * 1000) : null,
     icsSequence: r.ics_sequence,
+    teamsJoinUrl: r.teams_join_url ?? null,
+    teamsMeetingId: r.teams_meeting_id ?? null,
     createdAt: new Date(r.created_at * 1000),
     updatedAt: new Date(r.updated_at * 1000),
   };
@@ -200,6 +203,13 @@ function markReminderSent(id: number) {
   rawDb.prepare("UPDATE scheduled_calls SET reminder_sent_at = ?, updated_at = ? WHERE id = ?").run(now, now, id);
 }
 
+function setTeamsMeeting(id: number, joinUrl: string, meetingId: string) {
+  const now = Math.floor(Date.now() / 1000);
+  rawDb.prepare(
+    "UPDATE scheduled_calls SET teams_join_url = ?, teams_meeting_id = ?, updated_at = ? WHERE id = ?",
+  ).run(joinUrl, meetingId, now, id);
+}
+
 function markInviteSent(inviteeId: number, err: string | null) {
   const now = Math.floor(Date.now() / 1000);
   if (err) {
@@ -322,7 +332,9 @@ async function dispatchInvites(call: ScheduledCall): Promise<void> {
           title: call.title,
           description:
             (call.notes ? call.notes + "\n\n" : "") +
-            `Join: ${joinUrl}\nOrganizer: ${organizer.name}`,
+            `Join via Bulldog: ${joinUrl}\n` +
+            (call.teamsJoinUrl ? `Join via Teams: ${call.teamsJoinUrl}\n` : "") +
+            `Organizer: ${organizer.name}`,
           startUtc: call.startAt,
           endUtc: call.endAt,
           organizerEmail: organizer.email,
@@ -338,7 +350,10 @@ async function dispatchInvites(call: ScheduledCall): Promise<void> {
         const textBody = [
           `${organizer.name} has scheduled a ${call.kind} call: "${call.title}"`,
           `When: ${whenLabel}`,
-          `Join: ${joinUrl}`,
+          ``,
+          `Choose your preferred way to join:`,
+          `Join via Bulldog: ${joinUrl}`,
+          ...(call.teamsJoinUrl ? [`Join via Teams:   ${call.teamsJoinUrl}`] : []),
           ``,
           `RSVP:`,
           `  Yes    → ${rsvpYesUrl}`,
@@ -351,7 +366,12 @@ async function dispatchInvites(call: ScheduledCall): Promise<void> {
 <h2 style="color:#58a6ff;margin-top:0">${escH(call.title)}</h2>
 <p><strong>Organizer:</strong> ${escH(organizer.name)}<br/>
 <strong>When:</strong> ${escH(whenLabel)}</p>
-<p><a href="${escH(joinUrl)}" style="display:inline-block;padding:10px 20px;background:#1f6feb;color:#fff;border-radius:6px;text-decoration:none;font-weight:bold;">Join Meeting</a></p>
+<p style="margin-bottom:6px;font-size:13px;color:#8b949e;">Choose your preferred way to join:</p>
+<p style="margin-top:0"><a href="${escH(joinUrl)}" style="display:inline-block;padding:10px 20px;background:#1f6feb;color:#fff;border-radius:6px;text-decoration:none;font-weight:bold;">Join via Bulldog</a>${
+  call.teamsJoinUrl
+    ? `<br/><a href="${escH(call.teamsJoinUrl)}" style="display:inline-block;padding:10px 20px;background:#5b5fc7;color:#fff;border-radius:6px;text-decoration:none;font-weight:bold;margin-top:8px;">Join via Microsoft Teams</a>`
+    : ""
+}</p>
 <p style="margin-top:16px"><strong>RSVP:</strong></p>
 <p>
   <a href="${escH(rsvpYesUrl)}" style="display:inline-block;margin-right:8px;padding:8px 16px;background:#238636;color:#fff;border-radius:6px;text-decoration:none;font-weight:bold;">Yes</a>
@@ -722,6 +742,28 @@ export function registerScheduledCallRoutes(app: Express) {
       externalEmails: emails,
     });
 
+    // Best-effort: create a parallel Microsoft Teams online meeting so invites
+    // can offer a Teams join link alongside the Bulldog link. If MS Graph is
+    // not configured or the call fails, createTeamsMeeting returns null and we
+    // continue with the Bulldog-only flow — scheduling must never fail because
+    // Teams is unavailable. We do this before dispatch so the link is present
+    // in the very first invite email.
+    try {
+      const teams = await createTeamsMeeting({
+        subject: call.title,
+        startUtc: call.startAt,
+        endUtc: call.endAt,
+        organizerEmail: process.env.MS_GRAPH_DEFAULT_ORGANIZER?.trim() || "admin@bulldogops.com",
+      });
+      if (teams) {
+        setTeamsMeeting(call.id, teams.joinUrl, teams.meetingId);
+        call.teamsJoinUrl = teams.joinUrl;
+        call.teamsMeetingId = teams.meetingId;
+      }
+    } catch (e) {
+      console.warn("[scheduled-calls] teams meeting create error:", e);
+    }
+
     // Post an in-channel RSVP card if bound to a channel.
     if (channelId) await postScheduledCallCard(call, "scheduled_call.created");
 
@@ -865,7 +907,9 @@ export function registerScheduledCallRoutes(app: Express) {
       title: call.title,
       description:
         (call.notes ? call.notes + "\n\n" : "") +
-        `Join: ${joinUrl}\nOrganizer: ${organizer.name}`,
+        `Join via Bulldog: ${joinUrl}\n` +
+        (call.teamsJoinUrl ? `Join via Teams: ${call.teamsJoinUrl}\n` : "") +
+        `Organizer: ${organizer.name}`,
       startUtc: call.startAt,
       endUtc: call.endAt,
       organizerEmail: organizer.email,
