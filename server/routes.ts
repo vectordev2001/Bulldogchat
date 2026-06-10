@@ -20,7 +20,6 @@ import { bulldogSsoBridge } from "./bulldog-sso";
 import { dialPhoneIntoRoom, sipConfigured } from "./sip";
 import { signCallJoinToken, verifyCallJoinToken, sendSms, smsAvailable, buildCallInviteSmsBody } from "./sms";
 import { sendEmail, isEmailConfigured } from "./email";
-import { rawDb } from "./db";
 
 function escapeHtml(s: string): string {
   return s
@@ -305,53 +304,6 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
       orgId: u.orgId,
     });
     res.json(result);
-  });
-
-  // ── ONE-SHOT WIPE (PHASE 2.1 RESET) ──
-  // Deletes ALL messages, channels, calls, work-objects. Keeps orgs/users/projects.
-  // Requires admin role AND header x-wipe-token matching env CHAT_WIPE_TOKEN.
-  // Remove this endpoint after use.
-  app.post("/api/admin/wipe-chat", requireAuth, requireRole(["admin"]), (req, res) => {
-    const expected = process.env.CHAT_WIPE_TOKEN;
-    const provided = String(req.headers["x-wipe-token"] ?? "");
-    if (!expected || provided !== expected) {
-      return res.status(403).json({ message: "forbidden" });
-    }
-    const tables = [
-      "livekit_rooms",
-      "work_object_channel_links",
-      "work_object_activity",
-      "recordings",
-      "meeting_notes",
-      "scheduled_call_invitees",
-      "scheduled_calls",
-      "direct_calls",
-      "reactions",
-      "message_mentions",
-      "attachments",
-      "read_receipts",
-      "messages",
-      "channel_members",
-      "channels",
-      "work_objects",
-    ];
-    const counts: Record<string, number> = {};
-    const tx = rawDb.transaction(() => {
-      for (const t of tables) {
-        const info = rawDb.prepare(`DELETE FROM ${t}`).run();
-        counts[t] = info.changes;
-      }
-      const names = tables.map(() => "?").join(",");
-      rawDb.prepare(`DELETE FROM sqlite_sequence WHERE name IN (${names})`).run(...tables);
-    });
-    tx();
-    rawDb.exec("VACUUM");
-    const kept = {
-      users: (rawDb.prepare("SELECT COUNT(*) AS c FROM users").get() as { c: number }).c,
-      organizations: (rawDb.prepare("SELECT COUNT(*) AS c FROM organizations").get() as { c: number }).c,
-      projects: (rawDb.prepare("SELECT COUNT(*) AS c FROM projects").get() as { c: number }).c,
-    };
-    res.json({ ok: true, deleted: counts, kept });
   });
 
   // ── PRESENCE (Phase 1.9) ──
