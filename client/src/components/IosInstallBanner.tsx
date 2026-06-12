@@ -18,6 +18,7 @@
  */
 import { useEffect, useState } from "react";
 import { X, Share } from "lucide-react";
+import { isNativeApp } from "@/lib/native-app";
 
 interface Props {
   /** Display name of the app for the banner copy. */
@@ -31,9 +32,10 @@ function isIos(): boolean {
 
 function isStandalone(): boolean {
   if (typeof window === "undefined") return false;
-  // Running inside the Bulldog native iOS shell — never show install banner.
-  // @ts-expect-error — set by the iOS WebView user script.
-  if (window.bulldogNative === true) return true;
+  // Running inside the Bulldog native iOS shell — never show install banner
+  // (the app IS the install). The shell uses a custom WKWebView, so detection
+  // relies on the bridge object / UA marker, not navigator.standalone.
+  if (isNativeApp()) return true;
   // iOS Safari sets navigator.standalone === true when launched from a
   // home-screen install. Other browsers honor the display-mode media
   // query. Either signal means we're already full-screen — hide the banner.

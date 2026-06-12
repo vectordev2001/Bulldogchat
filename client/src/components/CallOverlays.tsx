@@ -20,6 +20,7 @@ import { useToast } from "@/hooks/use-toast";
 import { ContractPanel } from "./call/ContractPanel";
 import { VirtualBackgroundPicker, loadSavedSelection, type BgSelection } from "./call/VirtualBackgroundPicker";
 import { VirtualBackgroundProcessor } from "@/lib/virtual-background";
+import { isNativeApp } from "@/lib/native-app";
 
 // Group calls run in a room named `group-channel-<id>-<ts>` or
 // `vector-<org>-channel-<id>`. 1:1 calls use `direct-<callId>` and have no
@@ -38,9 +39,10 @@ function channelIdFromRoomName(roomName: string | undefined | null): number | nu
 function detectIOSInAppBrowser(): boolean {
   if (typeof navigator === "undefined") return false;
   // Running inside the Bulldog native iOS shell. The native WKWebView grants
-  // camera/mic via WKUIDelegate, so the banner is wrong here.
-  // @ts-expect-error — set by the iOS WebView user script.
-  if (typeof window !== "undefined" && window.bulldogNative === true) return false;
+  // camera/mic (allowsInlineMediaPlayback + no user-action gate), so the
+  // "camera blocked" banner is wrong here and the normal getUserMedia path
+  // must run. Genuine in-app browsers (Slack/Messages/Mail) still fall through.
+  if (isNativeApp()) return false;
   const ua = navigator.userAgent;
   const isIOS = /iPad|iPhone|iPod/.test(ua) || (ua.includes("Mac") && (navigator as { maxTouchPoints?: number }).maxTouchPoints! > 1);
   if (!isIOS) return false;
