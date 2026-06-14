@@ -20,7 +20,7 @@ import { useToast } from "@/hooks/use-toast";
 import { ContractPanel } from "./call/ContractPanel";
 import { VirtualBackgroundPicker, loadSavedSelection, type BgSelection } from "./call/VirtualBackgroundPicker";
 import { VirtualBackgroundProcessor } from "@/lib/virtual-background";
-import { isNativeApp } from "@/lib/native-app";
+import { isNativeApp, openInIosApp } from "@/lib/native-app";
 
 // Group calls run in a room named `group-channel-<id>-<ts>` or
 // `vector-<org>-channel-<id>`. 1:1 calls use `direct-<callId>` and have no
@@ -213,6 +213,7 @@ function ActiveCallOverlay() {
   // iOS in-app browser warning (Phase 1.9.26). Calculated once at mount.
   const isInAppBrowser = useMemo(() => detectIOSInAppBrowser(), []);
   const [inAppDismissed, setInAppDismissed] = useState(false);
+  const [escapeLinkCopied, setEscapeLinkCopied] = useState(false);
 
   // Reset toggles when the call changes.
   useEffect(() => {
@@ -518,12 +519,35 @@ function ActiveCallOverlay() {
           opened the link from Messages/Mail/Slack/etc, which blocks the
           camera. Dismissable but persistent until tapped. */}
       {isInAppBrowser && !inAppDismissed && (
-        <div className="shrink-0 px-3 py-2 bg-[hsl(2_70%_55%/0.18)] border-b border-[hsl(2_70%_55%/0.4)] text-xs text-[hsl(2_85%_85%)] flex items-start gap-2">
+        <div className="shrink-0 px-4 py-3 bg-[hsl(2_70%_55%/0.32)] border-b border-[hsl(2_70%_55%/0.6)] text-xs text-[hsl(2_90%_92%)] flex items-start gap-2">
           <VideoOff className="w-4 h-4 shrink-0 mt-0.5" />
           <div className="flex-1 min-w-0">
-            <div className="font-semibold">Camera blocked in this browser</div>
+            <div className="font-semibold text-sm">Camera blocked in this browser</div>
             <div className="text-[11px] opacity-90 leading-snug mt-0.5">
-              You're in an in-app browser (Messages/Mail/Slack). Tap the share icon at the bottom of the screen, then “Open in Safari” — or copy <span className="font-mono">chat.bulldogops.com</span> into Safari directly. Camera and microphone only work in real Safari (or the Bulldog iOS app).
+              iOS in-app browsers block camera and mic. Open the meeting in the Bulldog app or copy the link into Safari.
+            </div>
+            <div className="flex flex-col gap-2 mt-2.5">
+              <button
+                type="button"
+                onClick={() => openInIosApp(window.location.href)}
+                className="w-full px-3 py-2 rounded-md bg-vs-blue hover:bg-[hsl(218_90%_60%)] text-white text-sm font-medium transition-colors"
+                data-testid="button-open-in-ios-app"
+              >
+                Open in Bulldog app
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  navigator.clipboard.writeText(window.location.href).then(() => {
+                    setEscapeLinkCopied(true);
+                    setTimeout(() => setEscapeLinkCopied(false), 2000);
+                  }).catch(() => {});
+                }}
+                className="w-full px-3 py-2 rounded-md border border-[hsl(2_70%_55%/0.6)] hover:bg-black/20 text-[hsl(2_90%_92%)] text-sm font-medium transition-colors"
+                data-testid="button-copy-meeting-link"
+              >
+                {escapeLinkCopied ? "Copied!" : "Copy link"}
+              </button>
             </div>
           </div>
           <button

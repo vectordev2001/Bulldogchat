@@ -50,3 +50,15 @@ export function isNativeApp(): boolean {
 
   return false;
 }
+
+/**
+ * Best-effort "open this meeting in the native Bulldog iOS app". There is no
+ * reliable web API to detect whether the app is installed, so we just point
+ * the browser at the bulldogchat:// scheme: if the app is installed iOS
+ * switches to it; if not, nothing happens and the user stays on the page
+ * (the in-app-browser banner remains visible as the fallback).
+ */
+export function openInIosApp(joinUrl: string): void {
+  const appUrl = `bulldogchat://join?url=${encodeURIComponent(joinUrl)}`;
+  window.location.href = appUrl;
+}
