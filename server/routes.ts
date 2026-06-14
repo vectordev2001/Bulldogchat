@@ -19,6 +19,7 @@ import { registerIntegrationRoutes } from "./routes-integrations";
 import { bulldogSsoBridge } from "./bulldog-sso";
 import { dialPhoneIntoRoom, sipConfigured } from "./sip";
 import { signCallJoinToken, verifyCallJoinToken, sendSms, smsAvailable, buildCallInviteSmsBody } from "./sms";
+import { mintShortLink, resolveShortLink, bumpShortLinkUses } from "./short-links";
 import { sendEmail, isEmailConfigured } from "./email";
 import { emitOpsNotifications } from "./notify-ops";
 
@@ -172,6 +173,22 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     const back = `${process.env.CHAT_BASE_URL || "https://chat.bulldogops.com"}/call-join?t=${encodeURIComponent(t)}`;
     const authBase = process.env.BULLDOG_AUTH_URL || "https://auth.bulldogops.com";
     return res.redirect(`${authBase}/?next=${encodeURIComponent(back)}`);
+  });
+
+  // ── SHORT LINK REDIRECT ──
+  // SMS bodies carry https://chat.bulldogops.com/j/<token> instead of the full
+  // ~280-char signed-JWT join URL, shrinking scheduled invites from ~5 Twilio
+  // segments to one. The token 302-redirects to the long join URL, which every
+  // client (real Safari, Android, desktop, the native iOS app via the in-app
+  // browser banner) already handles. Registered before the SPA catch-all.
+  app.get("/j/:token", (req, res) => {
+    const token = req.params.token;
+    const row = resolveShortLink(token);
+    if (!row) {
+      return res.status(410).send("This meeting link has expired.");
+    }
+    bumpShortLinkUses(token);
+    res.redirect(302, row.long_url);
   });
 
   // POST /api/call-join/redeem: client posts the SMS token here AFTER
@@ -1910,11 +1927,15 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
         });
         const baseUrl = process.env.CHAT_BASE_URL || "https://chat.bulldogops.com";
         const joinUrl = `${baseUrl}/call-join?t=${encodeURIComponent(joinToken)}`;
+        // Live calls don't get reminders, so mint inline with a short TTL and
+        // don't persist the token. One short URL keeps the invite to 1 segment.
+        const shortToken = mintShortLink(joinUrl, { ttlMs: 4 * 60 * 60 * 1000 });
         const body = buildCallInviteSmsBody({
           callerName: u.name,
           channelLabel: channelLabelForSms,
           joinUrl,
           kind,
+          shortUrl: `${baseUrl}/j/${shortToken}`,
         });
         try {
           const r = await sendSms({ to: e164, body });
@@ -1934,11 +1955,13 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
         });
         const baseUrl = process.env.CHAT_BASE_URL || "https://chat.bulldogops.com";
         const joinUrl = `${baseUrl}/call-join?t=${encodeURIComponent(joinToken)}`;
+        const shortToken = mintShortLink(joinUrl, { ttlMs: 4 * 60 * 60 * 1000 });
         const body = buildCallInviteSmsBody({
           callerName: u.name,
           channelLabel: channelLabelForSms,
           joinUrl,
           kind,
+          shortUrl: `${baseUrl}/j/${shortToken}`,
         });
         try {
           const r = await sendSms({ to: phone, body });

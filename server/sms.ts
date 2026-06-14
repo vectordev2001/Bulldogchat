@@ -157,8 +157,15 @@ export function buildCallInviteSmsBody(p: {
   channelLabel: string;
   joinUrl: string;
   kind: "voice" | "video";
+  shortUrl?: string;
 }): string {
   const verb = p.kind === "video" ? "video call" : "call";
+  // When a short link is provided, use ONLY it: a single short https:// URL
+  // that redirects to the long join URL works everywhere, so the second
+  // App: bulldogchat:// line is no longer needed (one segment instead of ~5).
+  if (p.shortUrl) {
+    return `${p.callerName} is starting a ${verb} on Bulldog (${p.channelLabel}). Join: ${p.shortUrl}`;
+  }
   const iosUrl = buildIosJoinUrl(p.joinUrl);
   return `${p.callerName} is starting a ${verb} on Bulldog (${p.channelLabel}). Web: ${p.joinUrl}\nApp: ${iosUrl}`;
 }
@@ -175,7 +182,14 @@ export function buildScheduledCallSmsBody(p: {
   whenLabel: string;       // pre-formatted, e.g. "Tue Jun 2 at 3:00 PM PDT"
   joinUrl: string;
   rsvpCode: string;        // short code, e.g. "#A4F9" — user can reply with this + Y/N/M
+  shortUrl?: string;
 }): string {
+  // The tightened "Y/N/M" RSVP wording (vs. "${code} Y, ${code} N, or
+  // ${code} M") saves ~30 chars; parseRsvpSms already handles the "#A4F9 Y"
+  // reply shape. With a short link we drop the App: bulldogchat:// line.
+  if (p.shortUrl) {
+    return `${p.organizerName} invited you to a Bulldog call: "${p.title}" on ${p.whenLabel}. RSVP: reply ${p.rsvpCode} Y/N/M. Join: ${p.shortUrl}`;
+  }
   const iosUrl = buildIosJoinUrl(p.joinUrl);
   return `${p.organizerName} invited you to a Bulldog call: "${p.title}" on ${p.whenLabel}. RSVP: reply ${p.rsvpCode} Y, ${p.rsvpCode} N, or ${p.rsvpCode} M. Web: ${p.joinUrl}\nApp: ${iosUrl}`;
 }
@@ -188,8 +202,12 @@ export function buildReminderSmsBody(p: {
   title: string;
   minutesUntilStart: number;
   joinUrl: string;
+  shortUrl?: string;
 }): string {
   const m = Math.max(1, Math.round(p.minutesUntilStart));
+  if (p.shortUrl) {
+    return `Reminder: "${p.title}" starts in ${m} min on Bulldog. Join: ${p.shortUrl}`;
+  }
   const iosUrl = buildIosJoinUrl(p.joinUrl);
   return `Reminder: "${p.title}" starts in ${m} min on Bulldog. Web: ${p.joinUrl}\nApp: ${iosUrl}`;
 }
