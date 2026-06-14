@@ -1002,4 +1002,44 @@ export function runMigrations() {
   } catch (e: any) {
     console.warn("[migrate v25] teams columns skipped:", e?.message);
   }
+
+  // v26 (Phase 2.2) — SMS short links. The SMS bodies previously carried a
+  // ~280-char signed-JWT join URL plus a bulldogchat:// app deep link, which
+  // pushed scheduled invites to ~5 Twilio segments. Mint a short token that
+  // 302-redirects to the long URL so the SMS carries a single short https://
+  // link. `scheduled_call_id` is a nullable FK reference only (no cascade).
+  rawDb.exec(`
+  CREATE TABLE IF NOT EXISTS join_short_links (
+    token TEXT PRIMARY KEY,
+    long_url TEXT NOT NULL,
+    scheduled_call_id INTEGER,
+    created_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL,
+    uses INTEGER NOT NULL DEFAULT 0
+  );
+  CREATE INDEX IF NOT EXISTS idx_join_short_links_expires ON join_short_links(expires_at);
+  `);
+
+  // v26: persist the minted short-link token on the invitee row so reminders
+  // reuse the same link instead of minting a fresh one each tick.
+  try {
+    const sciCols = rawDb.prepare(`PRAGMA table_info(scheduled_call_invitees)`).all() as Array<{ name: string }>;
+    if (!sciCols.find(c => c.name === "short_link_token")) {
+      rawDb.exec(`ALTER TABLE scheduled_call_invitees ADD COLUMN short_link_token TEXT;`);
+      console.log("[migrate] v26 added scheduled_call_invitees.short_link_token column");
+    }
+  } catch (e: any) {
+    console.warn("[migrate v26] short_link_token column skipped:", e?.message);
+  }
+
+  // v26: one-shot cleanup of expired short links at boot. Cheap; keeps the
+  // table from growing unbounded without standing up a new janitor interval.
+  try {
+    const info = rawDb.prepare("DELETE FROM join_short_links WHERE expires_at < ?").run(Date.now());
+    if (info.changes && info.changes > 0) {
+      console.log(`[migrate v26] purged ${info.changes} expired short link(s)`);
+    }
+  } catch (e: any) {
+    console.warn("[migrate v26] short-link cleanup skipped:", e?.message);
+  }
 }

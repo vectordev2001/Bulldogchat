@@ -22,6 +22,7 @@ import type { Request, Response, Express } from "express";
 import { db, rawDb } from "./db";
 import { storage } from "./storage";
 import { signCallJoinToken, sendSms, buildScheduledCallSmsBody, buildReminderSmsBody, generateRsvpCode, buildIcsForScheduledCall, parseRsvpSms, smsAvailable, verifyTwilioSignature } from "./sms";
+import { mintShortLink, resolveShortLink } from "./short-links";
 import { emitMessageNew, emitMessageDelete } from "./events";
 import { requireAuth, type AuthedRequest } from "./auth";
 import { sendEmail, isEmailConfigured, emailFromAddress, emailFromName } from "./email";
@@ -260,6 +261,28 @@ function buildJoinUrl(call: ScheduledCall, invitee: ScheduledCallInvitee, caller
   return `${CHAT_BASE_URL}/call-join?t=${encodeURIComponent(token)}`;
 }
 
+/* ─────────────────── Short-link builder (per invitee) ─────────────────────
+ * Mint a short link for `joinUrl` once per invitee and persist the token on
+ * the invitee row so the reminder reuses the same link. The 30-day default
+ * TTL covers meetings booked weeks out plus the reminder window. Returns the
+ * full `${CHAT_BASE_URL}/j/<token>` URL. `existingToken` is read from the raw
+ * invitee row's short_link_token so we don't widen the typed model.
+ */
+function getOrMintInviteeShortUrl(
+  inviteeId: number,
+  callId: number,
+  joinUrl: string,
+  existingToken: string | null,
+): string {
+  // Reuse a still-valid stored token; legacy/expired ones fall through to mint.
+  if (existingToken && resolveShortLink(existingToken)) {
+    return `${CHAT_BASE_URL}/j/${existingToken}`;
+  }
+  const token = mintShortLink(joinUrl, { scheduledCallId: callId });
+  rawDb.prepare("UPDATE scheduled_call_invitees SET short_link_token = ? WHERE id = ?").run(token, inviteeId);
+  return `${CHAT_BASE_URL}/j/${token}`;
+}
+
 /* ─────────────────── Time formatting (organizer TZ) ───────────────────── */
 function formatWhenLabel(d: Date, tz: string = "America/Los_Angeles"): string {
   try {
@@ -410,12 +433,16 @@ async function dispatchInvites(call: ScheduledCall): Promise<void> {
 
     // ─── SMS ─────────────────────────────────────────────────────────────
     if (phone && smsAvailable()) {
+      // Mint (and persist) a short link so the SMS is one Twilio segment; the
+      // reminder reuses the same token via short_link_token on the invitee row.
+      const shortUrl = getOrMintInviteeShortUrl(inv.id, call.id, joinUrl, null);
       const smsBody = buildScheduledCallSmsBody({
         organizerName: organizer.name,
         title: call.title,
         whenLabel,
         joinUrl,
         rsvpCode: `#${inv.rsvpCode}`,
+        shortUrl,
       });
       try {
         const res = await sendSms({ to: phone, body: smsBody });
@@ -501,7 +528,8 @@ async function dispatchReminders() {
           const phone = normalizeE164(u?.phone);
           if (phone && smsAvailable()) {
             const minutes = Math.max(0, Math.round(secondsUntilStart / 60));
-            const smsBody = buildReminderSmsBody({ title: call.title, minutesUntilStart: minutes, joinUrl });
+            const shortUrl = getOrMintInviteeShortUrl(inv.id, call.id, joinUrl, row.short_link_token ?? null);
+            const smsBody = buildReminderSmsBody({ title: call.title, minutesUntilStart: minutes, joinUrl, shortUrl });
             try { await sendSms({ to: phone, body: smsBody }); } catch (e) { /* best-effort */ }
           }
           markInviteeReminderStartSent(inv.id);
@@ -516,7 +544,8 @@ async function dispatchReminders() {
         }
         if (secondsUntilStart <= 6 * 60) {
           const minutes = Math.max(1, Math.round(secondsUntilStart / 60));
-          const smsBody = buildReminderSmsBody({ title: call.title, minutesUntilStart: minutes, joinUrl });
+          const shortUrl = getOrMintInviteeShortUrl(inv.id, call.id, joinUrl, row.short_link_token ?? null);
+          const smsBody = buildReminderSmsBody({ title: call.title, minutesUntilStart: minutes, joinUrl, shortUrl });
           try { await sendSms({ to: phone, body: smsBody }); } catch (e) { /* best-effort */ }
           markInviteeReminderSent(inv.id);
         }
