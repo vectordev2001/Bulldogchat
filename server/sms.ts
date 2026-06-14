@@ -136,6 +136,17 @@ export function verifyCallJoinToken(token: string): CallJoinTokenPayload | null 
 }
 
 /**
+ * Wrap a web join URL in the bulldogchat:// custom scheme so iOS users who
+ * have the native app installed can tap a second link that launches the app
+ * directly (bypassing the in-app WKWebView that blocks camera/mic). The app
+ * parses the `url` param and points its WebView at it. On devices without
+ * the app the tap does nothing, so the web link above it stays the fallback.
+ */
+export function buildIosJoinUrl(joinUrl: string): string {
+  return `bulldogchat://join?url=${encodeURIComponent(joinUrl)}`;
+}
+
+/**
  * Build the SMS body for an immediate call invite. Kept terse — most
  * carriers split at 160 chars and we want a single segment when possible.
  * The link is the join-token URL which auto-redirects into the LiveKit
@@ -148,7 +159,8 @@ export function buildCallInviteSmsBody(p: {
   kind: "voice" | "video";
 }): string {
   const verb = p.kind === "video" ? "video call" : "call";
-  return `${p.callerName} is starting a ${verb} on Bulldog (${p.channelLabel}). Tap to join: ${p.joinUrl}`;
+  const iosUrl = buildIosJoinUrl(p.joinUrl);
+  return `${p.callerName} is starting a ${verb} on Bulldog (${p.channelLabel}). Web: ${p.joinUrl}\nApp: ${iosUrl}`;
 }
 
 /**
@@ -164,7 +176,8 @@ export function buildScheduledCallSmsBody(p: {
   joinUrl: string;
   rsvpCode: string;        // short code, e.g. "#A4F9" — user can reply with this + Y/N/M
 }): string {
-  return `${p.organizerName} invited you to a Bulldog call: "${p.title}" on ${p.whenLabel}. RSVP: reply ${p.rsvpCode} Y, ${p.rsvpCode} N, or ${p.rsvpCode} M. Details: ${p.joinUrl}`;
+  const iosUrl = buildIosJoinUrl(p.joinUrl);
+  return `${p.organizerName} invited you to a Bulldog call: "${p.title}" on ${p.whenLabel}. RSVP: reply ${p.rsvpCode} Y, ${p.rsvpCode} N, or ${p.rsvpCode} M. Web: ${p.joinUrl}\nApp: ${iosUrl}`;
 }
 
 /**
@@ -177,7 +190,8 @@ export function buildReminderSmsBody(p: {
   joinUrl: string;
 }): string {
   const m = Math.max(1, Math.round(p.minutesUntilStart));
-  return `Reminder: "${p.title}" starts in ${m} min on Bulldog. Tap to join: ${p.joinUrl}`;
+  const iosUrl = buildIosJoinUrl(p.joinUrl);
+  return `Reminder: "${p.title}" starts in ${m} min on Bulldog. Web: ${p.joinUrl}\nApp: ${iosUrl}`;
 }
 
 /**

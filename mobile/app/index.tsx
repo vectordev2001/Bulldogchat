@@ -17,6 +17,7 @@
  */
 import Constants from "expo-constants";
 import * as Device from "expo-device";
+import * as Linking from "expo-linking";
 import * as Notifications from "expo-notifications";
 import { useEffect, useRef, useState } from "react";
 import {
@@ -30,6 +31,24 @@ import { WebView, type WebViewMessageEvent } from "react-native-webview";
 
 const APP_URL =
   process.env.EXPO_PUBLIC_APP_URL ?? "https://vector-chat-zzlq.onrender.com";
+
+/**
+ * Pull the web meeting URL out of a `bulldogchat://join?url=<webUrl>` deep
+ * link. The link is sent in scheduled-call SMS bodies so iOS users with the
+ * app land directly in the room (real WebView, camera/mic allowed) instead
+ * of the in-app browser that blocks media. Returns null for any other URL.
+ */
+function joinUrlFromDeepLink(deepLink: string | null): string | null {
+  if (!deepLink) return null;
+  try {
+    const parsed = Linking.parse(deepLink);
+    if (parsed.hostname !== "join") return null;
+    const url = parsed.queryParams?.url;
+    return typeof url === "string" && url.length > 0 ? url : null;
+  } catch {
+    return null;
+  }
+}
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -131,6 +150,37 @@ export default function MobileShell() {
   const webRef = useRef<WebView>(null);
   const [pushToken, setPushToken] = useState<string | null>(null);
   const [webReady, setWebReady] = useState(false);
+  const [sourceUri, setSourceUri] = useState(APP_URL);
+
+  // Handle `bulldogchat://join?url=...` deep links. On a cold launch we read
+  // the initial URL; while running we listen for warm-launch links. In both
+  // cases we point the WebView straight at the meeting URL so the user joins
+  // in the native WebView (which Apple grants camera/mic) rather than the
+  // in-app browser that blocks them.
+  useEffect(() => {
+    let cancelled = false;
+
+    Linking.getInitialURL().then((initial) => {
+      if (cancelled) return;
+      const joinUrl = joinUrlFromDeepLink(initial);
+      if (joinUrl) setSourceUri(joinUrl);
+    });
+
+    const sub = Linking.addEventListener("url", ({ url }) => {
+      const joinUrl = joinUrlFromDeepLink(url);
+      if (!joinUrl) return;
+      setSourceUri(joinUrl);
+      webRef.current?.injectJavaScript(`
+        try { window.location.href = ${JSON.stringify(joinUrl)}; } catch (e) {}
+        true;
+      `);
+    });
+
+    return () => {
+      cancelled = true;
+      sub.remove();
+    };
+  }, []);
 
   // Register for push once on mount.
   useEffect(() => {
@@ -199,7 +249,7 @@ export default function MobileShell() {
     <SafeAreaView style={styles.root} edges={["top", "left", "right"]}>
       <WebView
         ref={webRef}
-        source={{ uri: APP_URL }}
+        source={{ uri: sourceUri }}
         style={styles.web}
         allowsBackForwardNavigationGestures
         javaScriptEnabled
