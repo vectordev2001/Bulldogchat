@@ -27,6 +27,7 @@ import { requireAuth, type AuthedRequest } from "./auth";
 import { sendEmail, isEmailConfigured, emailFromAddress, emailFromName } from "./email";
 import { sendNotificationToUsers } from "./push";
 import { createTeamsMeeting } from "./teams/createMeeting";
+import { emitOpsNotifications } from "./notify-ops";
 import type { ScheduledCall, ScheduledCallInvitee, ScheduledCallSystemMessageMeta, RsvpResponse } from "@shared/schema";
 
 const CHAT_BASE_URL = process.env.CHAT_BASE_URL || "https://chat.bulldogops.com";
@@ -769,6 +770,23 @@ export function registerScheduledCallRoutes(app: Express) {
 
     // Fan out SMS in the background; don't make the user wait.
     dispatchInvites(call).catch((e) => console.warn("[scheduled-calls] dispatch error:", e));
+
+    // Cross-app: emit meeting_invite to Bulldog Ops for chat-user invitees
+    // (keyed on email). Ops applies its own consent gate + toggles + escalation.
+    // External phone/email invitees already get the chat-side SMS above. The
+    // chat link is included; ops shortens it. Fire-and-forget.
+    if (userIds.length > 0) {
+      const when = new Date(call.startAt).toLocaleString();
+      const recipients = storage.listUsersByIds(userIds)
+        .filter((m) => !!m.email)
+        .map((m) => ({ email: m.email }));
+      emitOpsNotifications(recipients, {
+        eventType: "meeting_invite",
+        message: `Bulldog Chat: ${me.name} invited you to "${call.title}" on ${when}.`,
+        linkUrl: `${CHAT_BASE_URL.replace(/\/$/, "")}/?meeting=${call.id}`,
+        payload: { scheduledCallId: call.id, title: call.title, startAt: call.startAt.getTime() },
+      }).catch((e) => console.warn("[scheduled-calls] ops emit failed:", e));
+    }
 
     res.status(201).json({
       call: { ...call, startAt: call.startAt.getTime(), endAt: call.endAt.getTime() },

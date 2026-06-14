@@ -20,6 +20,7 @@ import { bulldogSsoBridge } from "./bulldog-sso";
 import { dialPhoneIntoRoom, sipConfigured } from "./sip";
 import { signCallJoinToken, verifyCallJoinToken, sendSms, smsAvailable, buildCallInviteSmsBody } from "./sms";
 import { sendEmail, isEmailConfigured } from "./email";
+import { emitOpsNotifications } from "./notify-ops";
 
 function escapeHtml(s: string): string {
   return s
@@ -773,7 +774,26 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     if (wanted.length === 0) return res.status(400).json({ message: "userIds required" });
     const orgMemberIds = new Set(storage.listUsersByOrg(u.orgId).map(m => m.id));
     const filtered = wanted.filter((id: number) => orgMemberIds.has(id));
+    // Only notify users who were not already members (avoid re-pinging).
+    const existing = new Set(storage.listChannelMemberIds(channelId));
+    const newlyAdded = filtered.filter((id: number) => !existing.has(id));
     storage.addChannelMembers(channelId, filtered);
+    // Cross-app: emit channel_add to Bulldog Ops (keyed on email). Ops applies
+    // its own consent gate + toggles + escalation. Fire-and-forget.
+    if (newlyAdded.length > 0) {
+      const channelName = access.channel.name || "a channel";
+      const base = (process.env.CHAT_BASE_URL || "https://chat.bulldogops.com").replace(/\/$/, "");
+      const linkUrl = `${base}/?channel=${channelId}`;
+      const recipients = storage.listUsersByIds(newlyAdded)
+        .filter((m) => !!m.email)
+        .map((m) => ({ email: m.email }));
+      emitOpsNotifications(recipients, {
+        eventType: "channel_add",
+        message: `Bulldog Chat: You were added to #${channelName}.`,
+        linkUrl,
+        payload: { channelId, channelName },
+      }).catch((e) => console.warn("[channels] ops emit failed:", e));
+    }
     res.json({ ok: true, memberIds: storage.listChannelMemberIds(channelId) });
   });
 
