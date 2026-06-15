@@ -13,6 +13,8 @@ import { MemberList } from "@/components/MemberList";
 import { WorkObjectPanel } from "@/components/WorkObjectPanel";
 import { WorkObjectsListDialog } from "@/components/WorkObjectsListDialog";
 import { ScheduleCallDialog, MeetingsListDialog } from "@/components/ScheduleCallDialog";
+import { NotificationsButton } from "@/components/NotificationsButton";
+import { AppSwitcher } from "@/lib/AppSwitcher";
 import { VectorLogo } from "@/components/VectorLogo";
 import type { ApiProject, ApiChannel, ApiMessage, ApiUser } from "@/types/api";
 
@@ -429,7 +431,21 @@ export default function Home() {
             <VectorLogo size={22} className="text-white" monochrome />
             <span className="text-sm font-display tracking-wide">Bulldog Chat</span>
           </div>
-          <div className="w-9" />
+          {/* Suite chrome, top-right: bell left of the AppSwitcher. Kept in the
+              mobile bar so the bell stays reachable on phones (<md), where the
+              desktop header is hidden. */}
+          <div className="flex items-center gap-1">
+            <NotificationsButton variant="rail" />
+            <AppSwitcher currentApp="chat" dark placement="bottom-end" />
+          </div>
+        </div>
+
+        {/* Desktop top header (≥md): slim suite chrome bar. Notification bell
+            sits to the LEFT of the AppSwitcher, matching the unified position
+            across Chat / Ops / Contracts. */}
+        <div className="hidden md:flex h-12 shrink-0 items-center justify-end gap-1 px-3 bg-card border-b sticky top-0 z-30">
+          <NotificationsButton variant="header" />
+          <AppSwitcher currentApp="chat" placement="bottom-end" />
         </div>
 
         {/* Channel content */}
