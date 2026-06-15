@@ -87,8 +87,12 @@ export const queryClient = new QueryClient({
     queries: {
       queryFn: getQueryFn({ on401: "throw" }),
       refetchInterval: false,
-      refetchOnWindowFocus: false,
-      staleTime: 30_000,
+      // iOS WebView staleness fix: when the app returns to the foreground the
+      // WebView often missed SSE events while backgrounded. Refetching on focus
+      // with a short stale window pulls fresh data (e.g. a channel that was
+      // cleared while the app was asleep) instead of showing the stale cache.
+      refetchOnWindowFocus: true,
+      staleTime: 5_000,
       retry: false,
     },
     mutations: { retry: false },

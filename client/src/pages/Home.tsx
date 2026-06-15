@@ -237,6 +237,16 @@ export default function Home() {
       // Drop cached messages for the gone channel.
       queryClient.removeQueries({ queryKey: ["/api/channels", cid] });
     },
+    // The SSE stream just reconnected after the WebView regained visibility.
+    // Anything that changed while we were dark (e.g. an admin clearing this
+    // channel) was missed, so refetch the messages for whatever view is open.
+    onReopen: () => {
+      const cid = activeDmId ?? activeChannelId;
+      if (cid) {
+        queryClient.invalidateQueries({ queryKey: ["/api/channels", cid, "messages"] });
+      }
+      queryClient.invalidateQueries({ queryKey: ["/api/dms"] });
+    },
   });
 
   const selectProject = (id: number) => {

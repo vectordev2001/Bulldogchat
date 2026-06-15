@@ -1,9 +1,29 @@
 import { createRoot } from "react-dom/client";
 import App from "./App";
 import "./index.css";
+import { queryClient } from "./lib/queryClient";
+import { isNativeApp } from "./lib/native-app";
 
 if (!window.location.hash) {
   window.location.hash = "#/";
+}
+
+// iOS foreground refresh. The Bulldog iOS app is a bespoke WKWebView shell, NOT
+// a Capacitor app — `window.Capacitor` is never injected here (see
+// lib/native-app.ts), so there's no `@capacitor/app` `appStateChange` event to
+// hook. The signal WKWebView DOES fire when the app returns to the foreground
+// is the standard `visibilitychange`. When the WebView was backgrounded it very
+// likely dropped its SSE stream and missed events (new messages, a cleared
+// channel). On foreground we invalidate every query so React Query refetches
+// from the server, forcing the UI back in sync. Gated to the native shell so we
+// don't add refetch churn for ordinary browser tab-switching (refetchOnWindow
+// focus already covers desktop).
+if (isNativeApp()) {
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") {
+      queryClient.invalidateQueries();
+    }
+  });
 }
 
 // Register service worker (PWA). Best-effort; fails silently in dev iframe / sandbox.

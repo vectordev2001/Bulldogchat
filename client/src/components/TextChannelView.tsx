@@ -112,12 +112,30 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers, me
   // out SSE message-update + message-delete per id so live clients
   // re-render rows as tombstones in real time.
   const clearChannelMut = useMutation({
-    mutationFn: async () =>
-      apiRequest<{ ok: true; clearedCount: number }>(
-        "DELETE",
-        `/api/channels/${channel.id}/messages`,
-      ),
+    mutationFn: async () => {
+      const url = `/api/channels/${channel.id}/messages`;
+      const method = "DELETE";
+      // Verbose diagnostics: the original report was "nothing happened" with no
+      // visible toast. Log the request so we can confirm in the iOS WebView
+      // console (Safari → Develop) that the call actually fires and see the
+      // server's response. apiRequest throws on non-2xx with .status/.body.
+      console.log(`[clearChannel] →`, { method, url, channelId: channel.id });
+      try {
+        const data = await apiRequest<{ ok: true; clearedCount: number }>(method, url);
+        console.log(`[clearChannel] ← ok`, data);
+        return data;
+      } catch (err: any) {
+        console.error(`[clearChannel] ← error`, {
+          message: err?.message,
+          status: err?.status,
+          body: err?.body,
+          name: err?.name,
+        });
+        throw err;
+      }
+    },
     onSuccess: (data) => {
+      console.log(`[clearChannel] success — clearedCount=${data?.clearedCount ?? 0}`);
       queryClient.invalidateQueries({ queryKey: ["/api/channels", channel.id, "messages"] });
       channelToast({
         title: "Channel cleared",
@@ -125,10 +143,19 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers, me
       });
     },
     onError: (err: any) => {
+      // Always surface a meaningful message. apiRequest throws `${status}: ${text}`
+      // for HTTP errors (carrying .status/.body), but a network failure (offline,
+      // dropped WebView connection — the most likely cause of "nothing happened"
+      // on a backgrounded iOS app) rejects with a bare TypeError whose message is
+      // "Failed to fetch". Compose the richest text we can from whatever we got.
+      const status = err?.status ? `HTTP ${err.status}` : "Network error";
+      const bodyMsg = err?.body?.message;
+      const description = bodyMsg || err?.message || "Failed to fetch — the request did not reach the server (check connection).";
       channelToast({
-        title: "Clear failed",
-        description: err?.message ?? "Unknown error",
+        title: `Clear failed (${status})`,
+        description,
         variant: "destructive",
+        duration: 8000,
       });
     },
   });
