@@ -23,6 +23,7 @@ import { db, rawDb } from "./db";
 import { storage } from "./storage";
 import { signCallJoinToken, sendSms, buildScheduledCallSmsBody, buildReminderSmsBody, generateRsvpCode, buildIcsForScheduledCall, parseRsvpSms, smsAvailable, verifyTwilioSignature } from "./sms";
 import { mintShortLink, resolveShortLink } from "./short-links";
+import { checkSmsConsent } from "./auth-consent";
 import { emitMessageNew, emitMessageDelete } from "./events";
 import { requireAuth, type AuthedRequest } from "./auth";
 import { sendEmail, isEmailConfigured, emailFromAddress, emailFromName } from "./email";
@@ -433,6 +434,20 @@ async function dispatchInvites(call: ScheduledCall): Promise<void> {
 
     // ─── SMS ─────────────────────────────────────────────────────────────
     if (phone && smsAvailable()) {
+      // Consent gate: ask bulldog-auth whether SMS is allowed for this
+      // recipient + event. Fail-closed. Auth is the source of truth for the
+      // destination phone, so use the number it returns over the local one.
+      const consent = await checkSmsConsent(email ?? "", "meeting_invite");
+      if (!consent.allowed) {
+        console.log(JSON.stringify({
+          msg: "sms_skipped",
+          event: "meeting_invite",
+          inviteeId: inv.id,
+          scheduledCallId: call.id,
+          reason: consent.reason,
+        }));
+      } else {
+      const smsTo = consent.phoneE164 ?? phone;
       // Mint (and persist) a short link so the SMS is one Twilio segment; the
       // reminder reuses the same token via short_link_token on the invitee row.
       const shortUrl = getOrMintInviteeShortUrl(inv.id, call.id, joinUrl, null);
@@ -445,7 +460,7 @@ async function dispatchInvites(call: ScheduledCall): Promise<void> {
         shortUrl,
       });
       try {
-        const res = await sendSms({ to: phone, body: smsBody });
+        const res = await sendSms({ to: smsTo, body: smsBody });
         if (res.ok) {
           smsSent = true;
         } else {
@@ -453,6 +468,7 @@ async function dispatchInvites(call: ScheduledCall): Promise<void> {
         }
       } catch (e: any) {
         errors.push(`sms: ${e?.message ?? "exception"}`);
+      }
       }
     }
 
@@ -527,10 +543,21 @@ async function dispatchReminders() {
           const u = storage.getUser(inv.userId);
           const phone = normalizeE164(u?.phone);
           if (phone && smsAvailable()) {
-            const minutes = Math.max(0, Math.round(secondsUntilStart / 60));
-            const shortUrl = getOrMintInviteeShortUrl(inv.id, call.id, joinUrl, row.short_link_token ?? null);
-            const smsBody = buildReminderSmsBody({ title: call.title, minutesUntilStart: minutes, joinUrl, shortUrl });
-            try { await sendSms({ to: phone, body: smsBody }); } catch (e) { /* best-effort */ }
+            const consent = await checkSmsConsent(u?.email ?? "", "meeting_reminder");
+            if (!consent.allowed) {
+              console.log(JSON.stringify({
+                msg: "sms_skipped",
+                event: "meeting_reminder",
+                inviteeId: inv.id,
+                scheduledCallId: call.id,
+                reason: consent.reason,
+              }));
+            } else {
+              const minutes = Math.max(0, Math.round(secondsUntilStart / 60));
+              const shortUrl = getOrMintInviteeShortUrl(inv.id, call.id, joinUrl, row.short_link_token ?? null);
+              const smsBody = buildReminderSmsBody({ title: call.title, minutesUntilStart: minutes, joinUrl, shortUrl });
+              try { await sendSms({ to: consent.phoneE164 ?? phone, body: smsBody }); } catch (e) { /* best-effort */ }
+            }
           }
           markInviteeReminderStartSent(inv.id);
         }
@@ -543,10 +570,21 @@ async function dispatchReminders() {
           continue;
         }
         if (secondsUntilStart <= 6 * 60) {
-          const minutes = Math.max(1, Math.round(secondsUntilStart / 60));
-          const shortUrl = getOrMintInviteeShortUrl(inv.id, call.id, joinUrl, row.short_link_token ?? null);
-          const smsBody = buildReminderSmsBody({ title: call.title, minutesUntilStart: minutes, joinUrl, shortUrl });
-          try { await sendSms({ to: phone, body: smsBody }); } catch (e) { /* best-effort */ }
+          const consent = await checkSmsConsent(inv.externalEmail ?? "", "meeting_reminder");
+          if (!consent.allowed) {
+            console.log(JSON.stringify({
+              msg: "sms_skipped",
+              event: "meeting_reminder",
+              inviteeId: inv.id,
+              scheduledCallId: call.id,
+              reason: consent.reason,
+            }));
+          } else {
+            const minutes = Math.max(1, Math.round(secondsUntilStart / 60));
+            const shortUrl = getOrMintInviteeShortUrl(inv.id, call.id, joinUrl, row.short_link_token ?? null);
+            const smsBody = buildReminderSmsBody({ title: call.title, minutesUntilStart: minutes, joinUrl, shortUrl });
+            try { await sendSms({ to: consent.phoneE164 ?? phone, body: smsBody }); } catch (e) { /* best-effort */ }
+          }
           markInviteeReminderSent(inv.id);
         }
       }

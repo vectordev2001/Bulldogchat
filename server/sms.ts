@@ -22,6 +22,14 @@
  */
 import jwt from "jsonwebtoken";
 
+// Boot-time check (runs once on module load): the auth consent gate
+// (server/auth-consent.ts) fails closed when SUITE_INTERNAL_SECRET is unset,
+// which means ALL outbound SMS is skipped. Warn loudly so a misconfigured
+// prod/preview deploy doesn't silently drop every notification.
+if (!process.env.SUITE_INTERNAL_SECRET) {
+  console.warn("[sms] SUITE_INTERNAL_SECRET unset — all outbound SMS will be skipped (auth consent gate fails closed)");
+}
+
 function smsConfigured(): boolean {
   if (!process.env.TWILIO_ACCOUNT_SID || !process.env.TWILIO_AUTH_TOKEN) return false;
   // Either a Messaging Service SID OR a from-number is enough to send.
