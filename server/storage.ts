@@ -80,6 +80,9 @@ export interface IStorage {
   // when the sidebar renders the per-job channel group.
   listChannelsByJob(workObjectId: number): Channel[];
   getChannel(id: number): Channel | undefined;
+  // Every channel across all projects/orgs, DMs included. Internal admin use
+  // only (the X-Suite-Secret list-channels endpoint); not membership-filtered.
+  listAllChannels(): Channel[];
   findChannelByName(name: string): Channel | undefined;
   createChannel(input: InsertChannel): Channel;
   setChannelLinkedContract(channelId: number, meta: LinkedContractMeta | null): Channel | undefined;
@@ -338,6 +341,7 @@ class DatabaseStorage implements IStorage {
       .all();
   }
   getChannel(id: number) { return db.select().from(channels).where(eq(channels.id, id)).get(); }
+  listAllChannels() { return db.select().from(channels).orderBy(asc(channels.id)).all(); }
   // Resolve a channel by its human name, tolerant of casing/spacing/dash
   // differences ("El Paso Data Center" == "el-paso-data center" ==
   // "el-paso-data-center"). Both the query and each stored name are reduced to

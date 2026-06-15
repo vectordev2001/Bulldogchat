@@ -1302,6 +1302,95 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     res.json({ ok: true, clearedCount: ids.length });
   });
 
+  // Canonical slug used for fuzzy channel-name matching: lowercase, runs of
+  // non-alphanumerics collapsed to one dash, edges trimmed. Mirrors
+  // storage.findChannelByName so suggestions rank by the same notion of
+  // "close".
+  const channelSlug = (s: string) =>
+    s.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+
+  // Score a stored channel name against the query. Higher is closer.
+  // Cheap heuristic: exact slug match wins, then substring inclusion (either
+  // direction), then count of shared dash-delimited word tokens.
+  const channelMatchScore = (query: string, name: string): number => {
+    const q = channelSlug(query);
+    const n = channelSlug(name);
+    if (!q || !n) return 0;
+    if (q === n) return 1000;
+    let score = 0;
+    if (n.includes(q) || q.includes(n)) score += 100;
+    const qTokens = new Set(q.split("-").filter(Boolean));
+    const nTokens = n.split("-").filter(Boolean);
+    for (const t of nTokens) if (qTokens.has(t)) score += 10;
+    return score;
+  };
+
+  // Top-5 channels closest to `query`, by channelMatchScore. Returns [] when
+  // the query is empty or nothing scores above zero.
+  const suggestChannels = (query: string): Array<{ id: number; name: string }> => {
+    if (!query.trim()) return [];
+    return storage.listAllChannels()
+      .map(c => ({ id: c.id, name: c.name, score: channelMatchScore(query, c.name) }))
+      .filter(c => c.score > 0)
+      .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name))
+      .slice(0, 5)
+      .map(({ id, name }) => ({ id, name }));
+  };
+
+  // Phase 1.9.36c — internal ops: list channels (companion to clear-channel).
+  //
+  // Same SUITE_INTERNAL_SECRET (X-Suite-Secret) auth as clear-channel. Used to
+  // discover the exact channel name/id when a clear-channel call 404s. Returns
+  // every channel across all orgs by default; pass ?orgId=N to scope to one
+  // org. Security is the shared secret, not per-user membership.
+  //
+  //   GET /internal/admin/channels[?orgId=N]
+  //   headers: X-Suite-Secret: <SUITE_INTERNAL_SECRET>
+  //   returns: { channels: [{ id, orgId, name, scope, memberCount }, ...] }  // sorted by name
+  app.get("/internal/admin/channels", (req, res) => {
+    const expected = process.env.SUITE_INTERNAL_SECRET;
+    if (!expected) {
+      return res.status(503).json({ message: "SUITE_INTERNAL_SECRET not configured" });
+    }
+    const given = req.header("x-suite-secret");
+    if (!given || given !== expected) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+
+    const orgIdRaw = req.query.orgId;
+    let orgFilter: number | undefined;
+    if (typeof orgIdRaw === "string" && orgIdRaw.trim() !== "") {
+      const n = Number(orgIdRaw);
+      if (!Number.isFinite(n)) {
+        return res.status(400).json({ message: "orgId must be a number" });
+      }
+      orgFilter = n;
+    }
+
+    const projectOrgId = new Map<number, number>();
+    const orgIdForChannel = (projectId: number): number => {
+      let cached = projectOrgId.get(projectId);
+      if (cached === undefined) {
+        cached = storage.getProject(projectId)?.orgId ?? 1;
+        projectOrgId.set(projectId, cached);
+      }
+      return cached;
+    };
+
+    const channels = storage.listAllChannels()
+      .map(c => ({
+        id: c.id,
+        orgId: orgIdForChannel(c.projectId),
+        name: c.name,
+        scope: c.scope,
+        memberCount: storage.listChannelMemberIds(c.id).length,
+      }))
+      .filter(c => orgFilter === undefined || c.orgId === orgFilter)
+      .sort((a, b) => a.name.localeCompare(b.name) || a.id - b.id);
+
+    return res.json({ channels });
+  });
+
   // Phase 1.9.36b — internal ops escape hatch for "clear channel".
   //
   // The user-facing DELETE /api/channels/:id/messages route is gated on the
@@ -1343,7 +1432,8 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     }
 
     if (!channel) {
-      return res.status(404).json({ message: "Channel not found" });
+      const query = typeof body.channelName === "string" ? body.channelName : "";
+      return res.status(404).json({ message: "Channel not found", suggestions: suggestChannels(query) });
     }
 
     // No createdByUserId column on channels; attribute the tombstone to the
