@@ -32,3 +32,10 @@ services:
       - { key: S3_PUBLIC_URL_BASE, sync: false } # optional: public CDN base, used to build attachment URLs
       # LiveKit webhook secret (optional — for verifying egress callbacks)
       - { key: LIVEKIT_WEBHOOK_KEY, sync: false }
+      # Suite shared secret for service-to-service calls to bulldog-auth.
+      # Required for the SMS consent gate (server/auth-consent.ts): when unset,
+      # the gate fails closed and ALL outbound SMS is skipped. Set the real
+      # value in the Render dashboard (srv-d8b5te77f7vs73bp86p0).
+      - { key: SUITE_INTERNAL_SECRET, sync: false }
+      # Override the bulldog-auth base URL (defaults to https://auth.bulldogops.com).
+      - { key: AUTH_BASE_URL, sync: false }

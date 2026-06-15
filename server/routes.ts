@@ -19,6 +19,7 @@ import { registerIntegrationRoutes } from "./routes-integrations";
 import { bulldogSsoBridge } from "./bulldog-sso";
 import { dialPhoneIntoRoom, sipConfigured } from "./sip";
 import { signCallJoinToken, verifyCallJoinToken, sendSms, smsAvailable, buildCallInviteSmsBody } from "./sms";
+import { checkSmsConsent } from "./auth-consent";
 import { mintShortLink, resolveShortLink, bumpShortLinkUses } from "./short-links";
 import { sendEmail, isEmailConfigured } from "./email";
 import { emitOpsNotifications } from "./notify-ops";
@@ -1905,6 +1906,7 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
           id: x.id,
           name: x.user!.name,
           phone: (x.user as { phone?: string | null }).phone ?? null,
+          email: x.user!.email ?? null,
         }));
       for (const rec of smsInviteeRecords) {
         if (!rec.phone) {
@@ -1930,6 +1932,20 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
         // Live calls don't get reminders, so mint inline with a short TTL and
         // don't persist the token. One short URL keeps the invite to 1 segment.
         const shortToken = mintShortLink(joinUrl, { ttlMs: 4 * 60 * 60 * 1000 });
+        // Consent gate: bulldog-auth decides whether SMS is allowed and which
+        // phone is canonical. Fail-closed. Keyed by the invitee's email.
+        const consent = await checkSmsConsent(rec.email ?? "", "live_call_invite");
+        if (!consent.allowed) {
+          console.log(JSON.stringify({
+            msg: "sms_skipped",
+            event: "live_call_invite",
+            userId: rec.id,
+            reason: consent.reason,
+          }));
+          smsResults.push({ userId: rec.id, phone: e164, ok: false, error: `consent: ${consent.reason}` });
+          continue;
+        }
+        const smsTo = consent.phoneE164 ?? e164;
         const body = buildCallInviteSmsBody({
           callerName: u.name,
           channelLabel: channelLabelForSms,
@@ -1938,11 +1954,11 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
           shortUrl: `${baseUrl}/j/${shortToken}`,
         });
         try {
-          const r = await sendSms({ to: e164, body });
-          smsResults.push({ userId: rec.id, phone: e164, ok: r.ok, error: r.ok ? undefined : r.error });
+          const r = await sendSms({ to: smsTo, body });
+          smsResults.push({ userId: rec.id, phone: smsTo, ok: r.ok, error: r.ok ? undefined : r.error });
         } catch (err) {
           const msg = (err as { message?: string })?.message ?? "send failed";
-          smsResults.push({ userId: rec.id, phone: e164, ok: false, error: msg });
+          smsResults.push({ userId: rec.id, phone: smsTo, ok: false, error: msg });
         }
       }
       // External phone numbers — no userId; bound to organizer for guest-ish access.
@@ -1956,6 +1972,20 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
         const baseUrl = process.env.CHAT_BASE_URL || "https://chat.bulldogops.com";
         const joinUrl = `${baseUrl}/call-join?t=${encodeURIComponent(joinToken)}`;
         const shortToken = mintShortLink(joinUrl, { ttlMs: 4 * 60 * 60 * 1000 });
+        // External phone-only invitees have no suite identity (email), so the
+        // auth consent lookup cannot resolve them — fail-closed and skip.
+        const consent = await checkSmsConsent("", "live_call_invite");
+        if (!consent.allowed) {
+          console.log(JSON.stringify({
+            msg: "sms_skipped",
+            event: "live_call_invite",
+            phoneOnly: true,
+            reason: consent.reason,
+          }));
+          smsResults.push({ phone, ok: false, error: `consent: ${consent.reason}` });
+          continue;
+        }
+        const smsTo = consent.phoneE164 ?? phone;
         const body = buildCallInviteSmsBody({
           callerName: u.name,
           channelLabel: channelLabelForSms,
@@ -1964,11 +1994,11 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
           shortUrl: `${baseUrl}/j/${shortToken}`,
         });
         try {
-          const r = await sendSms({ to: phone, body });
-          smsResults.push({ phone, ok: r.ok, error: r.ok ? undefined : r.error });
+          const r = await sendSms({ to: smsTo, body });
+          smsResults.push({ phone: smsTo, ok: r.ok, error: r.ok ? undefined : r.error });
         } catch (err) {
           const msg = (err as { message?: string })?.message ?? "send failed";
-          smsResults.push({ phone, ok: false, error: msg });
+          smsResults.push({ phone: smsTo, ok: false, error: msg });
         }
       }
     } else if (smsInviteeIds.length > 0 || smsPhoneNumbers.length > 0) {
