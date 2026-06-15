@@ -41,7 +41,14 @@ function isStandalonePWA(): boolean {
   return iosStandalone || mqStandalone;
 }
 
-export function NotificationsButton() {
+interface NotificationsButtonProps {
+  /** Visual context for the trigger. "rail" = Discord-style left rail
+   *  (12x12 rounded-2xl). "header" = standard top-header icon button
+   *  (h-9 w-9 rounded-md). Defaults to "header". */
+  variant?: "rail" | "header";
+}
+
+export function NotificationsButton({ variant = "header" }: NotificationsButtonProps = {}) {
   // ── Initial state detection ─────────────────────────────────────────────
   // Run all the unsupported / install / denied checks once on mount. Doing
   // this here means the click handler never has to branch on capability —
@@ -219,6 +226,18 @@ export function NotificationsButton() {
             ? "Notifications not supported on this device"
             : "Enable push notifications";
 
+  const isHeader = variant === "header";
+
+  // Base box + neutral (idle) styling differs per context. The "subscribed"
+  // and "needs-install" accent treatments are shared so the bell reads the
+  // same regardless of where it's mounted.
+  const baseClass = isHeader
+    ? "h-9 w-9 rounded-md flex items-center justify-center transition-colors"
+    : "w-12 h-12 rounded-2xl flex items-center justify-center transition-all";
+  const idleClass = isHeader
+    ? "hover:bg-accent text-foreground/70 hover:text-foreground"
+    : "hover:bg-[hsl(232_45%_27%)] text-[hsl(0_0%_70%)]";
+
   return (
     <Tooltip>
       <TooltipTrigger asChild>
@@ -232,12 +251,12 @@ export function NotificationsButton() {
             state === "subscribed"
           }
           className={[
-            "w-12 h-12 rounded-2xl flex items-center justify-center transition-all",
+            baseClass,
             state === "subscribed"
               ? "bg-vs-green/15 text-vs-green ring-1 ring-vs-green/40"
               : state === "needs-install"
                 ? "bg-amber-500/15 text-amber-400 ring-1 ring-amber-500/40 hover:bg-amber-500/25"
-                : "hover:bg-[hsl(232_45%_27%)] text-[hsl(0_0%_70%)]",
+                : idleClass,
           ].join(" ")}
           data-testid="button-notifications"
           aria-label={title}
@@ -246,7 +265,7 @@ export function NotificationsButton() {
         </button>
       </TooltipTrigger>
       <TooltipContent
-        side="right"
+        side={isHeader ? "bottom" : "right"}
         className="bg-[hsl(232_55%_14%)] border-[hsl(232_40%_25%)] text-white text-xs max-w-[240px]"
       >
         {title}

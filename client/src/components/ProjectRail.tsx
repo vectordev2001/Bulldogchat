@@ -1,4 +1,4 @@
-import { Plus, Settings, LogOut, Bell, BellRing, Check, Circle } from "lucide-react";
+import { Plus, Settings, LogOut, Check, Circle } from "lucide-react";
 import { VectorLogo } from "./VectorLogo";
 import type { ApiProject, UserPresence } from "@/types/api";
 import { useAuth } from "@/lib/auth";
@@ -8,8 +8,6 @@ import {
   DropdownMenuTrigger, DropdownMenuSeparator, DropdownMenuLabel,
 } from "@/components/ui/dropdown-menu";
 import { InviteDialog } from "./InviteDialog";
-import { NotificationsButton } from "./NotificationsButton";
-import { AppSwitcher } from "@/lib/AppSwitcher";
 import { usePresence } from "@/hooks/use-presence";
 import { PRESENCE_COLOR } from "./Avatar";
 
@@ -87,12 +85,6 @@ export function ProjectRail({ projects, activeId, onSelect, unreadByProjectId, s
           <Plus className="w-5 h-5" />
         </button>
       )}
-
-      <NotificationsButton />
-
-      <div className="w-12 h-12 flex items-center justify-center hover:bg-[hsl(232_45%_27%)] rounded-2xl transition-all">
-        <AppSwitcher currentApp="chat" dark placement="right-start" />
-      </div>
 
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
