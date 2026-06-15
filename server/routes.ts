@@ -1302,6 +1302,65 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     res.json({ ok: true, clearedCount: ids.length });
   });
 
+  // Phase 1.9.36b — internal ops escape hatch for "clear channel".
+  //
+  // The user-facing DELETE /api/channels/:id/messages route is gated on the
+  // admin `clearChannel` capability and on the caller being a member who can
+  // access the channel. When that path silently fails (stale client, role
+  // mismatch, dropped SSE) ops needs a way to force-clear a channel without a
+  // browser. This endpoint is authenticated SOLELY by the shared
+  // SUITE_INTERNAL_SECRET (X-Suite-Secret header) — the same secret the
+  // contracts/ops bridges use — so it bypasses the per-user role/membership
+  // checks entirely. The secret IS the authorization.
+  //
+  //   POST /internal/admin/clear-channel
+  //   headers: X-Suite-Secret: <SUITE_INTERNAL_SECRET>
+  //   body: { "channelName": "el-paso-data-center" }  OR  { "channelId": 123 }
+  //   returns: { ok, channelId, channelName, clearedCount }
+  //
+  // channelName resolution is case/spacing/dash-insensitive (see
+  // storage.findChannelByName). Events fan out per id exactly like the
+  // user-facing route so any live clients re-render rows as tombstones.
+  app.post("/internal/admin/clear-channel", (req, res) => {
+    const expected = process.env.SUITE_INTERNAL_SECRET;
+    if (!expected) {
+      return res.status(503).json({ message: "SUITE_INTERNAL_SECRET not configured" });
+    }
+    const given = req.header("x-suite-secret");
+    if (!given || given !== expected) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+
+    const body = (req.body ?? {}) as { channelId?: unknown; channelName?: unknown };
+    let channel: ReturnType<typeof storage.getChannel> | undefined;
+    if (typeof body.channelId === "number" || (typeof body.channelId === "string" && body.channelId.trim() !== "")) {
+      const id = Number(body.channelId);
+      if (Number.isFinite(id)) channel = storage.getChannel(id);
+    } else if (typeof body.channelName === "string" && body.channelName.trim() !== "") {
+      channel = storage.findChannelByName(body.channelName);
+    } else {
+      return res.status(400).json({ message: "Provide channelId (number) or channelName (string)" });
+    }
+
+    if (!channel) {
+      return res.status(404).json({ message: "Channel not found" });
+    }
+
+    // No createdByUserId column on channels; attribute the tombstone to the
+    // system user (id 1), matching how seeded/system content is owned.
+    const SYSTEM_USER_ID = 1;
+    const org = storage.getProject(channel.projectId);
+    const orgId = org?.orgId ?? 1;
+    const { ids } = storage.tombstoneChannelMessages(channel.id, SYSTEM_USER_ID);
+    for (const id of ids) {
+      const wire = buildWireMessage(id);
+      if (wire) emitMessageUpdate(orgId, wire);
+      emitMessageDelete(orgId, { channelId: channel.id, messageId: id });
+    }
+    console.log(`[internal/clear-channel] cleared ${ids.length} message(s) in channel ${channel.id} ("${channel.name}") via suite secret`);
+    return res.json({ ok: true, channelId: channel.id, channelName: channel.name, clearedCount: ids.length });
+  });
+
   app.post("/api/messages/:id/pin", requireAuth, requireCap(can.chat.pinMessage), (req, res) => {
     const u = (req as AuthedRequest).user;
     const id = Number(req.params.id);

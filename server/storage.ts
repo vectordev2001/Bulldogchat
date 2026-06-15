@@ -80,6 +80,7 @@ export interface IStorage {
   // when the sidebar renders the per-job channel group.
   listChannelsByJob(workObjectId: number): Channel[];
   getChannel(id: number): Channel | undefined;
+  findChannelByName(name: string): Channel | undefined;
   createChannel(input: InsertChannel): Channel;
   setChannelLinkedContract(channelId: number, meta: LinkedContractMeta | null): Channel | undefined;
   // Phase 1.8: admin "move channel" support. Lets admins re-home a channel
@@ -337,6 +338,19 @@ class DatabaseStorage implements IStorage {
       .all();
   }
   getChannel(id: number) { return db.select().from(channels).where(eq(channels.id, id)).get(); }
+  // Resolve a channel by its human name, tolerant of casing/spacing/dash
+  // differences ("El Paso Data Center" == "el-paso-data center" ==
+  // "el-paso-data-center"). Both the query and each stored name are reduced to
+  // a canonical slug (lowercase, runs of non-alphanumerics collapsed to one
+  // dash, edges trimmed) before comparison. Returns the first match by id, or
+  // undefined. Used by the internal ops "clear channel" escape hatch.
+  findChannelByName(name: string): Channel | undefined {
+    const slug = (s: string) => s.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+    const target = slug(name);
+    if (!target) return undefined;
+    const all = db.select().from(channels).orderBy(asc(channels.id)).all();
+    return all.find(c => slug(c.name) === target);
+  }
   createChannel(input: InsertChannel) {
     // Cast to any: InsertChannel's auto-generated linkedContract type is the
     // widened `Json` from drizzle-zod, but the column is $type<LinkedContractMeta|null>.
