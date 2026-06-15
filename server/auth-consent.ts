@@ -39,6 +39,22 @@ export interface ConsentLookup {
  * If the lookup itself fails (network, auth unreachable), also fail-closed.
  * Better to skip a few notifications than to send to a non-consenting recipient.
  */
+/**
+ * Normalize whatever auth returns (10-digit US, already-E.164, or null) to
+ * a canonical E.164 string. Auth's `phone` field is typically 10 digits
+ * stripped of +1 — see server response shape comment in checkSmsConsent.
+ */
+function normalizePhoneToE164(raw: string | null): string | null {
+  if (!raw) return null;
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  if (trimmed.startsWith("+")) return trimmed;
+  const digits = trimmed.replace(/\D/g, "");
+  if (digits.length === 10) return `+1${digits}`;
+  if (digits.length === 11 && digits.startsWith("1")) return `+${digits}`;
+  return null; // unknown shape — fail safe
+}
+
 export async function checkSmsConsent(
   email: string,
   event: EventKey,
@@ -61,18 +77,48 @@ export async function checkSmsConsent(
     if (!res.ok) {
       return { allowed: false, phoneE164: null, reason: "lookup-failed" };
     }
+    // Auth response shape (verified live against auth.bulldogops.com):
+    //   { found, userId, email, phone, smsConsentStatus, prefs: {
+    //       smsMasterEnabled, smsMeetingInvite, smsJobAssignment,
+    //       smsChannelAdd, smsDispatch, smsContractCreated, smsContractUpdated } }
+    // `phone` is 10-digit US (no +1) when present; normalize to E.164 here.
     const data = (await res.json()) as {
-      smsConsent?: string;
-      phoneE164?: string | null;
-      events?: Record<string, { smsEnabled?: boolean }>;
+      found?: boolean;
+      smsConsentStatus?: string;
+      phone?: string | null;
+      prefs?: {
+        smsMasterEnabled?: boolean;
+        smsMeetingInvite?: boolean;
+        smsJobAssignment?: boolean;
+        smsChannelAdd?: boolean;
+        smsDispatch?: boolean;
+        smsContractCreated?: boolean;
+        smsContractUpdated?: boolean;
+      };
     };
-    const consent = data.smsConsent;
-    const phone = data.phoneE164 ?? null;
-    const eventEnabled = data.events?.[event]?.smsEnabled !== false; // default true within consent
+    if (data.found === false) {
+      return { allowed: false, phoneE164: null, reason: "no-consent" };
+    }
+    const consent = data.smsConsentStatus;
+    const phone = normalizePhoneToE164(data.phone ?? null);
+    // Auth exposes per-event flags as camelCase booleans on `prefs`. Map our
+    // event keys to those flags. Master toggle gates the whole thing.
+    const masterEnabled = data.prefs?.smsMasterEnabled !== false;
+    const eventFlag = (() => {
+      switch (event) {
+        case "meeting_invite":
+        case "meeting_reminder":
+        case "live_call_invite":
+          return data.prefs?.smsMeetingInvite;
+        default:
+          return undefined;
+      }
+    })();
+    const eventEnabled = eventFlag !== false; // default true within consent
     if (consent !== "granted") {
       return { allowed: false, phoneE164: phone, reason: "no-consent" };
     }
-    if (!eventEnabled) {
+    if (!masterEnabled || !eventEnabled) {
       return { allowed: false, phoneE164: phone, reason: "event-disabled" };
     }
     if (!phone) {
