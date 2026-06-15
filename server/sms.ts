@@ -144,17 +144,6 @@ export function verifyCallJoinToken(token: string): CallJoinTokenPayload | null 
 }
 
 /**
- * Wrap a web join URL in the bulldogchat:// custom scheme so iOS users who
- * have the native app installed can tap a second link that launches the app
- * directly (bypassing the in-app WKWebView that blocks camera/mic). The app
- * parses the `url` param and points its WebView at it. On devices without
- * the app the tap does nothing, so the web link above it stays the fallback.
- */
-export function buildIosJoinUrl(joinUrl: string): string {
-  return `bulldogchat://join?url=${encodeURIComponent(joinUrl)}`;
-}
-
-/**
  * Build the SMS body for an immediate call invite. Kept terse — most
  * carriers split at 160 chars and we want a single segment when possible.
  * The link is the join-token URL which auto-redirects into the LiveKit
@@ -168,14 +157,13 @@ export function buildCallInviteSmsBody(p: {
   shortUrl?: string;
 }): string {
   const verb = p.kind === "video" ? "video call" : "call";
-  // When a short link is provided, use ONLY it: a single short https:// URL
-  // that redirects to the long join URL works everywhere, so the second
-  // App: bulldogchat:// line is no longer needed (one segment instead of ~5).
-  if (p.shortUrl) {
-    return `${p.callerName} is starting a ${verb} on Bulldog (${p.channelLabel}). Join: ${p.shortUrl}`;
-  }
-  const iosUrl = buildIosJoinUrl(p.joinUrl);
-  return `${p.callerName} is starting a ${verb} on Bulldog (${p.channelLabel}). Web: ${p.joinUrl}\nApp: ${iosUrl}`;
+  // Exactly one URL: the short link when present (it matches the AASA /j/*
+  // pattern, so iOS auto-routes it into the app when installed and to Safari
+  // otherwise), falling back to the long join URL. No custom-scheme line —
+  // the shipping app registers no bulldogchat:// scheme; Universal Links
+  // handle app routing now.
+  const link = p.shortUrl || p.joinUrl;
+  return `${p.callerName} is starting a ${verb} on Bulldog (${p.channelLabel}). Join: ${link}`;
 }
 
 /**
@@ -194,12 +182,10 @@ export function buildScheduledCallSmsBody(p: {
 }): string {
   // The tightened "Y/N/M" RSVP wording (vs. "${code} Y, ${code} N, or
   // ${code} M") saves ~30 chars; parseRsvpSms already handles the "#A4F9 Y"
-  // reply shape. With a short link we drop the App: bulldogchat:// line.
-  if (p.shortUrl) {
-    return `${p.organizerName} invited you to a Bulldog call: "${p.title}" on ${p.whenLabel}. RSVP: reply ${p.rsvpCode} Y/N/M. Join: ${p.shortUrl}`;
-  }
-  const iosUrl = buildIosJoinUrl(p.joinUrl);
-  return `${p.organizerName} invited you to a Bulldog call: "${p.title}" on ${p.whenLabel}. RSVP: reply ${p.rsvpCode} Y, ${p.rsvpCode} N, or ${p.rsvpCode} M. Web: ${p.joinUrl}\nApp: ${iosUrl}`;
+  // reply shape. Exactly one URL: short link when present (Universal-Link
+  // routed), else the long join URL.
+  const link = p.shortUrl || p.joinUrl;
+  return `${p.organizerName} invited you to a Bulldog call: "${p.title}" on ${p.whenLabel}. RSVP: reply ${p.rsvpCode} Y/N/M. Join: ${link}`;
 }
 
 /**
@@ -213,11 +199,10 @@ export function buildReminderSmsBody(p: {
   shortUrl?: string;
 }): string {
   const m = Math.max(1, Math.round(p.minutesUntilStart));
-  if (p.shortUrl) {
-    return `Reminder: "${p.title}" starts in ${m} min on Bulldog. Join: ${p.shortUrl}`;
-  }
-  const iosUrl = buildIosJoinUrl(p.joinUrl);
-  return `Reminder: "${p.title}" starts in ${m} min on Bulldog. Web: ${p.joinUrl}\nApp: ${iosUrl}`;
+  // Exactly one URL: short link when present (Universal-Link routed), else
+  // the long join URL.
+  const link = p.shortUrl || p.joinUrl;
+  return `Reminder: "${p.title}" starts in ${m} min on Bulldog. Join: ${link}`;
 }
 
 /**

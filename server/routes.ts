@@ -176,6 +176,32 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     return res.redirect(`${authBase}/?next=${encodeURIComponent(back)}`);
   });
 
+  // ── APPLE APP SITE ASSOCIATION (Universal Links) ──
+  // Apple's swcd fetcher pulls this from each entitled domain on app install
+  // to learn which paths the app claims. It MUST be served as
+  // application/json, with NO redirect (302s break it on iOS < 14) and NO
+  // auth. The shipping iOS app (Capacitor, bundle com.teamdelta.bulldogops,
+  // Team CB3H59S2F9) is already entitled for applinks:chat.bulldogops.com —
+  // this route is the missing server half. Registered before the SPA
+  // catch-all so it isn't swallowed. Values are stable (not env-dependent).
+  app.get("/.well-known/apple-app-site-association", (_req, res) => {
+    const aasa = `{
+  "applinks": {
+    "details": [
+      {
+        "appIDs": ["CB3H59S2F9.com.teamdelta.bulldogops"],
+        "components": [
+          { "/": "/j/*", "comment": "Short-link meeting joins open the app" },
+          { "/": "/meeting/*", "comment": "Direct meeting room URLs open the app" },
+          { "/": "/call/*", "comment": "Direct call URLs open the app" }
+        ]
+      }
+    ]
+  }
+}`;
+    res.status(200).type("application/json").send(aasa);
+  });
+
   // ── SHORT LINK REDIRECT ──
   // SMS bodies carry https://chat.bulldogops.com/j/<token> instead of the full
   // ~280-char signed-JWT join URL, shrinking scheduled invites from ~5 Twilio
