@@ -207,12 +207,15 @@ function MemberRow({
   const callCell = () => {
     setChooserOpen(false);
     if (isMe || busy || !channelId || !memberPhone) return;
-    void startGroupCall({
+    startGroupCall({
       channelId,
       channelName: channelName ?? "channel",
       inviteeIds: [],
       phoneInviteeIds: [member.id],
       kind: "voice",
+    }).catch((err) => {
+      // eslint-disable-next-line no-console
+      console.error("[MemberList] callCell failed:", err);
     });
   };
 
@@ -224,12 +227,15 @@ function MemberRow({
   const textVideoLink = () => {
     setChooserOpen(false);
     if (isMe || busy || !channelId || !memberPhone) return;
-    void startGroupCall({
+    startGroupCall({
       channelId,
       channelName: channelName ?? "channel",
       inviteeIds: [],
       smsInviteeIds: [member.id],
       kind: "video",
+    }).catch((err) => {
+      // eslint-disable-next-line no-console
+      console.error("[MemberList] textVideoLink failed:", err);
     });
   };
 

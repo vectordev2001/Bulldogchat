@@ -301,10 +301,24 @@ export function CallProvider({ children }: { children: ReactNode }) {
     smsInviteeIds = [], smsPhoneNumbers = [], kind = "voice",
   }) => {
     if (outgoing || active) return;
-    const resp = await apiRequest<StartGroupCallResponse>(
-      "POST", `/api/channels/${channelId}/group-call/start`,
-      { inviteeIds, phoneInviteeIds, phoneNumbers, smsInviteeIds, smsPhoneNumbers, kind },
-    );
+    let resp: StartGroupCallResponse;
+    try {
+      resp = await apiRequest<StartGroupCallResponse>(
+        "POST", `/api/channels/${channelId}/group-call/start`,
+        { inviteeIds, phoneInviteeIds, phoneNumbers, smsInviteeIds, smsPhoneNumbers, kind },
+      );
+    } catch (err) {
+      // The request itself failed (non-2xx / network). Without surfacing
+      // this the tap looked like a no-op — "nothing happens at all" — which
+      // is exactly the reported phone-call symptom. Show the caller why.
+      const status = (err as { status?: number })?.status;
+      const body = (err as { body?: string })?.body;
+      const detail = status ? `(${status}) ${body ?? ""}`.trim() : ((err as { message?: string })?.message ?? "request failed");
+      // eslint-disable-next-line no-console
+      console.error("[startGroupCall] request failed:", err);
+      if (typeof window !== "undefined") window.alert(`Couldn't start the call: ${detail}`);
+      return;
+    }
     // Surface SMS dispatch results so the caller actually knows whether
     // the join link reached the recipient. Console log + window-level
     // alert for any failures (better than silent drop — the user reported
@@ -327,6 +341,19 @@ export function CallProvider({ children }: { children: ReactNode }) {
     if (resp.dialWarnings && resp.dialWarnings.length > 0) {
       // eslint-disable-next-line no-console
       console.warn("[startGroupCall] dialWarnings:", resp.dialWarnings);
+      // A phone dial that didn't go through (SIP not configured, trunk
+      // unavailable, no phone on file) previously only hit the console, so
+      // the caller saw the call "start" but nobody was ever rung and there
+      // was no error. Surface it. Only alert when the caller actually tried
+      // to ring a phone (phoneInviteeIds/phoneNumbers) — SMS-only warnings
+      // are already covered by the smsResults alert above.
+      const triedToDial = phoneInviteeIds.length > 0 || phoneNumbers.length > 0;
+      if (triedToDial && typeof window !== "undefined") {
+        const msg = resp.dialWarnings.join("\n");
+        setTimeout(() => {
+          window.alert(`Couldn't ring the phone:\n${msg}`);
+        }, 250);
+      }
     }
     setActive({
       // No single callId for a group call — we use 0 as a sentinel and
