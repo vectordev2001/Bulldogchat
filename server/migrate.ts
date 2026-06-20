@@ -1042,4 +1042,84 @@ export function runMigrations() {
   } catch (e: any) {
     console.warn("[migrate v26] short-link cleanup skipped:", e?.message);
   }
+
+  // ─────────────────── v27 (Meetings unification) ───────────────────
+  // Introduce the canonical `meetings` model. Three new tables plus nullable
+  // meeting_id FKs on the legacy call/room/notes tables. Everything is additive
+  // and idempotent: CREATE TABLE IF NOT EXISTS for the new tables, guarded
+  // ALTER ... ADD COLUMN for the FKs. No data is rewritten; legacy rows simply
+  // gain a null meeting_id until they're linked at their next call-start.
+  try {
+    rawDb.exec(`
+    CREATE TABLE IF NOT EXISTS meetings (
+      id TEXT PRIMARY KEY,
+      code TEXT NOT NULL UNIQUE,
+      org_id INTEGER NOT NULL REFERENCES organizations(id),
+      kind TEXT NOT NULL,
+      title TEXT,
+      host_user_id INTEGER REFERENCES users(id),
+      channel_id INTEGER REFERENCES channels(id),
+      livekit_room_name TEXT NOT NULL UNIQUE,
+      status TEXT NOT NULL DEFAULT 'scheduled',
+      allow_guests INTEGER NOT NULL DEFAULT 0,
+      waiting_room INTEGER NOT NULL DEFAULT 0,
+      recording_enabled INTEGER NOT NULL DEFAULT 0,
+      transcript_enabled INTEGER NOT NULL DEFAULT 0,
+      summary_enabled INTEGER NOT NULL DEFAULT 0,
+      summary_recipient_policy TEXT NOT NULL DEFAULT 'none',
+      max_duration_minutes INTEGER NOT NULL DEFAULT 240,
+      scheduled_start_at INTEGER,
+      started_at INTEGER,
+      ended_at INTEGER,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_meetings_org ON meetings(org_id);
+    CREATE INDEX IF NOT EXISTS idx_meetings_channel ON meetings(channel_id);
+    CREATE INDEX IF NOT EXISTS idx_meetings_status ON meetings(status);
+
+    CREATE TABLE IF NOT EXISTS meeting_participants (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      meeting_id TEXT NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+      participant_identity TEXT NOT NULL,
+      display_name TEXT NOT NULL,
+      user_id INTEGER REFERENCES users(id),
+      role TEXT NOT NULL DEFAULT 'participant',
+      origin TEXT,
+      joined_at INTEGER NOT NULL,
+      left_at INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_meeting_participants_meeting ON meeting_participants(meeting_id);
+
+    CREATE TABLE IF NOT EXISTS meeting_summary_recipients (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      meeting_id TEXT NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+      user_id INTEGER REFERENCES users(id),
+      email TEXT,
+      added_by_user_id INTEGER REFERENCES users(id),
+      added_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_meeting_summary_recipients_meeting ON meeting_summary_recipients(meeting_id);
+    `);
+    console.log("[migrate] v27 meetings tables ensured");
+  } catch (e: any) {
+    console.warn("[migrate v27] meetings tables skipped:", e?.message);
+  }
+
+  // v27: nullable meeting_id FK columns on the legacy tables. Each guarded by a
+  // PRAGMA table_info check so re-runs are no-ops. SQLite can't add a column
+  // with an inline REFERENCES clause that enforces, but the column itself is a
+  // plain nullable TEXT; the FK relationship is declared in the Drizzle schema
+  // and enforced going forward via application-level inserts.
+  for (const tbl of ["direct_calls", "scheduled_calls", "livekit_rooms", "recordings", "meeting_notes"]) {
+    try {
+      const cols = rawDb.prepare(`PRAGMA table_info(${tbl})`).all() as Array<{ name: string }>;
+      if (!cols.find((c) => c.name === "meeting_id")) {
+        rawDb.exec(`ALTER TABLE ${tbl} ADD COLUMN meeting_id TEXT REFERENCES meetings(id);`);
+        console.log(`[migrate] v27 added ${tbl}.meeting_id column`);
+      }
+    } catch (e: any) {
+      console.warn(`[migrate v27] ${tbl}.meeting_id column skipped:`, e?.message);
+    }
+  }
 }

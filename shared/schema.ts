@@ -368,6 +368,8 @@ export const recordings = sqliteTable("recordings", {
   storageKey: text("storage_key"),
   fileSizeBytes: integer("file_size_bytes"),
   status: text("status", { enum: recordingStatuses }).notNull().default("recording"),
+  // Unified meetings model — nullable FK to the canonical meeting row.
+  meetingId: text("meeting_id").references(() => meetings.id),
 });
 export type Recording = typeof recordings.$inferSelect;
 
@@ -408,6 +410,8 @@ export const meetingNotes = sqliteTable("meeting_notes", {
   durationSeconds: integer("duration_seconds"),
   deepgramSessionId: text("deepgram_session_id"),
   errorMessage: text("error_message"),
+  // Unified meetings model — nullable FK to the canonical meeting row.
+  meetingId: text("meeting_id").references(() => meetings.id),
   createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
   updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
 });
@@ -439,6 +443,9 @@ export const directCalls = sqliteTable("direct_calls", {
   startedAt: integer("started_at", { mode: "timestamp" }).notNull(),
   answeredAt: integer("answered_at", { mode: "timestamp" }),
   endedAt: integer("ended_at", { mode: "timestamp" }),
+  // Unified meetings model — links this legacy call row to its canonical
+  // meeting. Nullable so historical rows and the ringing fast-path stay valid.
+  meetingId: text("meeting_id").references(() => meetings.id),
 });
 export type DirectCall = typeof directCalls.$inferSelect;
 
@@ -486,6 +493,8 @@ export const scheduledCalls = sqliteTable("scheduled_calls", {
   // run the Bulldog-only flow and leave these unset.
   teamsJoinUrl: text("teams_join_url"),
   teamsMeetingId: text("teams_meeting_id"),
+  // Unified meetings model — nullable FK to the canonical meeting row.
+  meetingId: text("meeting_id").references(() => meetings.id),
   createdAt: integer("created_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
   updatedAt: integer("updated_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
 });
@@ -697,8 +706,103 @@ export const livekitRooms = sqliteTable("livekit_rooms", {
   roomName: text("room_name").notNull().unique(),
   active: integer("active", { mode: "boolean" }).notNull().default(false),
   startedAt: integer("started_at", { mode: "timestamp" }).notNull(),
+  // Unified meetings model — nullable FK to the canonical meeting row.
+  meetingId: text("meeting_id").references(() => meetings.id),
 });
 export type LivekitRoom = typeof livekitRooms.$inferSelect;
+
+/* ─────────────────── MEETINGS (unified model) ─────────────────── */
+// A `meeting` is the single canonical record for any real-time room — a 1:1
+// direct call, a scheduled call, an inline channel huddle, or a guest meeting
+// joined via a public code. The legacy direct_calls / scheduled_calls /
+// livekit_rooms rows still exist and carry the ringing/RSVP/egress state they
+// always did; each now points at a meeting via a nullable meeting_id FK so the
+// meeting is the durable identity (stable code, LiveKit room, summary policy).
+export const meetingKinds = ["direct", "scheduled", "channel_huddle", "guest"] as const;
+export type MeetingKind = typeof meetingKinds[number];
+
+export const meetingStatuses = ["scheduled", "active", "ended"] as const;
+export type MeetingStatus = typeof meetingStatuses[number];
+
+// Who receives the AI clerk summary when the meeting ends.
+//   none            — generate nothing / deliver to nobody
+//   channel_members — everyone in the bound channel (channel_huddle/scheduled)
+//   explicit        — only the hand-picked rows in meeting_summary_recipients
+//   all_attendees   — everyone who actually joined (resolved from participants)
+export const summaryRecipientPolicies = ["none", "channel_members", "explicit", "all_attendees"] as const;
+export type SummaryRecipientPolicy = typeof summaryRecipientPolicies[number];
+
+export const meetings = sqliteTable("meetings", {
+  // Text PK (nanoid) so a meeting id can be minted before any DB round-trip
+  // and is opaque/non-enumerable, unlike the autoincrement call ids.
+  id: text("id").primaryKey(),
+  // Human-shareable join code, format xxx-yyyy-zzz (Google-Meet style).
+  code: text("code").notNull().unique(),
+  orgId: integer("org_id").notNull().references(() => organizations.id),
+  kind: text("kind", { enum: meetingKinds }).notNull(),
+  title: text("title"),
+  hostUserId: integer("host_user_id").references(() => users.id),
+  // Optional channel binding (channel_huddle and channel-scoped scheduled).
+  channelId: integer("channel_id").references(() => channels.id),
+  // The LiveKit room name, unique per meeting. New meetings use `bdc-<code>`;
+  // legacy rooms are linked through the FK on direct_calls/etc., not renamed.
+  livekitRoomName: text("livekit_room_name").notNull().unique(),
+  status: text("status", { enum: meetingStatuses }).notNull().default("scheduled"),
+  allowGuests: integer("allow_guests", { mode: "boolean" }).notNull().default(false),
+  waitingRoom: integer("waiting_room", { mode: "boolean" }).notNull().default(false),
+  recordingEnabled: integer("recording_enabled", { mode: "boolean" }).notNull().default(false),
+  transcriptEnabled: integer("transcript_enabled", { mode: "boolean" }).notNull().default(false),
+  summaryEnabled: integer("summary_enabled", { mode: "boolean" }).notNull().default(false),
+  summaryRecipientPolicy: text("summary_recipient_policy", { enum: summaryRecipientPolicies })
+    .notNull()
+    .default("none"),
+  maxDurationMinutes: integer("max_duration_minutes").notNull().default(240),
+  scheduledStartAt: integer("scheduled_start_at", { mode: "timestamp" }),
+  startedAt: integer("started_at", { mode: "timestamp" }),
+  endedAt: integer("ended_at", { mode: "timestamp" }),
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
+  updatedAt: integer("updated_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
+});
+export type Meeting = typeof meetings.$inferSelect;
+
+export const meetingParticipantRoles = ["host", "cohost", "participant", "guest"] as const;
+export type MeetingParticipantRole = typeof meetingParticipantRoles[number];
+
+export const meetingParticipants = sqliteTable("meeting_participants", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  meetingId: text("meeting_id").notNull().references(() => meetings.id, { onDelete: "cascade" }),
+  // LiveKit participant identity: `u_<userId>` for authed users, `g_<nanoid>`
+  // for guests. This is the join key back to LiveKit roster events.
+  participantIdentity: text("participant_identity").notNull(),
+  displayName: text("display_name").notNull(),
+  // Null for guests (no chat account).
+  userId: integer("user_id").references(() => users.id),
+  role: text("role", { enum: meetingParticipantRoles }).notNull().default("participant"),
+  // Where the join came from: "web" | "app" | "sip" | "guest_link" etc.
+  origin: text("origin"),
+  joinedAt: integer("joined_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
+  leftAt: integer("left_at", { mode: "timestamp" }),
+});
+export type MeetingParticipant = typeof meetingParticipants.$inferSelect;
+
+// Explicit summary recipients (used when summaryRecipientPolicy = 'explicit',
+// and also merged in for other policies as a hand-added extra-recipient list).
+export const meetingSummaryRecipients = sqliteTable("meeting_summary_recipients", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  meetingId: text("meeting_id").notNull().references(() => meetings.id, { onDelete: "cascade" }),
+  // Exactly one of (userId, email) is set: a chat user gets an in-app + email
+  // delivery; a bare email is an external recipient.
+  userId: integer("user_id").references(() => users.id),
+  email: text("email"),
+  addedByUserId: integer("added_by_user_id").references(() => users.id),
+  addedAt: integer("added_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
+});
+export type MeetingSummaryRecipient = typeof meetingSummaryRecipients.$inferSelect;
+
+export const insertMeetingSchema = createInsertSchema(meetings).omit({
+  id: true, code: true, livekitRoomName: true, createdAt: true, updatedAt: true,
+});
+export type InsertMeeting = z.infer<typeof insertMeetingSchema>;
 
 /* ─────────────────── AUTH PAYLOAD SCHEMAS ─────────────────── */
 export const signupSchema = z.object({
