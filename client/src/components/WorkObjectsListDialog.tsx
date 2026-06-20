@@ -63,7 +63,7 @@ const KIND_META: Record<WorkObjectKind, { label: string; plural: string; icon: t
   },
   safety_incident: {
     label: "Safety", plural: "Safety Incidents", icon: AlertTriangle,
-    tone: "bg-[hsl(2_60%_22%)] text-[hsl(2_85%_72%)] border-[hsl(2_85%_72%)]/30",
+    tone: "bg-[hsl(174_60%_22%)] text-[hsl(174_85%_72%)] border-[hsl(174_85%_72%)]/30",
   },
 };
 
@@ -152,14 +152,14 @@ export function WorkObjectsListDialog({ open, onClose, me, orgMembers, activePro
         data-testid="dialog-work-objects-list-backdrop"
       >
         <div
-          className="w-full max-w-3xl max-h-[85vh] mx-4 flex flex-col bg-[hsl(232_55%_12%)] border border-[hsl(232_40%_25%)] rounded-lg shadow-2xl overflow-hidden"
+          className="w-full max-w-3xl max-h-[85vh] mx-4 flex flex-col bg-[hsl(220_55%_12%)] border border-[hsl(220_40%_25%)] rounded-lg shadow-2xl overflow-hidden"
           onClick={(e) => e.stopPropagation()}
           data-testid="dialog-work-objects-list"
         >
           {/* Header */}
-          <div className="px-5 py-4 border-b border-[hsl(232_40%_22%)] flex items-center justify-between">
+          <div className="px-5 py-4 border-b border-[hsl(220_40%_22%)] flex items-center justify-between">
             <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-md bg-[hsl(232_45%_22%)] flex items-center justify-center">
+              <div className="w-8 h-8 rounded-md bg-[hsl(220_45%_22%)] flex items-center justify-center">
                 <ClipboardList className="w-4 h-4 text-vs-red" />
               </div>
               <div>
@@ -182,7 +182,7 @@ export function WorkObjectsListDialog({ open, onClose, me, orgMembers, activePro
               <button
                 type="button"
                 onClick={onClose}
-                className="w-8 h-8 flex items-center justify-center rounded-md text-[hsl(0_0%_70%)] hover:text-white hover:bg-[hsl(232_45%_22%)]"
+                className="w-8 h-8 flex items-center justify-center rounded-md text-[hsl(0_0%_70%)] hover:text-white hover:bg-[hsl(220_45%_22%)]"
                 data-testid="button-close-work-objects-list"
                 aria-label="Close"
               >
@@ -192,7 +192,7 @@ export function WorkObjectsListDialog({ open, onClose, me, orgMembers, activePro
           </div>
 
           {/* Filters */}
-          <div className="px-5 py-3 border-b border-[hsl(232_40%_22%)] flex flex-wrap items-center gap-2">
+          <div className="px-5 py-3 border-b border-[hsl(220_40%_22%)] flex flex-wrap items-center gap-2">
             <div className="relative flex-1 min-w-[180px]">
               <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[hsl(0_0%_50%)]" />
               <input
@@ -200,11 +200,11 @@ export function WorkObjectsListDialog({ open, onClose, me, orgMembers, activePro
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Search by ref or title..."
-                className="w-full bg-[hsl(232_60%_9%)] border border-black/40 text-xs text-white placeholder:text-[hsl(0_0%_45%)] rounded-md pl-8 pr-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-vs-red"
+                className="w-full bg-[hsl(220_60%_9%)] border border-black/40 text-xs text-white placeholder:text-[hsl(0_0%_45%)] rounded-md pl-8 pr-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-vs-red"
                 data-testid="input-work-object-search"
               />
             </div>
-            <div className="flex items-center gap-1 bg-[hsl(232_60%_9%)] border border-black/40 rounded-md p-0.5" data-testid="filter-kind">
+            <div className="flex items-center gap-1 bg-[hsl(220_60%_9%)] border border-black/40 rounded-md p-0.5" data-testid="filter-kind">
               <FilterPill label="All" active={kindFilter === "all"} onClick={() => setKindFilter("all")} testid="filter-kind-all" />
               {(Object.entries(KIND_META) as [WorkObjectKind, typeof KIND_META[WorkObjectKind]][]).map(([k, meta]) => (
                 <FilterPill
@@ -217,7 +217,7 @@ export function WorkObjectsListDialog({ open, onClose, me, orgMembers, activePro
                 />
               ))}
             </div>
-            <div className="flex items-center gap-1 bg-[hsl(232_60%_9%)] border border-black/40 rounded-md p-0.5" data-testid="filter-status">
+            <div className="flex items-center gap-1 bg-[hsl(220_60%_9%)] border border-black/40 rounded-md p-0.5" data-testid="filter-status">
               <FilterPill label="Open" active={statusFilter === "open"} onClick={() => setStatusFilter("open")} testid="filter-status-open" />
               <FilterPill label="Closed" active={statusFilter === "closed"} onClick={() => setStatusFilter("closed")} testid="filter-status-closed" />
               <FilterPill label="All" active={statusFilter === "all"} onClick={() => setStatusFilter("all")} testid="filter-status-all" />
@@ -242,7 +242,7 @@ export function WorkObjectsListDialog({ open, onClose, me, orgMembers, activePro
                   <button
                     type="button"
                     onClick={() => setCreateOpen(true)}
-                    className="mt-3 inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-[hsl(232_45%_22%)] hover:bg-[hsl(232_45%_28%)] text-white text-xs font-semibold transition-colors"
+                    className="mt-3 inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-[hsl(220_45%_22%)] hover:bg-[hsl(220_45%_28%)] text-white text-xs font-semibold transition-colors"
                     data-testid="button-empty-create-work-object"
                   >
                     <Plus className="w-3.5 h-3.5" />
@@ -285,7 +285,7 @@ export function WorkObjectsListDialog({ open, onClose, me, orgMembers, activePro
           </div>
 
           {/* Footer summary */}
-          <div className="px-5 py-2.5 border-t border-[hsl(232_40%_22%)] flex items-center justify-between text-[11px] text-[hsl(0_0%_55%)]">
+          <div className="px-5 py-2.5 border-t border-[hsl(220_40%_22%)] flex items-center justify-between text-[11px] text-[hsl(0_0%_55%)]">
             <span data-testid="text-work-object-count">{filtered.length} {filtered.length === 1 ? "object" : "objects"}</span>
             <span className="font-mono">org · {me.role}</span>
           </div>
@@ -329,7 +329,7 @@ function FilterPill({
         "inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] font-semibold transition-colors",
         active
           ? "bg-vs-red text-white"
-          : "text-[hsl(0_0%_70%)] hover:text-white hover:bg-[hsl(232_45%_22%)]",
+          : "text-[hsl(0_0%_70%)] hover:text-white hover:bg-[hsl(220_45%_22%)]",
       ].join(" ")}
     >
       {Icon && <Icon className="w-3 h-3" />}
@@ -374,7 +374,7 @@ function WorkObjectRow({ wo, ownerName, onOpen, canDelete }: { wo: WorkObject; o
       <button
         type="button"
         onClick={onOpen}
-        className="w-full flex items-center gap-2 px-2.5 py-2 rounded-md bg-[hsl(232_50%_15%)] border border-[hsl(232_40%_22%)] hover:border-[hsl(232_40%_32%)] hover:bg-[hsl(232_50%_17%)] transition-colors text-left"
+        className="w-full flex items-center gap-2 px-2.5 py-2 rounded-md bg-[hsl(220_50%_15%)] border border-[hsl(220_40%_22%)] hover:border-[hsl(220_40%_32%)] hover:bg-[hsl(220_50%_17%)] transition-colors text-left"
         data-testid={`row-work-object-${wo.id}`}
       >
         <div className="min-w-0 flex-1">

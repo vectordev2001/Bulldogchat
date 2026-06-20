@@ -79,7 +79,7 @@ function IncomingCallModal() {
   if (!incoming) return null;
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm" data-testid="modal-incoming-call">
-      <div className="w-full max-w-sm rounded-2xl bg-[hsl(232_60%_12%)] border border-[hsl(232_40%_22%)] p-6 shadow-2xl text-center">
+      <div className="w-full max-w-sm rounded-2xl bg-[hsl(220_60%_12%)] border border-[hsl(220_40%_22%)] p-6 shadow-2xl text-center">
         <div className="text-xs font-mono uppercase tracking-[0.18em] text-vs-blue-light mb-4 animate-pulse">
           Incoming {incoming.kind === "video" ? "video" : "voice"} call
         </div>
@@ -94,7 +94,7 @@ function IncomingCallModal() {
           <button
             type="button"
             onClick={() => { void declineIncoming(); }}
-            className="h-14 w-14 rounded-full bg-vs-red hover:bg-[hsl(2_75%_60%)] text-white flex items-center justify-center shadow-lg transition-colors"
+            className="h-14 w-14 rounded-full bg-vs-red hover:bg-[hsl(174_75%_60%)] text-white flex items-center justify-center shadow-lg transition-colors"
             title="Decline"
             data-testid="button-decline-call"
           >
@@ -103,7 +103,7 @@ function IncomingCallModal() {
           <button
             type="button"
             onClick={() => { void acceptIncoming(); }}
-            className="h-14 w-14 rounded-full bg-vs-green hover:bg-[hsl(145_60%_55%)] text-[hsl(232_60%_9%)] flex items-center justify-center shadow-lg transition-colors"
+            className="h-14 w-14 rounded-full bg-vs-green hover:bg-[hsl(145_60%_55%)] text-[hsl(220_60%_9%)] flex items-center justify-center shadow-lg transition-colors"
             title="Accept"
             data-testid="button-accept-call"
           >
@@ -122,7 +122,7 @@ function OutgoingCallModal() {
   if (!outgoing) return null;
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm" data-testid="modal-outgoing-call">
-      <div className="w-full max-w-sm rounded-2xl bg-[hsl(232_60%_12%)] border border-[hsl(232_40%_22%)] p-6 shadow-2xl text-center">
+      <div className="w-full max-w-sm rounded-2xl bg-[hsl(220_60%_12%)] border border-[hsl(220_40%_22%)] p-6 shadow-2xl text-center">
         <div className="text-xs font-mono uppercase tracking-[0.18em] text-vs-amber mb-4 flex items-center justify-center gap-2">
           <Loader2 className="w-3 h-3 animate-spin" />
           Calling…
@@ -137,7 +137,7 @@ function OutgoingCallModal() {
         <button
           type="button"
           onClick={() => { void cancelOutgoing(); }}
-          className="h-12 px-6 rounded-full bg-vs-red hover:bg-[hsl(2_75%_60%)] text-white flex items-center gap-2 mx-auto shadow-lg transition-colors"
+          className="h-12 px-6 rounded-full bg-vs-red hover:bg-[hsl(174_75%_60%)] text-white flex items-center gap-2 mx-auto shadow-lg transition-colors"
           data-testid="button-cancel-call"
         >
           <PhoneOff className="w-4 h-4" />
@@ -326,7 +326,7 @@ function ActiveCallOverlay() {
 
   return (
     <div
-      className="fixed inset-0 z-[100] flex flex-col bg-[hsl(232_65%_8%)] text-white"
+      className="fixed inset-0 z-[100] flex flex-col bg-[hsl(220_65%_8%)] text-white"
       style={{
         // Honor iOS safe areas when running as a native app / standalone PWA so
         // the system status bar (clock, battery, dynamic island) doesn't overlap
@@ -344,7 +344,7 @@ function ActiveCallOverlay() {
           stays reachable (Effects/Clerk/More/Leave were being cut off on iPhone
           per Phase 1.9.26 user report). The Leave button is rendered OUTSIDE
           the scroll container so it's always pinned on the right edge. */}
-      <div className="shrink-0 px-2 sm:px-4 py-2 border-b border-[hsl(232_40%_22%)] bg-[hsl(232_60%_11%)] flex items-center gap-0">
+      <div className="shrink-0 px-2 sm:px-4 py-2 border-b border-[hsl(220_40%_22%)] bg-[hsl(220_60%_11%)] flex items-center gap-0">
         {/* Call timer — upper left, compact on mobile */}
         <div className="flex items-center gap-1 sm:gap-1.5 mr-2 sm:mr-4 shrink-0">
           <Volume2 className="w-4 h-4 text-vs-blue" />
@@ -373,7 +373,7 @@ function ActiveCallOverlay() {
               <span className="relative inline-flex">
                 <Users className="w-5 h-5" />
                 {lk.participants.length > 0 && (
-                  <span className="absolute -top-1 -right-1 h-3.5 min-w-3.5 rounded-full bg-vs-blue text-[hsl(232_60%_9%)] text-[9px] font-bold flex items-center justify-center px-0.5">
+                  <span className="absolute -top-1 -right-1 h-3.5 min-w-3.5 rounded-full bg-vs-blue text-[hsl(220_60%_9%)] text-[9px] font-bold flex items-center justify-center px-0.5">
                     {lk.participants.length}
                   </span>
                 )}
@@ -397,7 +397,7 @@ function ActiveCallOverlay() {
           />
 
           {/* Divider */}
-          <div className="w-px h-8 bg-[hsl(232_40%_22%)] mx-1" />
+          <div className="w-px h-8 bg-[hsl(220_40%_22%)] mx-1" />
 
           {/* Camera — Phase 1.9.30: route through lk.toggleCamera() so the
               iOS gesture-safe imperative path is preserved. Previously we
@@ -482,13 +482,13 @@ function ActiveCallOverlay() {
               />
               {moreOpen && (
                 <div
-                  className="absolute right-0 top-full mt-1 z-[120] w-56 rounded-lg bg-[hsl(232_55%_13%)] border border-[hsl(232_40%_25%)] shadow-2xl overflow-hidden"
+                  className="absolute right-0 top-full mt-1 z-[120] w-56 rounded-lg bg-[hsl(220_55%_13%)] border border-[hsl(220_40%_25%)] shadow-2xl overflow-hidden"
                   onMouseLeave={() => setMoreOpen(false)}
                 >
                   <button
                     type="button"
                     onClick={() => { setContractOpen(o => !o); setMoreOpen(false); }}
-                    className="w-full px-3 py-2.5 flex items-center gap-3 text-sm text-white hover:bg-[hsl(232_50%_20%)] text-left"
+                    className="w-full px-3 py-2.5 flex items-center gap-3 text-sm text-white hover:bg-[hsl(220_50%_20%)] text-left"
                   >
                     <FileText className="w-4 h-4 text-vs-blue-light shrink-0" />
                     {contractOpen ? "Hide contract" : "View contract"}
@@ -506,7 +506,7 @@ function ActiveCallOverlay() {
         <button
           type="button"
           onClick={endCallWithClerkStop}
-          className="ml-1 sm:ml-2 shrink-0 flex flex-col items-center gap-0.5 px-2 sm:px-3 py-1.5 rounded-md bg-vs-red hover:bg-[hsl(2_75%_60%)] text-white transition-colors min-w-[44px]"
+          className="ml-1 sm:ml-2 shrink-0 flex flex-col items-center gap-0.5 px-2 sm:px-3 py-1.5 rounded-md bg-vs-red hover:bg-[hsl(174_75%_60%)] text-white transition-colors min-w-[44px]"
           data-testid="button-end-call"
           title="Leave call"
         >
@@ -519,7 +519,7 @@ function ActiveCallOverlay() {
           opened the link from Messages/Mail/Slack/etc, which blocks the
           camera. Dismissable but persistent until tapped. */}
       {isInAppBrowser && !inAppDismissed && (
-        <div className="shrink-0 px-4 py-3 bg-[hsl(2_70%_55%/0.32)] border-b border-[hsl(2_70%_55%/0.6)] text-xs text-[hsl(2_90%_92%)] flex items-start gap-2">
+        <div className="shrink-0 px-4 py-3 bg-[hsl(174_70%_55%/0.32)] border-b border-[hsl(174_70%_55%/0.6)] text-xs text-[hsl(174_90%_92%)] flex items-start gap-2">
           <VideoOff className="w-4 h-4 shrink-0 mt-0.5" />
           <div className="flex-1 min-w-0">
             <div className="font-semibold text-sm">Camera blocked in this browser</div>
@@ -530,7 +530,7 @@ function ActiveCallOverlay() {
               <button
                 type="button"
                 onClick={() => openInIosApp(window.location.href)}
-                className="w-full px-3 py-2 rounded-md bg-vs-blue hover:bg-[hsl(218_90%_60%)] text-white text-sm font-medium transition-colors"
+                className="w-full px-3 py-2 rounded-md bg-vs-blue hover:bg-[hsl(199_90%_60%)] text-white text-sm font-medium transition-colors"
                 data-testid="button-open-in-ios-app"
               >
                 Open in Bulldog app
@@ -543,7 +543,7 @@ function ActiveCallOverlay() {
                     setTimeout(() => setEscapeLinkCopied(false), 2000);
                   }).catch(() => {});
                 }}
-                className="w-full px-3 py-2 rounded-md border border-[hsl(2_70%_55%/0.6)] hover:bg-black/20 text-[hsl(2_90%_92%)] text-sm font-medium transition-colors"
+                className="w-full px-3 py-2 rounded-md border border-[hsl(174_70%_55%/0.6)] hover:bg-black/20 text-[hsl(174_90%_92%)] text-sm font-medium transition-colors"
                 data-testid="button-copy-meeting-link"
               >
                 {escapeLinkCopied ? "Copied!" : "Copy link"}
@@ -577,7 +577,7 @@ function ActiveCallOverlay() {
 
       {/* Virtual background picker (floats above stage when open) */}
       {bgOpen && (
-        <div className="shrink-0 border-b border-[hsl(232_40%_22%)] bg-[hsl(232_55%_11%)] px-4 py-2">
+        <div className="shrink-0 border-b border-[hsl(220_40%_22%)] bg-[hsl(220_55%_11%)] px-4 py-2">
           <VirtualBackgroundPicker
             current={bgSel}
             onSelect={(sel) => { setBgSel(sel); setBgOpen(false); }}
@@ -588,7 +588,7 @@ function ActiveCallOverlay() {
 
       {/* Error banner */}
       {lk.error && (
-        <div className="px-4 py-2 bg-[hsl(2_70%_55%/0.15)] border-b border-[hsl(2_70%_55%/0.4)] text-xs text-[hsl(2_85%_75%)] text-center">
+        <div className="px-4 py-2 bg-[hsl(174_70%_55%/0.15)] border-b border-[hsl(174_70%_55%/0.4)] text-xs text-[hsl(174_85%_75%)] text-center">
           {lk.error}
         </div>
       )}
@@ -790,11 +790,11 @@ function InCallAddDialog({ onClose }: { onClose: () => void }) {
       data-testid="dialog-in-call-add"
     >
       <div
-        className="w-full md:w-[520px] md:max-w-[92vw] max-h-[92vh] flex flex-col bg-[hsl(232_55%_13%)] border border-[hsl(232_40%_25%)] md:rounded-2xl rounded-t-2xl shadow-2xl overflow-hidden"
+        className="w-full md:w-[520px] md:max-w-[92vw] max-h-[92vh] flex flex-col bg-[hsl(220_55%_13%)] border border-[hsl(220_40%_25%)] md:rounded-2xl rounded-t-2xl shadow-2xl overflow-hidden"
         style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="px-4 py-3 border-b border-[hsl(232_40%_22%)] flex items-center justify-between shrink-0">
+        <div className="px-4 py-3 border-b border-[hsl(220_40%_22%)] flex items-center justify-between shrink-0">
           <div className="min-w-0">
             <div className="text-sm font-display text-white">Add to this call</div>
             <div className="text-[10px] text-[hsl(0_0%_60%)] font-mono uppercase tracking-wider">
@@ -811,8 +811,8 @@ function InCallAddDialog({ onClose }: { onClose: () => void }) {
           </button>
         </div>
 
-        <div className="px-3 py-2 border-b border-[hsl(232_40%_22%)] shrink-0">
-          <div className="flex items-center gap-2 px-2 py-1.5 rounded-md bg-[hsl(232_50%_18%)] border border-[hsl(232_40%_25%)]">
+        <div className="px-3 py-2 border-b border-[hsl(220_40%_22%)] shrink-0">
+          <div className="flex items-center gap-2 px-2 py-1.5 rounded-md bg-[hsl(220_50%_18%)] border border-[hsl(220_40%_25%)]">
             <Search className="w-4 h-4 text-[hsl(0_0%_55%)] shrink-0" />
             <input
               value={query}
@@ -842,7 +842,7 @@ function InCallAddDialog({ onClose }: { onClose: () => void }) {
                     <div
                       className={[
                         "flex items-center gap-2 px-2 py-1.5 rounded-md",
-                        isSel ? "bg-[hsl(232_50%_22%)] ring-1 ring-vs-blue/40" : "hover:bg-[hsl(232_45%_22%)]",
+                        isSel ? "bg-[hsl(220_50%_22%)] ring-1 ring-vs-blue/40" : "hover:bg-[hsl(220_45%_22%)]",
                       ].join(" ")}
                     >
                       <button
@@ -853,7 +853,7 @@ function InCallAddDialog({ onClose }: { onClose: () => void }) {
                       >
                         <div className={[
                           "w-5 h-5 rounded-md border flex items-center justify-center shrink-0",
-                          isSel ? "bg-vs-blue border-vs-blue text-[hsl(232_60%_9%)]" : "border-[hsl(0_0%_45%)]",
+                          isSel ? "bg-vs-blue border-vs-blue text-[hsl(220_60%_9%)]" : "border-[hsl(0_0%_45%)]",
                         ].join(" ")}>
                           {isSel && <Check className="w-3 h-3" strokeWidth={3} />}
                         </div>
@@ -864,13 +864,13 @@ function InCallAddDialog({ onClose }: { onClose: () => void }) {
                         </div>
                       </button>
                       {isSel && (
-                        <div className="flex items-center gap-0.5 shrink-0 bg-[hsl(232_60%_11%)] rounded-md p-0.5 border border-[hsl(232_40%_25%)]">
+                        <div className="flex items-center gap-0.5 shrink-0 bg-[hsl(220_60%_11%)] rounded-md p-0.5 border border-[hsl(220_40%_25%)]">
                           <button
                             type="button"
                             onClick={() => setRouteFor(m.id, "app")}
                             className={[
                               "px-2 py-1 rounded text-[11px] font-mono uppercase tracking-wider flex items-center gap-1",
-                              r === "app" ? "bg-vs-blue text-[hsl(232_60%_9%)]" : "text-[hsl(0_0%_65%)] hover:text-white",
+                              r === "app" ? "bg-vs-blue text-[hsl(220_60%_9%)]" : "text-[hsl(0_0%_65%)] hover:text-white",
                             ].join(" ")}
                             title="Ring in the app"
                           >
@@ -898,7 +898,7 @@ function InCallAddDialog({ onClose }: { onClose: () => void }) {
           )}
         </div>
 
-        <div className="shrink-0 px-3 py-2 border-t border-[hsl(232_40%_22%)] bg-[hsl(232_55%_11%)] flex flex-col gap-2">
+        <div className="shrink-0 px-3 py-2 border-t border-[hsl(220_40%_22%)] bg-[hsl(220_55%_11%)] flex flex-col gap-2">
           <div className="text-[10px] uppercase tracking-wider font-mono text-[hsl(0_0%_55%)]">Or dial a phone number</div>
           <div className="flex items-center gap-2">
             <input
@@ -907,13 +907,13 @@ function InCallAddDialog({ onClose }: { onClose: () => void }) {
               onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addPhone(); } }}
               placeholder="+1 555 123 4567"
               inputMode="tel"
-              className="flex-1 bg-[hsl(232_50%_18%)] border border-[hsl(232_40%_25%)] rounded-md px-2 py-1.5 text-sm text-white placeholder:text-[hsl(0_0%_45%)] outline-none focus:border-vs-blue"
+              className="flex-1 bg-[hsl(220_50%_18%)] border border-[hsl(220_40%_25%)] rounded-md px-2 py-1.5 text-sm text-white placeholder:text-[hsl(0_0%_45%)] outline-none focus:border-vs-blue"
               data-testid="input-in-call-add-phone"
             />
             <button
               type="button"
               onClick={addPhone}
-              className="px-3 py-1.5 rounded-md bg-[hsl(232_45%_27%)] hover:bg-[hsl(232_45%_32%)] text-white text-sm"
+              className="px-3 py-1.5 rounded-md bg-[hsl(220_45%_27%)] hover:bg-[hsl(220_45%_32%)] text-white text-sm"
             >
               Add
             </button>
@@ -921,7 +921,7 @@ function InCallAddDialog({ onClose }: { onClose: () => void }) {
           {phoneNumbers.length > 0 && (
             <div className="flex flex-wrap gap-1.5">
               {phoneNumbers.map((p) => (
-                <span key={p} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-vs-red/15 border border-vs-red/40 text-[hsl(2_85%_75%)]">
+                <span key={p} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-vs-red/15 border border-vs-red/40 text-[hsl(174_85%_75%)]">
                   {p}
                   <button type="button" onClick={() => setPhoneNumbers((arr) => arr.filter((x) => x !== p))} className="hover:text-white" aria-label={`Remove ${p}`}>
                     <X className="w-3 h-3" />
@@ -940,13 +940,13 @@ function InCallAddDialog({ onClose }: { onClose: () => void }) {
               placeholder="guest@example.com"
               type="email"
               inputMode="email"
-              className="flex-1 bg-[hsl(232_50%_18%)] border border-[hsl(232_40%_25%)] rounded-md px-2 py-1.5 text-sm text-white placeholder:text-[hsl(0_0%_45%)] outline-none focus:border-vs-blue"
+              className="flex-1 bg-[hsl(220_50%_18%)] border border-[hsl(220_40%_25%)] rounded-md px-2 py-1.5 text-sm text-white placeholder:text-[hsl(0_0%_45%)] outline-none focus:border-vs-blue"
               data-testid="input-in-call-add-email"
             />
             <button
               type="button"
               onClick={addEmail}
-              className="px-3 py-1.5 rounded-md bg-[hsl(232_45%_27%)] hover:bg-[hsl(232_45%_32%)] text-white text-sm"
+              className="px-3 py-1.5 rounded-md bg-[hsl(220_45%_27%)] hover:bg-[hsl(220_45%_32%)] text-white text-sm"
             >
               Add
             </button>
@@ -971,10 +971,10 @@ function InCallAddDialog({ onClose }: { onClose: () => void }) {
           </div>
         )}
         {error && (
-          <div className="shrink-0 px-3 py-2 bg-[hsl(2_70%_55%/0.15)] border-t border-[hsl(2_70%_55%/0.4)] text-xs text-[hsl(2_85%_75%)]">{error}</div>
+          <div className="shrink-0 px-3 py-2 bg-[hsl(174_70%_55%/0.15)] border-t border-[hsl(174_70%_55%/0.4)] text-xs text-[hsl(174_85%_75%)]">{error}</div>
         )}
 
-        <div className="shrink-0 px-3 py-3 border-t border-[hsl(232_40%_22%)] bg-[hsl(232_55%_13%)] flex items-center justify-between gap-2">
+        <div className="shrink-0 px-3 py-3 border-t border-[hsl(220_40%_22%)] bg-[hsl(220_55%_13%)] flex items-center justify-between gap-2">
           <span className="text-[11px] text-[hsl(0_0%_60%)] font-mono">
             {totalTargets > 0 ? `${totalTargets} to add` : "Pick people or phone numbers"}
           </span>
@@ -986,7 +986,7 @@ function InCallAddDialog({ onClose }: { onClose: () => void }) {
               type="button"
               onClick={submit}
               disabled={submitting || totalTargets === 0}
-              className="px-4 py-1.5 rounded-md bg-vs-red hover:bg-[hsl(2_75%_60%)] text-white text-sm font-semibold disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
+              className="px-4 py-1.5 rounded-md bg-vs-red hover:bg-[hsl(174_75%_60%)] text-white text-sm font-semibold disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
               data-testid="button-in-call-add-submit"
             >
               {submitting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
@@ -1030,8 +1030,8 @@ function CtrlBtn({
         "w-12 h-12 rounded-full flex items-center justify-center transition-all",
         disabled ? "opacity-40 cursor-not-allowed" : "",
         on
-          ? "bg-[hsl(232_45%_27%)] hover:bg-[hsl(232_45%_32%)] text-white"
-          : "bg-[hsl(2_70%_55%/0.25)] hover:bg-[hsl(2_70%_55%/0.35)] text-[hsl(2_85%_72%)] ring-1 ring-[hsl(2_70%_55%/0.4)]",
+          ? "bg-[hsl(220_45%_27%)] hover:bg-[hsl(220_45%_32%)] text-white"
+          : "bg-[hsl(174_70%_55%/0.25)] hover:bg-[hsl(174_70%_55%/0.35)] text-[hsl(174_85%_72%)] ring-1 ring-[hsl(174_70%_55%/0.4)]",
       ].join(" ")}
     >
       {on ? onIcon : offIcon}
@@ -1059,7 +1059,7 @@ function TopBarBtn({
       title={label}
       className={[
         "flex flex-col items-center gap-0.5 px-3 py-1.5 rounded-md transition-colors min-w-[48px]",
-        disabled ? "opacity-40 cursor-not-allowed" : "hover:bg-[hsl(232_50%_20%)]",
+        disabled ? "opacity-40 cursor-not-allowed" : "hover:bg-[hsl(220_50%_20%)]",
         active ? "text-white" : "text-[hsl(0_0%_70%)]",
       ].join(" ")}
     >
@@ -1086,7 +1086,7 @@ function EndedToast() {
     : "Call ended";
 
   return (
-    <div className="fixed bottom-6 right-6 z-[110] max-w-xs px-4 py-3 rounded-lg bg-[hsl(232_60%_14%)] border border-[hsl(232_40%_25%)] shadow-2xl text-white flex items-center gap-3" data-testid="toast-call-ended">
+    <div className="fixed bottom-6 right-6 z-[110] max-w-xs px-4 py-3 rounded-lg bg-[hsl(220_60%_14%)] border border-[hsl(220_40%_25%)] shadow-2xl text-white flex items-center gap-3" data-testid="toast-call-ended">
       <PhoneOff className="w-4 h-4 text-vs-red shrink-0" />
       <div className="min-w-0">
         <div className="text-xs font-mono uppercase tracking-wider text-[hsl(0_0%_65%)]">{label}</div>

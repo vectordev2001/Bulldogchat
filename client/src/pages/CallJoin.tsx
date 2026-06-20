@@ -56,7 +56,7 @@ export default function CallJoin() {
   }, [params?.token]);
 
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center bg-[hsl(232_60%_9%)] text-white px-6">
+    <div className="min-h-screen flex flex-col items-center justify-center bg-[hsl(220_60%_9%)] text-white px-6">
       <VectorLogo size={64} className="text-vs-blue mb-6" monochrome />
       {phase === "redeeming" && (
         <div className="flex flex-col items-center gap-4">

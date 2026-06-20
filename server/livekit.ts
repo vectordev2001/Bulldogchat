@@ -10,12 +10,32 @@ export async function generateLivekitToken(opts: {
   roomName: string;
   canPublish?: boolean;
 }): Promise<string> {
+  return mintLivekitToken({
+    identity: `u_${opts.userId}`,
+    name: opts.userName,
+    roomName: opts.roomName,
+    canPublish: opts.canPublish,
+  });
+}
+
+/**
+ * Low-level token minter that accepts a raw participant identity. Used for the
+ * unified meetings model where a participant may be a guest (`g_<nanoid>`) with
+ * no numeric chat userId. Authed callers should keep using
+ * generateLivekitToken so the `u_<userId>` convention stays in one place.
+ */
+export async function mintLivekitToken(opts: {
+  identity: string;
+  name: string;
+  roomName: string;
+  canPublish?: boolean;
+}): Promise<string> {
   const apiKey = process.env.LIVEKIT_API_KEY!;
   const apiSecret = process.env.LIVEKIT_API_SECRET!;
 
   const at = new AccessToken(apiKey, apiSecret, {
-    identity: `u_${opts.userId}`,
-    name: opts.userName,
+    identity: opts.identity,
+    name: opts.name,
     ttl: 60 * 60 * 6, // 6 hours
   });
   at.addGrant({

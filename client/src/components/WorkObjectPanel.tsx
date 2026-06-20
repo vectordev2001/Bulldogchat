@@ -37,7 +37,7 @@ const KIND_META: Record<WorkObjectKind, { label: string; icon: typeof MapPin; to
   job_site: { label: "Job Site", icon: MapPin, tone: "bg-[hsl(150_50%_22%)] text-vs-green border-vs-green/30" },
   work_project: { label: "Project", icon: Briefcase, tone: "bg-[hsl(210_50%_22%)] text-vs-blue-light border-vs-blue-light/30" },
   change_order: { label: "Change Order", icon: FileEdit, tone: "bg-[hsl(35_60%_22%)] text-[hsl(35_100%_70%)] border-[hsl(35_100%_70%)]/30" },
-  safety_incident: { label: "Safety", icon: AlertTriangle, tone: "bg-[hsl(2_60%_22%)] text-[hsl(2_85%_72%)] border-[hsl(2_85%_72%)]/30" },
+  safety_incident: { label: "Safety", icon: AlertTriangle, tone: "bg-[hsl(174_60%_22%)] text-[hsl(174_85%_72%)] border-[hsl(174_85%_72%)]/30" },
 };
 
 const STATUS_TONE: Record<string, string> = {
@@ -117,10 +117,10 @@ export function WorkObjectPanel({ channelId, me, orgMembers, onClose, onSelectCh
 
   return (
     <aside
-      className="hidden md:flex md:flex-col w-60 border-l border-[hsl(232_40%_22%)] bg-[hsl(232_60%_8%)] shrink-0"
+      className="hidden md:flex md:flex-col w-60 border-l border-[hsl(220_40%_22%)] bg-[hsl(220_60%_8%)] shrink-0"
       data-testid="panel-linked-job"
     >
-      <header className="px-3 py-3 border-b border-[hsl(232_40%_22%)] flex items-center justify-between">
+      <header className="px-3 py-3 border-b border-[hsl(220_40%_22%)] flex items-center justify-between">
         <div className="flex items-center gap-2 text-[hsl(0_0%_85%)] text-sm font-semibold uppercase tracking-wide">
           <ClipboardList className="w-4 h-4" />
           Linked job
@@ -153,7 +153,7 @@ export function WorkObjectPanel({ channelId, me, orgMembers, onClose, onSelectCh
           </div>
         )}
         {listQ.isError && (
-          <div className="px-2 py-2 text-xs text-[hsl(2_85%_72%)]" data-testid="linked-job-error">
+          <div className="px-2 py-2 text-xs text-[hsl(174_85%_72%)]" data-testid="linked-job-error">
             Failed to load job
           </div>
         )}
@@ -179,7 +179,7 @@ export function WorkObjectPanel({ channelId, me, orgMembers, onClose, onSelectCh
               <button
                 type="button"
                 onClick={() => setCreateOpen(true)}
-                className="w-full flex items-center justify-center gap-1.5 rounded border border-[hsl(232_40%_22%)] bg-[hsl(232_60%_10%)] px-2 py-2 text-xs text-white hover-elevate"
+                className="w-full flex items-center justify-center gap-1.5 rounded border border-[hsl(220_40%_22%)] bg-[hsl(220_60%_10%)] px-2 py-2 text-xs text-white hover-elevate"
                 data-testid="button-empty-new-work-object"
               >
                 <Plus className="w-3.5 h-3.5" /> New job
@@ -200,7 +200,7 @@ export function WorkObjectPanel({ channelId, me, orgMembers, onClose, onSelectCh
                 value={linkInput}
                 onChange={(e) => { setLinkInput(e.target.value); setLinkError(null); }}
                 placeholder="Link by ref (e.g. BOE-FIBER-01)"
-                className="flex-1 bg-[hsl(232_60%_10%)] border border-[hsl(232_40%_22%)] rounded px-2 py-1.5 text-xs text-white placeholder:text-[hsl(0_0%_45%)] focus:outline-none focus:border-vs-red"
+                className="flex-1 bg-[hsl(220_60%_10%)] border border-[hsl(220_40%_22%)] rounded px-2 py-1.5 text-xs text-white placeholder:text-[hsl(0_0%_45%)] focus:outline-none focus:border-vs-red"
                 data-testid="input-link-ref"
               />
               <button
@@ -223,13 +223,13 @@ export function WorkObjectPanel({ channelId, me, orgMembers, onClose, onSelectCh
                 Cancel
               </button>
             )}
-            {linkError && <div className="text-[11px] text-[hsl(2_85%_72%)] px-1">{linkError}</div>}
+            {linkError && <div className="text-[11px] text-[hsl(174_85%_72%)] px-1">{linkError}</div>}
           </form>
         )}
 
         {/* ── Other channels in this job ── */}
         {linkedJob && !changing && (
-          <div className="pt-1 border-t border-[hsl(232_40%_22%)]" data-testid="other-channels-section">
+          <div className="pt-1 border-t border-[hsl(220_40%_22%)]" data-testid="other-channels-section">
             <div className="px-1 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-wide text-[hsl(0_0%_55%)]">
               Other channels in this job
             </div>
@@ -239,7 +239,7 @@ export function WorkObjectPanel({ channelId, me, orgMembers, onClose, onSelectCh
               </div>
             )}
             {siblingsQ.isError && (
-              <div className="px-1 py-2 text-[11px] text-[hsl(2_85%_72%)]" data-testid="other-channels-error">
+              <div className="px-1 py-2 text-[11px] text-[hsl(174_85%_72%)]" data-testid="other-channels-error">
                 Failed to load channels
               </div>
             )}
@@ -287,7 +287,7 @@ function JobCard({
   const Icon = meta.icon;
   return (
     <div
-      className="rounded border border-[hsl(232_40%_22%)] bg-[hsl(232_60%_10%)] overflow-hidden hover:border-[hsl(232_40%_32%)] transition-colors"
+      className="rounded border border-[hsl(220_40%_22%)] bg-[hsl(220_60%_10%)] overflow-hidden hover:border-[hsl(220_40%_32%)] transition-colors"
       data-testid={`linked-job-card-${wo.id}`}
     >
       <button
@@ -316,7 +316,7 @@ function JobCard({
         <ChevronRight className="w-3.5 h-3.5 text-[hsl(0_0%_40%)] shrink-0 mt-0.5" />
       </button>
       {canLink && (
-        <div className="border-t border-[hsl(232_40%_22%)] px-2 py-1.5">
+        <div className="border-t border-[hsl(220_40%_22%)] px-2 py-1.5">
           <button
             type="button"
             onClick={onChange}

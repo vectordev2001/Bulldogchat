@@ -94,13 +94,13 @@ export function ManageMembersDialog({ open, onClose, project, me, orgMembers }: 
       data-testid="dialog-manage-members-backdrop"
     >
       <div
-        className="w-full max-w-lg max-h-[85vh] mx-4 flex flex-col bg-[hsl(232_55%_12%)] border border-[hsl(232_40%_25%)] rounded-lg shadow-2xl overflow-hidden"
+        className="w-full max-w-lg max-h-[85vh] mx-4 flex flex-col bg-[hsl(220_55%_12%)] border border-[hsl(220_40%_25%)] rounded-lg shadow-2xl overflow-hidden"
         onClick={(e) => e.stopPropagation()}
         data-testid="dialog-manage-members"
       >
         {/* Header — surface the company name + a count so the admin knows
             exactly what they're editing. */}
-        <div className="px-5 py-4 border-b border-[hsl(232_40%_22%)] flex items-center justify-between">
+        <div className="px-5 py-4 border-b border-[hsl(220_40%_22%)] flex items-center justify-between">
           <div className="flex items-center gap-2.5 min-w-0">
             <span
               className="inline-flex items-center justify-center w-9 h-9 rounded-md text-[11px] font-bold text-white shrink-0"
@@ -119,7 +119,7 @@ export function ManageMembersDialog({ open, onClose, project, me, orgMembers }: 
           <button
             type="button"
             onClick={onClose}
-            className="w-8 h-8 flex items-center justify-center rounded-md text-[hsl(0_0%_70%)] hover:text-white hover:bg-[hsl(232_45%_22%)]"
+            className="w-8 h-8 flex items-center justify-center rounded-md text-[hsl(0_0%_70%)] hover:text-white hover:bg-[hsl(220_45%_22%)]"
             aria-label="Close"
             data-testid="button-close-manage-members"
           >
@@ -128,7 +128,7 @@ export function ManageMembersDialog({ open, onClose, project, me, orgMembers }: 
         </div>
 
         {/* Search */}
-        <div className="px-5 py-3 border-b border-[hsl(232_40%_22%)]">
+        <div className="px-5 py-3 border-b border-[hsl(220_40%_22%)]">
           <div className="relative">
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[hsl(0_0%_50%)]" />
             <input
@@ -136,7 +136,7 @@ export function ManageMembersDialog({ open, onClose, project, me, orgMembers }: 
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Search by name, title, role..."
-              className="w-full bg-[hsl(232_60%_9%)] border border-black/40 text-xs text-white placeholder:text-[hsl(0_0%_45%)] rounded-md pl-8 pr-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-vs-red"
+              className="w-full bg-[hsl(220_60%_9%)] border border-black/40 text-xs text-white placeholder:text-[hsl(0_0%_45%)] rounded-md pl-8 pr-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-vs-red"
               data-testid="input-member-search"
             />
           </div>
@@ -162,7 +162,7 @@ export function ManageMembersDialog({ open, onClose, project, me, orgMembers }: 
                 return (
                   <li
                     key={m.id}
-                    className="flex items-center gap-2 px-2 py-2 rounded-md bg-[hsl(232_50%_15%)] border border-[hsl(232_40%_22%)] hover:border-[hsl(232_40%_32%)]"
+                    className="flex items-center gap-2 px-2 py-2 rounded-md bg-[hsl(220_50%_15%)] border border-[hsl(220_40%_22%)] hover:border-[hsl(220_40%_32%)]"
                     data-testid={`member-row-${m.id}`}
                   >
                     <div className="min-w-0 flex-1">
@@ -216,7 +216,7 @@ export function ManageMembersDialog({ open, onClose, project, me, orgMembers }: 
           </div>
         )}
 
-        <div className="px-5 py-2.5 border-t border-[hsl(232_40%_22%)] flex items-center justify-between text-[11px] text-[hsl(0_0%_55%)]">
+        <div className="px-5 py-2.5 border-t border-[hsl(220_40%_22%)] flex items-center justify-between text-[11px] text-[hsl(0_0%_55%)]">
           <span>Flat membership · admins/foremen seeded across all companies.</span>
           <span className="font-mono">{me.role}</span>
         </div>

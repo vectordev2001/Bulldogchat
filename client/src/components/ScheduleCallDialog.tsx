@@ -141,7 +141,7 @@ export function ScheduleCallDialog({
 
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
-      <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto bg-[hsl(232_55%_13%)] border-[hsl(232_40%_25%)] text-white">
+      <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto bg-[hsl(220_55%_13%)] border-[hsl(220_40%_25%)] text-white">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 font-display tracking-wide">
             <CalIcon className="w-4 h-4 text-vs-blue-light" />
@@ -161,7 +161,7 @@ export function ScheduleCallDialog({
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               placeholder="Weekly safety check-in"
-              className="bg-[hsl(232_50%_18%)] border border-[hsl(232_40%_25%)] rounded-md px-3 py-2 text-sm focus:outline-none focus:border-vs-blue-light"
+              className="bg-[hsl(220_50%_18%)] border border-[hsl(220_40%_25%)] rounded-md px-3 py-2 text-sm focus:outline-none focus:border-vs-blue-light"
               data-testid="input-schedule-title"
             />
           </label>
@@ -177,7 +177,7 @@ export function ScheduleCallDialog({
                   className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-md text-sm border ${
                     kind === "video"
                       ? "bg-vs-blue-light/15 border-vs-blue-light text-white"
-                      : "bg-[hsl(232_50%_18%)] border-[hsl(232_40%_25%)] text-[hsl(0_0%_70%)]"
+                      : "bg-[hsl(220_50%_18%)] border-[hsl(220_40%_25%)] text-[hsl(0_0%_70%)]"
                   }`}
                   data-testid="button-schedule-kind-video"
                 >
@@ -189,7 +189,7 @@ export function ScheduleCallDialog({
                   className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-md text-sm border ${
                     kind === "voice"
                       ? "bg-vs-green/15 border-vs-green text-white"
-                      : "bg-[hsl(232_50%_18%)] border-[hsl(232_40%_25%)] text-[hsl(0_0%_70%)]"
+                      : "bg-[hsl(220_50%_18%)] border-[hsl(220_40%_25%)] text-[hsl(0_0%_70%)]"
                   }`}
                   data-testid="button-schedule-kind-voice"
                 >
@@ -206,7 +206,7 @@ export function ScheduleCallDialog({
                 step={5}
                 value={durationMin}
                 onChange={(e) => setDurationMin(Math.max(5, Number(e.target.value) || 30))}
-                className="bg-[hsl(232_50%_18%)] border border-[hsl(232_40%_25%)] rounded-md px-3 py-2 text-sm focus:outline-none focus:border-vs-blue-light"
+                className="bg-[hsl(220_50%_18%)] border border-[hsl(220_40%_25%)] rounded-md px-3 py-2 text-sm focus:outline-none focus:border-vs-blue-light"
                 data-testid="input-schedule-duration"
               />
             </label>
@@ -219,7 +219,7 @@ export function ScheduleCallDialog({
               type="datetime-local"
               value={startLocal}
               onChange={(e) => setStartLocal(e.target.value)}
-              className="bg-[hsl(232_50%_18%)] border border-[hsl(232_40%_25%)] rounded-md px-3 py-2 text-sm focus:outline-none focus:border-vs-blue-light"
+              className="bg-[hsl(220_50%_18%)] border border-[hsl(220_40%_25%)] rounded-md px-3 py-2 text-sm focus:outline-none focus:border-vs-blue-light"
               data-testid="input-schedule-start"
             />
           </label>
@@ -230,7 +230,7 @@ export function ScheduleCallDialog({
             <select
               value={channelId ?? ""}
               onChange={(e) => setChannelId(e.target.value ? Number(e.target.value) : null)}
-              className="bg-[hsl(232_50%_18%)] border border-[hsl(232_40%_25%)] rounded-md px-3 py-2 text-sm focus:outline-none focus:border-vs-blue-light"
+              className="bg-[hsl(220_50%_18%)] border border-[hsl(220_40%_25%)] rounded-md px-3 py-2 text-sm focus:outline-none focus:border-vs-blue-light"
               data-testid="select-schedule-channel"
             >
               <option value="">— No channel card —</option>
@@ -248,7 +248,7 @@ export function ScheduleCallDialog({
               onChange={(e) => setNotes(e.target.value)}
               rows={2}
               placeholder="Agenda, dial-in, etc."
-              className="bg-[hsl(232_50%_18%)] border border-[hsl(232_40%_25%)] rounded-md px-3 py-2 text-sm focus:outline-none focus:border-vs-blue-light resize-none"
+              className="bg-[hsl(220_50%_18%)] border border-[hsl(220_40%_25%)] rounded-md px-3 py-2 text-sm focus:outline-none focus:border-vs-blue-light resize-none"
               data-testid="input-schedule-notes"
             />
           </label>
@@ -256,7 +256,7 @@ export function ScheduleCallDialog({
           {/* Attendees */}
           <div className="flex flex-col gap-1">
             <span className="text-[10px] uppercase tracking-wider text-[hsl(0_0%_65%)] font-mono">Attendees</span>
-            <div className="flex items-center gap-2 bg-[hsl(232_50%_18%)] border border-[hsl(232_40%_25%)] rounded-md px-2.5 py-1.5">
+            <div className="flex items-center gap-2 bg-[hsl(220_50%_18%)] border border-[hsl(220_40%_25%)] rounded-md px-2.5 py-1.5">
               <Search className="w-3.5 h-3.5 text-[hsl(0_0%_55%)] shrink-0" />
               <input
                 type="text"
@@ -267,7 +267,7 @@ export function ScheduleCallDialog({
                 data-testid="input-schedule-search"
               />
             </div>
-            <div className="max-h-32 overflow-y-auto border border-[hsl(232_40%_25%)] rounded-md mt-1 divide-y divide-[hsl(232_40%_22%)]">
+            <div className="max-h-32 overflow-y-auto border border-[hsl(220_40%_25%)] rounded-md mt-1 divide-y divide-[hsl(220_40%_22%)]">
               {candidates.length === 0 && (
                 <div className="text-[11px] text-[hsl(0_0%_55%)] px-3 py-2 italic">No matches</div>
               )}
@@ -276,7 +276,7 @@ export function ScheduleCallDialog({
                 return (
                   <label
                     key={m.id}
-                    className="flex items-center gap-2 px-3 py-1.5 hover:bg-[hsl(232_50%_18%)] cursor-pointer text-sm"
+                    className="flex items-center gap-2 px-3 py-1.5 hover:bg-[hsl(220_50%_18%)] cursor-pointer text-sm"
                   >
                     <input
                       type="checkbox"
@@ -300,7 +300,7 @@ export function ScheduleCallDialog({
                 onChange={(e) => setPhoneDraft(e.target.value)}
                 onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addPhone(); } }}
                 placeholder="+1 425 555 0100"
-                className="flex-1 bg-[hsl(232_50%_18%)] border border-[hsl(232_40%_25%)] rounded-md px-2.5 py-1.5 text-sm focus:outline-none focus:border-vs-blue-light"
+                className="flex-1 bg-[hsl(220_50%_18%)] border border-[hsl(220_40%_25%)] rounded-md px-2.5 py-1.5 text-sm focus:outline-none focus:border-vs-blue-light"
                 data-testid="input-schedule-phone"
               />
               <button
@@ -338,7 +338,7 @@ export function ScheduleCallDialog({
                 onChange={(e) => setEmailDraft(e.target.value)}
                 onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addEmail(); } }}
                 placeholder="guest@example.com"
-                className="flex-1 bg-[hsl(232_50%_18%)] border border-[hsl(232_40%_25%)] rounded-md px-2.5 py-1.5 text-sm focus:outline-none focus:border-vs-blue-light"
+                className="flex-1 bg-[hsl(220_50%_18%)] border border-[hsl(220_40%_25%)] rounded-md px-2.5 py-1.5 text-sm focus:outline-none focus:border-vs-blue-light"
                 data-testid="input-schedule-email"
               />
               <button
@@ -373,11 +373,11 @@ export function ScheduleCallDialog({
             <div className="text-xs text-vs-red border border-vs-red/40 bg-vs-red/10 rounded-md px-3 py-2">{err}</div>
           )}
 
-          <div className="flex items-center gap-2 pt-2 border-t border-[hsl(232_40%_22%)]">
+          <div className="flex items-center gap-2 pt-2 border-t border-[hsl(220_40%_22%)]">
             <button
               type="button"
               onClick={onClose}
-              className="flex-1 px-3 py-2 rounded-md bg-[hsl(232_50%_18%)] hover:bg-[hsl(232_50%_22%)] border border-[hsl(232_40%_25%)] text-sm"
+              className="flex-1 px-3 py-2 rounded-md bg-[hsl(220_50%_18%)] hover:bg-[hsl(220_50%_22%)] border border-[hsl(220_40%_25%)] text-sm"
               data-testid="button-schedule-cancel"
             >
               Cancel
@@ -497,7 +497,7 @@ export function MeetingsListDialog({
 
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
-      <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto bg-[hsl(232_55%_13%)] border-[hsl(232_40%_25%)] text-white">
+      <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto bg-[hsl(220_55%_13%)] border-[hsl(220_40%_25%)] text-white">
         <DialogHeader>
           <DialogTitle className="flex items-center justify-between font-display tracking-wide">
             <span className="flex items-center gap-2">
@@ -601,7 +601,7 @@ function MeetingRow({
   const cancelled = call.status === "cancelled";
 
   return (
-    <div className={`border border-[hsl(232_40%_22%)] rounded-lg p-3 ${cancelled ? "opacity-60" : ""}`}>
+    <div className={`border border-[hsl(220_40%_22%)] rounded-lg p-3 ${cancelled ? "opacity-60" : ""}`}>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5">
@@ -631,7 +631,7 @@ function MeetingRow({
             {!cancelled && (
               <a
                 href={`/api/scheduled-calls/${call.id}/ics`}
-                className="px-2 py-1 rounded-md bg-[hsl(232_50%_18%)] hover:bg-[hsl(232_50%_22%)] border border-[hsl(232_40%_25%)] text-[10px] font-semibold uppercase tracking-wider"
+                className="px-2 py-1 rounded-md bg-[hsl(220_50%_18%)] hover:bg-[hsl(220_50%_22%)] border border-[hsl(220_40%_25%)] text-[10px] font-semibold uppercase tracking-wider"
                 data-testid={`link-meeting-ics-${call.id}`}
               >
                 .ics
@@ -652,7 +652,7 @@ function MeetingRow({
         )}
       </div>
       {!readOnly && !cancelled && myInvitee && (
-        <div className="flex items-center gap-1.5 mt-2 pt-2 border-t border-[hsl(232_40%_22%)]">
+        <div className="flex items-center gap-1.5 mt-2 pt-2 border-t border-[hsl(220_40%_22%)]">
           <span className="text-[10px] uppercase tracking-wider text-[hsl(0_0%_55%)] font-mono">RSVP:</span>
           {(["yes", "no", "maybe"] as const).map((r) => {
             const active = myInvitee.response === r;
@@ -665,7 +665,7 @@ function MeetingRow({
                 className={`px-2 py-0.5 rounded-md text-[10px] font-semibold uppercase tracking-wider border ${
                   active
                     ? `bg-${color}/20 border-${color}/60 text-white`
-                    : "bg-transparent border-[hsl(232_40%_25%)] text-[hsl(0_0%_70%)] hover:text-white"
+                    : "bg-transparent border-[hsl(220_40%_25%)] text-[hsl(0_0%_70%)] hover:text-white"
                 }`}
                 data-testid={`button-meeting-rsvp-${call.id}-${r}`}
               >

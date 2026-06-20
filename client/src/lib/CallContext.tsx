@@ -85,7 +85,7 @@ interface CallCtxValue {
     /** Raw phone numbers to send an SMS join-link to (no SIP dial). */
     smsPhoneNumbers?: string[];
     kind?: "voice" | "video";
-  }): Promise<void>;
+  }): Promise<{ meetingCode: string | null; joinUrl: string | null }>;
   acceptIncoming(): Promise<void>;
   declineIncoming(): Promise<void>;
   endActive(): Promise<void>;
@@ -142,6 +142,10 @@ interface StartGroupCallResponse {
   dialWarnings?: string[];
   smsResults?: Array<{ userId?: number; phone: string; ok: boolean; error?: string }>;
   kind: "voice" | "video";
+  /** Shareable meeting code minted for this call (unified meetings model). */
+  meetingCode?: string | null;
+  /** Public guest-join URL for the meeting code. */
+  joinUrl?: string | null;
 }
 
 export function CallProvider({ children }: { children: ReactNode }) {
@@ -300,7 +304,7 @@ export function CallProvider({ children }: { children: ReactNode }) {
     channelId, channelName, inviteeIds, phoneInviteeIds = [], phoneNumbers = [],
     smsInviteeIds = [], smsPhoneNumbers = [], kind = "voice",
   }) => {
-    if (outgoing || active) return;
+    if (outgoing || active) return { meetingCode: null, joinUrl: null };
     const resp = await apiRequest<StartGroupCallResponse>(
       "POST", `/api/channels/${channelId}/group-call/start`,
       { inviteeIds, phoneInviteeIds, phoneNumbers, smsInviteeIds, smsPhoneNumbers, kind },
@@ -342,6 +346,7 @@ export function CallProvider({ children }: { children: ReactNode }) {
       iAmCaller: true,
       active: true,
     });
+    return { meetingCode: resp.meetingCode ?? null, joinUrl: resp.joinUrl ?? null };
   }, [outgoing, active]);
 
   const acceptIncoming = useCallback(async () => {

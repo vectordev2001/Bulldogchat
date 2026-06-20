@@ -57,7 +57,7 @@ export function InviteDialog({ open, onClose, projects, defaultProjectId }: Prop
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="vs-navy-panel border-[hsl(232_40%_25%)] text-white max-w-md" data-testid="dialog-invite">
+      <DialogContent className="vs-navy-panel border-[hsl(220_40%_25%)] text-white max-w-md" data-testid="dialog-invite">
         <DialogHeader>
           <DialogTitle className="font-display text-xl text-white">Invite a teammate</DialogTitle>
           <DialogDescription className="text-sm text-[hsl(0_0%_75%)]">
@@ -85,7 +85,7 @@ export function InviteDialog({ open, onClose, projects, defaultProjectId }: Prop
                 data-testid="select-invite-project"
               >
                 {projects.map((p) => (
-                  <option key={p.id} value={p.id} className="bg-[hsl(232_50%_14%)]">{p.name}</option>
+                  <option key={p.id} value={p.id} className="bg-[hsl(220_50%_14%)]">{p.name}</option>
                 ))}
               </select>
             </Field>
@@ -99,8 +99,8 @@ export function InviteDialog({ open, onClose, projects, defaultProjectId }: Prop
                     className={[
                       "text-left px-3 py-2 rounded-md border text-[12.5px] transition-colors",
                       role === r.value
-                        ? "bg-[hsl(2_70%_55%/0.12)] border-vs-red text-white"
-                        : "bg-[hsl(232_50%_14%)] border-[hsl(232_40%_25%)] text-[hsl(0_0%_82%)] hover:border-vs-blue/40",
+                        ? "bg-[hsl(174_70%_55%/0.12)] border-vs-red text-white"
+                        : "bg-[hsl(220_50%_14%)] border-[hsl(220_40%_25%)] text-[hsl(0_0%_82%)] hover:border-vs-blue/40",
                     ].join(" ")}
                     data-testid={`button-role-${r.value}`}
                   >
@@ -115,13 +115,13 @@ export function InviteDialog({ open, onClose, projects, defaultProjectId }: Prop
             </Field>
 
             {error && (
-              <div className="text-[12.5px] rounded-md bg-[hsl(2_70%_55%/0.12)] border border-[hsl(2_70%_55%/0.4)] text-[hsl(2_85%_72%)] px-3 py-2">{error}</div>
+              <div className="text-[12.5px] rounded-md bg-[hsl(174_70%_55%/0.12)] border border-[hsl(174_70%_55%/0.4)] text-[hsl(174_85%_72%)] px-3 py-2">{error}</div>
             )}
 
             <button
               type="submit"
               disabled={loading || !projectId}
-              className="w-full h-10 rounded-lg bg-vs-red hover:bg-[hsl(2_75%_60%)] text-white font-semibold flex items-center justify-center gap-2 transition-colors disabled:opacity-50"
+              className="w-full h-10 rounded-lg bg-vs-red hover:bg-[hsl(174_75%_60%)] text-white font-semibold flex items-center justify-center gap-2 transition-colors disabled:opacity-50"
               data-testid="button-create-invite"
             >
               {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Generate invite link"}
@@ -141,7 +141,7 @@ export function InviteDialog({ open, onClose, projects, defaultProjectId }: Prop
               <button
                 type="button"
                 onClick={copy}
-                className="h-10 px-3 rounded-md bg-vs-blue hover:bg-[hsl(218_100%_72%)] text-[hsl(232_60%_9%)] font-semibold text-xs flex items-center gap-1.5 transition-colors"
+                className="h-10 px-3 rounded-md bg-vs-blue hover:bg-[hsl(199_100%_72%)] text-[hsl(220_60%_9%)] font-semibold text-xs flex items-center gap-1.5 transition-colors"
                 data-testid="button-copy-invite"
               >
                 {copied ? <><Check className="w-3.5 h-3.5" /> Copied</> : <><Copy className="w-3.5 h-3.5" /> Copy</>}
@@ -163,7 +163,7 @@ export function InviteDialog({ open, onClose, projects, defaultProjectId }: Prop
 }
 
 const inputCls =
-  "w-full h-10 px-3 rounded-md bg-[hsl(232_50%_14%)] border border-[hsl(232_40%_25%)] text-sm text-white placeholder:text-[hsl(0_0%_45%)] focus:outline-none focus:border-vs-red focus:ring-2 focus:ring-vs-red/30 transition-colors";
+  "w-full h-10 px-3 rounded-md bg-[hsl(220_50%_14%)] border border-[hsl(220_40%_25%)] text-sm text-white placeholder:text-[hsl(0_0%_45%)] focus:outline-none focus:border-vs-red focus:ring-2 focus:ring-vs-red/30 transition-colors";
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (

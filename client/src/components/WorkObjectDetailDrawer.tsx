@@ -70,7 +70,7 @@ const KIND_META: Record<WorkObjectKind, { label: string; icon: typeof MapPin; to
   job_site:        { label: "Job Site",     icon: MapPin,         tone: "text-vs-green" },
   work_project:    { label: "Project",      icon: Briefcase,      tone: "text-vs-blue-light" },
   change_order:    { label: "Change Order", icon: FileEdit,       tone: "text-[hsl(35_100%_70%)]" },
-  safety_incident: { label: "Safety",       icon: AlertTriangle,  tone: "text-[hsl(2_85%_72%)]" },
+  safety_incident: { label: "Safety",       icon: AlertTriangle,  tone: "text-[hsl(174_85%_72%)]" },
 };
 
 const STATUS_TONE: Record<string, string> = {
@@ -202,7 +202,7 @@ export function WorkObjectDetailDrawer({ open, workObjectId, onClose, me, orgMem
       data-testid="drawer-work-object-detail-backdrop"
     >
       <aside
-        className="w-full max-w-xl h-full bg-[hsl(232_55%_12%)] border-l border-[hsl(232_40%_25%)] shadow-2xl flex flex-col"
+        className="w-full max-w-xl h-full bg-[hsl(220_55%_12%)] border-l border-[hsl(220_40%_25%)] shadow-2xl flex flex-col"
         onClick={(e) => e.stopPropagation()}
         data-testid="drawer-work-object-detail"
       >
@@ -264,7 +264,7 @@ function Header({ wo, onClose }: { wo: WorkObjectDetail; onClose: () => void }) 
   const statusClass = STATUS_TONE[wo.status] ?? "bg-[hsl(0_0%_30%)]/30 text-[hsl(0_0%_70%)] border-[hsl(0_0%_30%)]/40";
 
   return (
-    <div className="px-5 py-4 border-b border-[hsl(232_40%_22%)] flex items-start justify-between gap-3">
+    <div className="px-5 py-4 border-b border-[hsl(220_40%_22%)] flex items-start justify-between gap-3">
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2 text-[11px] text-[hsl(0_0%_60%)] mb-1">
           <Icon className={`w-3.5 h-3.5 ${meta.tone}`} />
@@ -284,7 +284,7 @@ function Header({ wo, onClose }: { wo: WorkObjectDetail; onClose: () => void }) 
       <button
         type="button"
         onClick={onClose}
-        className="w-8 h-8 flex items-center justify-center rounded-md text-[hsl(0_0%_70%)] hover:text-white hover:bg-[hsl(232_45%_22%)] shrink-0"
+        className="w-8 h-8 flex items-center justify-center rounded-md text-[hsl(0_0%_70%)] hover:text-white hover:bg-[hsl(220_45%_22%)] shrink-0"
         data-testid="button-close-detail-drawer"
         aria-label="Close"
       >
@@ -318,7 +318,7 @@ function CoreFields({
               type="text"
               value={edits.title ?? ""}
               onChange={(e) => setEdits({ ...edits, title: e.target.value })}
-              className="w-full bg-[hsl(232_60%_9%)] border border-black/40 text-sm text-white rounded-md px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-vs-red"
+              className="w-full bg-[hsl(220_60%_9%)] border border-black/40 text-sm text-white rounded-md px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-vs-red"
               data-testid="input-edit-title"
             />
           ) : (
@@ -330,7 +330,7 @@ function CoreFields({
             <select
               value={edits.status ?? wo.status}
               onChange={(e) => setEdits({ ...edits, status: e.target.value })}
-              className="w-full bg-[hsl(232_60%_9%)] border border-black/40 text-sm text-white rounded-md px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-vs-red"
+              className="w-full bg-[hsl(220_60%_9%)] border border-black/40 text-sm text-white rounded-md px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-vs-red"
               data-testid="select-edit-status"
             >
               {allowedStatuses.map((s) => (<option key={s} value={s}>{s}</option>))}
@@ -344,7 +344,7 @@ function CoreFields({
             <select
               value={edits.ownerUserId ?? ""}
               onChange={(e) => setEdits({ ...edits, ownerUserId: e.target.value ? Number(e.target.value) : null })}
-              className="w-full bg-[hsl(232_60%_9%)] border border-black/40 text-sm text-white rounded-md px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-vs-red"
+              className="w-full bg-[hsl(220_60%_9%)] border border-black/40 text-sm text-white rounded-md px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-vs-red"
               data-testid="select-edit-owner"
             >
               <option value="">Unassigned</option>
@@ -405,7 +405,7 @@ function AttributesSection({
                   <select
                     value={raw == null ? "" : String(raw)}
                     onChange={(e) => setAttr(f.key, e.target.value || null)}
-                    className="w-full bg-[hsl(232_60%_9%)] border border-black/40 text-sm text-white rounded-md px-2 py-1.5"
+                    className="w-full bg-[hsl(220_60%_9%)] border border-black/40 text-sm text-white rounded-md px-2 py-1.5"
                     data-testid={`select-attr-${f.key}`}
                   >
                     <option value="">—</option>
@@ -421,7 +421,7 @@ function AttributesSection({
                         : (e.target.value === "" ? null : e.target.value);
                       setAttr(f.key, v);
                     }}
-                    className="w-full bg-[hsl(232_60%_9%)] border border-black/40 text-sm text-white rounded-md px-2 py-1.5"
+                    className="w-full bg-[hsl(220_60%_9%)] border border-black/40 text-sm text-white rounded-md px-2 py-1.5"
                     data-testid={`input-attr-${f.key}`}
                   />
                 )
@@ -453,7 +453,7 @@ function DescriptionSection({
           onChange={(e) => setEdits({ ...edits, description: e.target.value || null })}
           rows={4}
           placeholder="Add notes, scope, or context..."
-          className="w-full bg-[hsl(232_60%_9%)] border border-black/40 text-sm text-white rounded-md px-2.5 py-2 focus:outline-none focus:ring-1 focus:ring-vs-red placeholder:text-[hsl(0_0%_40%)] resize-y"
+          className="w-full bg-[hsl(220_60%_9%)] border border-black/40 text-sm text-white rounded-md px-2.5 py-2 focus:outline-none focus:ring-1 focus:ring-vs-red placeholder:text-[hsl(0_0%_40%)] resize-y"
           data-testid="textarea-edit-description"
         />
       ) : value ? (
@@ -479,7 +479,7 @@ function LinkedChannelsSection({ channels }: { channels: WorkObjectDetail["chann
           {channels.map((c) => (
             <li
               key={c.id}
-              className="flex items-center gap-2 px-2 py-1.5 rounded-md bg-[hsl(232_50%_15%)] border border-[hsl(232_40%_22%)] text-sm"
+              className="flex items-center gap-2 px-2 py-1.5 rounded-md bg-[hsl(220_50%_15%)] border border-[hsl(220_40%_22%)] text-sm"
             >
               {c.type === "voice" ? (
                 <Volume2 className="w-3.5 h-3.5 text-[hsl(0_0%_55%)]" />
@@ -512,7 +512,7 @@ function ActivitySection({
             return (
               <li
                 key={ev.id}
-                className="text-[12px] text-[hsl(0_0%_70%)] border-l-2 border-[hsl(232_40%_22%)] pl-3 py-0.5"
+                className="text-[12px] text-[hsl(0_0%_70%)] border-l-2 border-[hsl(220_40%_22%)] pl-3 py-0.5"
                 data-testid={`activity-${ev.id}`}
               >
                 <span className="text-white font-medium">{actor}</span>
@@ -565,7 +565,7 @@ function Footer({
 }) {
   if (!canEdit) {
     return (
-      <div className="px-5 py-3 border-t border-[hsl(232_40%_22%)] text-[11px] text-[hsl(0_0%_50%)]">
+      <div className="px-5 py-3 border-t border-[hsl(220_40%_22%)] text-[11px] text-[hsl(0_0%_50%)]">
         Read-only · only admins and foremen can edit jobs.
       </div>
     );
@@ -574,12 +574,12 @@ function Footer({
 
   if (editMode) {
     return (
-      <div className="px-5 py-3 border-t border-[hsl(232_40%_22%)] flex items-center justify-end gap-2">
+      <div className="px-5 py-3 border-t border-[hsl(220_40%_22%)] flex items-center justify-end gap-2">
         <button
           type="button"
           onClick={onCancelEdit}
           disabled={saving}
-          className="px-3 py-1.5 rounded-md text-sm text-[hsl(0_0%_75%)] hover:text-white hover:bg-[hsl(232_45%_22%)] disabled:opacity-50"
+          className="px-3 py-1.5 rounded-md text-sm text-[hsl(0_0%_75%)] hover:text-white hover:bg-[hsl(220_45%_22%)] disabled:opacity-50"
           data-testid="button-cancel-edit"
         >
           Cancel
@@ -599,13 +599,13 @@ function Footer({
   }
 
   return (
-    <div className="px-5 py-3 border-t border-[hsl(232_40%_22%)] flex items-center justify-between gap-2">
+    <div className="px-5 py-3 border-t border-[hsl(220_40%_22%)] flex items-center justify-between gap-2">
       {isClosed ? (
         <button
           type="button"
           onClick={onReopen}
           disabled={closing}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-[hsl(232_45%_22%)] hover:bg-[hsl(232_45%_28%)] text-white text-sm font-semibold disabled:opacity-50"
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-[hsl(220_45%_22%)] hover:bg-[hsl(220_45%_28%)] text-white text-sm font-semibold disabled:opacity-50"
           data-testid="button-reopen-work-object"
         >
           <Unlock className="w-3.5 h-3.5" />
@@ -616,7 +616,7 @@ function Footer({
           type="button"
           onClick={onClose}
           disabled={closing}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-[hsl(232_45%_22%)] hover:bg-[hsl(232_45%_28%)] text-white text-sm font-semibold disabled:opacity-50"
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-[hsl(220_45%_22%)] hover:bg-[hsl(220_45%_28%)] text-white text-sm font-semibold disabled:opacity-50"
           data-testid="button-close-work-object"
         >
           <Lock className="w-3.5 h-3.5" />

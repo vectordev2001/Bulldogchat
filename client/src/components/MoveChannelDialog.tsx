@@ -112,11 +112,11 @@ export function MoveChannelDialog({ open, onClose, channel, projects, onMoved }:
       data-testid="dialog-move-channel-backdrop"
     >
       <div
-        className="w-full max-w-md mx-4 flex flex-col bg-[hsl(232_55%_12%)] border border-[hsl(232_40%_25%)] rounded-lg shadow-2xl overflow-hidden"
+        className="w-full max-w-md mx-4 flex flex-col bg-[hsl(220_55%_12%)] border border-[hsl(220_40%_25%)] rounded-lg shadow-2xl overflow-hidden"
         onClick={(e) => e.stopPropagation()}
         data-testid="dialog-move-channel"
       >
-        <div className="px-5 py-4 border-b border-[hsl(232_40%_22%)] flex items-center justify-between">
+        <div className="px-5 py-4 border-b border-[hsl(220_40%_22%)] flex items-center justify-between">
           <div className="min-w-0">
             <h2 className="text-base font-display text-white">Move channel</h2>
             <div className="mt-0.5 flex items-center gap-1 text-[11px] text-[hsl(0_0%_60%)]">
@@ -127,7 +127,7 @@ export function MoveChannelDialog({ open, onClose, channel, projects, onMoved }:
           <button
             type="button"
             onClick={onClose}
-            className="w-8 h-8 flex items-center justify-center rounded-md text-[hsl(0_0%_70%)] hover:text-white hover:bg-[hsl(232_45%_22%)]"
+            className="w-8 h-8 flex items-center justify-center rounded-md text-[hsl(0_0%_70%)] hover:text-white hover:bg-[hsl(220_45%_22%)]"
             aria-label="Close"
             data-testid="button-close-move-channel"
           >
@@ -139,7 +139,7 @@ export function MoveChannelDialog({ open, onClose, channel, projects, onMoved }:
           {/* Source summary — read-only context */}
           <div className="text-[11px] text-[hsl(0_0%_55%)]">
             <div className="uppercase tracking-wider mb-1">Currently in</div>
-            <div className="flex items-center gap-2 px-2 py-1.5 rounded-md bg-[hsl(232_60%_9%)] border border-black/40">
+            <div className="flex items-center gap-2 px-2 py-1.5 rounded-md bg-[hsl(220_60%_9%)] border border-black/40">
               {sourceProject && (
                 <span
                   className="inline-flex items-center justify-center w-5 h-5 rounded text-[9px] font-bold text-white shrink-0"
@@ -218,7 +218,7 @@ export function MoveChannelDialog({ open, onClose, channel, projects, onMoved }:
           )}
         </div>
 
-        <div className="px-5 py-3 border-t border-[hsl(232_40%_22%)] flex items-center justify-end gap-2">
+        <div className="px-5 py-3 border-t border-[hsl(220_40%_22%)] flex items-center justify-end gap-2">
           <button
             type="button"
             onClick={onClose}

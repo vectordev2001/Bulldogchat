@@ -66,7 +66,7 @@ export default function Login() {
         </Field>
 
         {error && (
-          <div className="text-[12.5px] rounded-md bg-[hsl(2_70%_55%/0.12)] border border-[hsl(2_70%_55%/0.4)] text-[hsl(2_85%_72%)] px-3 py-2" data-testid="text-error">
+          <div className="text-[12.5px] rounded-md bg-[hsl(174_70%_55%/0.12)] border border-[hsl(174_70%_55%/0.4)] text-[hsl(174_85%_72%)] px-3 py-2" data-testid="text-error">
             {error}
           </div>
         )}
@@ -74,7 +74,7 @@ export default function Login() {
         <button
           type="submit"
           disabled={loading || !email || !password}
-          className="w-full h-11 rounded-lg bg-vs-red hover:bg-[hsl(2_75%_60%)] text-white font-semibold flex items-center justify-center gap-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          className="w-full h-11 rounded-lg bg-vs-red hover:bg-[hsl(174_75%_60%)] text-white font-semibold flex items-center justify-center gap-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           data-testid="button-submit-login"
         >
           {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <>Sign in <ArrowRight className="w-4 h-4" /></>}
@@ -90,7 +90,7 @@ export default function Login() {
         <ShieldCheck className="w-3 h-3" /> Use demo credentials
       </button>
 
-      <div className="mt-7 pt-5 border-t border-[hsl(232_40%_25%)] text-center text-[12.5px] text-[hsl(0_0%_65%)]">
+      <div className="mt-7 pt-5 border-t border-[hsl(220_40%_25%)] text-center text-[12.5px] text-[hsl(0_0%_65%)]">
         New to Bulldog Chat?{" "}
         <Link href="/signup" className="text-vs-blue hover:underline font-medium" data-testid="link-signup">
           Create an organization
@@ -131,7 +131,7 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
       </div>
 
       {/* Right form panel */}
-      <div className="flex-1 lg:max-w-[480px] flex items-center justify-center p-6 bg-[hsl(232_60%_9%)]">
+      <div className="flex-1 lg:max-w-[480px] flex items-center justify-center p-6 bg-[hsl(220_60%_9%)]">
         <div className="w-full max-w-sm">{children}</div>
       </div>
     </div>
@@ -139,7 +139,7 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
 }
 
 export const inputCls =
-  "w-full h-10 px-3 rounded-md bg-[hsl(232_50%_14%)] border border-[hsl(232_40%_25%)] text-sm text-white placeholder:text-[hsl(0_0%_45%)] focus:outline-none focus:border-vs-red focus:ring-2 focus:ring-vs-red/30 transition-colors";
+  "w-full h-10 px-3 rounded-md bg-[hsl(220_50%_14%)] border border-[hsl(220_40%_25%)] text-sm text-white placeholder:text-[hsl(0_0%_45%)] focus:outline-none focus:border-vs-red focus:ring-2 focus:ring-vs-red/30 transition-colors";
 
 export function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (

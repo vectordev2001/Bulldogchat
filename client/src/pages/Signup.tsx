@@ -52,7 +52,7 @@ export default function Signup() {
         </Field>
 
         {error && (
-          <div className="text-[12.5px] rounded-md bg-[hsl(2_70%_55%/0.12)] border border-[hsl(2_70%_55%/0.4)] text-[hsl(2_85%_72%)] px-3 py-2" data-testid="text-error">
+          <div className="text-[12.5px] rounded-md bg-[hsl(174_70%_55%/0.12)] border border-[hsl(174_70%_55%/0.4)] text-[hsl(174_85%_72%)] px-3 py-2" data-testid="text-error">
             {error}
           </div>
         )}
@@ -60,14 +60,14 @@ export default function Signup() {
         <button
           type="submit"
           disabled={loading}
-          className="w-full h-11 rounded-lg bg-vs-red hover:bg-[hsl(2_75%_60%)] text-white font-semibold flex items-center justify-center gap-2 transition-colors disabled:opacity-50"
+          className="w-full h-11 rounded-lg bg-vs-red hover:bg-[hsl(174_75%_60%)] text-white font-semibold flex items-center justify-center gap-2 transition-colors disabled:opacity-50"
           data-testid="button-submit-signup"
         >
           {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <>Create workspace <ArrowRight className="w-4 h-4" /></>}
         </button>
       </form>
 
-      <div className="mt-7 pt-5 border-t border-[hsl(232_40%_25%)] text-center text-[12.5px] text-[hsl(0_0%_65%)]">
+      <div className="mt-7 pt-5 border-t border-[hsl(220_40%_25%)] text-center text-[12.5px] text-[hsl(0_0%_65%)]">
         Already have an account?{" "}
         <Link href="/login" className="text-vs-blue hover:underline font-medium" data-testid="link-login">Sign in</Link>
       </div>

@@ -170,8 +170,8 @@ function DmRow({ dm, me, userById, active, onClick }: RowProps) {
     <div
       className={`group relative w-full rounded-md transition-colors ${
         active
-          ? "bg-[hsl(232_55%_22%)] text-white"
-          : "text-[hsl(0_0%_75%)] hover:bg-[hsl(232_45%_25%)] hover:text-white"
+          ? "bg-[hsl(220_55%_22%)] text-white"
+          : "text-[hsl(0_0%_75%)] hover:bg-[hsl(220_45%_25%)] hover:text-white"
       }`}
       onTouchStart={onTouchStart}
       onTouchEnd={onTouchEnd}
@@ -185,7 +185,7 @@ function DmRow({ dm, me, userById, active, onClick }: RowProps) {
         title={label}
       >
         {isGroup ? (
-          <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-[hsl(232_45%_30%)] shrink-0">
+          <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-[hsl(220_45%_30%)] shrink-0">
             <MessageSquare className="w-3.5 h-3.5 text-white" />
           </span>
         ) : previewUser ? (
@@ -195,7 +195,7 @@ function DmRow({ dm, me, userById, active, onClick }: RowProps) {
             showStatus
           />
         ) : (
-          <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-[hsl(232_45%_30%)] shrink-0">
+          <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-[hsl(220_45%_30%)] shrink-0">
             <MessageSquare className="w-3.5 h-3.5 text-white" />
           </span>
         )}
@@ -206,7 +206,7 @@ function DmRow({ dm, me, userById, active, onClick }: RowProps) {
         tabIndex={0}
         onClick={onDelete}
         onKeyDown={(e) => { if (e.key === "Enter") onDelete(e); }}
-        className={`absolute right-1.5 top-1/2 -translate-y-1/2 p-1 rounded text-[hsl(0_0%_55%)] hover:text-vs-red hover:bg-[hsl(232_45%_15%)] transition-opacity cursor-pointer ${
+        className={`absolute right-1.5 top-1/2 -translate-y-1/2 p-1 rounded text-[hsl(0_0%_55%)] hover:text-vs-red hover:bg-[hsl(220_45%_15%)] transition-opacity cursor-pointer ${
           touchActionsOpen ? "opacity-100" : "opacity-0 group-hover:opacity-100"
         } ${deleteMut.isPending ? "opacity-30 pointer-events-none" : ""}`}
         title="Delete chat for everyone"
@@ -271,7 +271,7 @@ function NewDmDialog({ me, orgMembers, onClose, onCreated }: DialogProps) {
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/60" onClick={onClose}>
       <div
-        className="w-full max-w-md bg-[hsl(232_55%_14%)] border border-black/40 rounded-lg shadow-xl flex flex-col max-h-[80vh]"
+        className="w-full max-w-md bg-[hsl(220_55%_14%)] border border-black/40 rounded-lg shadow-xl flex flex-col max-h-[80vh]"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="h-12 px-4 flex items-center justify-between border-b border-black/40">
@@ -279,7 +279,7 @@ function NewDmDialog({ me, orgMembers, onClose, onCreated }: DialogProps) {
           <button
             type="button"
             onClick={onClose}
-            className="p-1 rounded hover:bg-[hsl(232_45%_25%)] text-[hsl(0_0%_70%)] hover:text-white"
+            className="p-1 rounded hover:bg-[hsl(220_45%_25%)] text-[hsl(0_0%_70%)] hover:text-white"
             aria-label="Close"
             data-testid="button-close-dm-picker"
           >
@@ -295,7 +295,7 @@ function NewDmDialog({ me, orgMembers, onClose, onCreated }: DialogProps) {
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Search people"
-              className="w-full bg-[hsl(232_60%_9%)] border border-black/40 text-sm text-white placeholder:text-[hsl(0_0%_45%)] rounded-md pl-8 pr-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-vs-red"
+              className="w-full bg-[hsl(220_60%_9%)] border border-black/40 text-sm text-white placeholder:text-[hsl(0_0%_45%)] rounded-md pl-8 pr-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-vs-red"
               data-testid="input-dm-picker-search"
               autoFocus
             />
@@ -314,7 +314,7 @@ function NewDmDialog({ me, orgMembers, onClose, onCreated }: DialogProps) {
                   key={u.id}
                   onClick={() => toggle(u.id)}
                   className={`w-full flex items-center gap-2 px-2 py-2 rounded-md text-left transition-colors ${
-                    checked ? "bg-[hsl(232_55%_22%)]" : "hover:bg-[hsl(232_45%_25%)]"
+                    checked ? "bg-[hsl(220_55%_22%)]" : "hover:bg-[hsl(220_45%_25%)]"
                   }`}
                   data-testid={`button-pick-user-${u.id}`}
                 >
@@ -352,7 +352,7 @@ function NewDmDialog({ me, orgMembers, onClose, onCreated }: DialogProps) {
             <button
               type="button"
               onClick={onClose}
-              className="px-3 py-1.5 text-sm rounded-md text-[hsl(0_0%_75%)] hover:bg-[hsl(232_45%_25%)] hover:text-white"
+              className="px-3 py-1.5 text-sm rounded-md text-[hsl(0_0%_75%)] hover:bg-[hsl(220_45%_25%)] hover:text-white"
               data-testid="button-cancel-dm-picker"
             >
               Cancel

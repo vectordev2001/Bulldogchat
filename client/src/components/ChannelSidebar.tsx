@@ -166,7 +166,7 @@ export function ChannelSidebar({
           <button
             type="button"
             onClick={() => setManageMembersOpen(true)}
-            className="flex items-center gap-1 text-[hsl(0_0%_65%)] hover:text-white transition-colors px-1.5 py-1 rounded-md hover:bg-[hsl(232_45%_25%)]"
+            className="flex items-center gap-1 text-[hsl(0_0%_65%)] hover:text-white transition-colors px-1.5 py-1 rounded-md hover:bg-[hsl(220_45%_25%)]"
             title={`Manage members of ${project.name}`}
             data-testid="button-manage-members"
           >
@@ -192,7 +192,7 @@ export function ChannelSidebar({
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search channels"
-            className="w-full bg-[hsl(232_60%_9%)] border border-black/40 text-xs text-white placeholder:text-[hsl(0_0%_45%)] rounded-md pl-8 pr-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-vs-red"
+            className="w-full bg-[hsl(220_60%_9%)] border border-black/40 text-xs text-white placeholder:text-[hsl(0_0%_45%)] rounded-md pl-8 pr-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-vs-red"
             data-testid="input-channel-search"
           />
         </div>
@@ -208,7 +208,7 @@ export function ChannelSidebar({
             onClick={onOpenMeetings}
             data-testid="button-open-meetings-top"
             title="Upcoming and recent Bulldog calls—schedule a new one or RSVP."
-            className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-sm text-white bg-[hsl(232_45%_22%)] hover:bg-[hsl(232_45%_30%)] transition-colors"
+            className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-sm text-white bg-[hsl(220_45%_22%)] hover:bg-[hsl(220_45%_30%)] transition-colors"
           >
             <Calendar className="w-4 h-4 shrink-0 text-vs-blue-light" />
             <span className="truncate font-medium">Meetings</span>
@@ -284,13 +284,13 @@ export function ChannelSidebar({
             current company. The dialog reads the active company from props. */}
         {onOpenWorkObjects && (
           <div className="pt-1">
-            <div className="h-px bg-[hsl(232_40%_22%)] mx-1.5 mb-2" />
+            <div className="h-px bg-[hsl(220_40%_22%)] mx-1.5 mb-2" />
             <button
               type="button"
               onClick={onOpenWorkObjects}
               data-testid="button-open-work-objects"
               title={`Every job in ${project.name} — sites, projects, change orders, safety incidents.`}
-              className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-sm text-[hsl(0_0%_75%)] hover:bg-[hsl(232_45%_25%)] hover:text-white transition-colors"
+              className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-sm text-[hsl(0_0%_75%)] hover:bg-[hsl(220_45%_25%)] hover:text-white transition-colors"
             >
               <ClipboardList className="w-4 h-4 shrink-0 text-vs-red" />
               <span className="truncate font-medium">All Jobs</span>
@@ -347,12 +347,12 @@ export function ChannelSidebar({
           style={{ position: "fixed", top: ctxMenu.y, left: ctxMenu.x, zIndex: 60 }}
           onClick={(e) => e.stopPropagation()}
           data-testid="context-menu-channel"
-          className="min-w-[180px] rounded-md border border-[hsl(232_40%_25%)] bg-[hsl(232_55%_12%)] shadow-2xl overflow-hidden text-sm"
+          className="min-w-[180px] rounded-md border border-[hsl(220_40%_25%)] bg-[hsl(220_55%_12%)] shadow-2xl overflow-hidden text-sm"
         >
           <button
             type="button"
             onClick={() => { setMoveChannel(ctxMenu.channel); setCtxMenu(null); }}
-            className="w-full flex items-center gap-2 px-3 py-2 text-left text-white hover:bg-[hsl(232_45%_22%)]"
+            className="w-full flex items-center gap-2 px-3 py-2 text-left text-white hover:bg-[hsl(220_45%_22%)]"
             data-testid="menu-item-move-channel"
           >
             <ArrowRightLeft className="w-3.5 h-3.5 text-vs-red" />
@@ -390,7 +390,7 @@ export function ChannelSidebar({
             <Trash2 className="w-3.5 h-3.5" />
             <span>Delete channel…</span>
           </button>
-          <div className="px-3 py-1.5 text-[10px] text-[hsl(0_0%_50%)] border-t border-[hsl(232_40%_22%)] font-mono">
+          <div className="px-3 py-1.5 text-[10px] text-[hsl(0_0%_50%)] border-t border-[hsl(220_40%_22%)] font-mono">
             #{ctxMenu.channel.name}
           </div>
         </div>
@@ -469,7 +469,7 @@ function JobGroup({
         className={[
           "w-full flex items-center gap-1.5 px-1.5 py-1 rounded-md text-[12px] text-left transition-colors",
           isClosed ? "text-[hsl(0_0%_50%)]" : "text-[hsl(0_0%_80%)] hover:text-white",
-          "hover:bg-[hsl(232_45%_22%)]",
+          "hover:bg-[hsl(220_45%_22%)]",
         ].join(" ")}
       >
         {expanded
@@ -481,7 +481,7 @@ function JobGroup({
         {isClosed && <span className="ml-1 text-[9px] uppercase text-[hsl(0_0%_45%)]">closed</span>}
       </button>
       {expanded && (
-        <div className="ml-3 mt-0.5 pl-1 border-l border-[hsl(232_40%_22%)] space-y-0.5">
+        <div className="ml-3 mt-0.5 pl-1 border-l border-[hsl(220_40%_22%)] space-y-0.5">
           {channels.length === 0 && (
             <div className="px-2 py-1 text-[10px] text-[hsl(0_0%_45%)]">No channels in this job yet.</div>
           )}
@@ -525,7 +525,7 @@ function ChannelRow({
       data-testid={`channel-${channel.id}`}
       className={[
         "relative w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md text-sm transition-colors group",
-        active ? "bg-[hsl(232_45%_30%)] text-white" : "text-[hsl(0_0%_75%)] hover:bg-[hsl(232_45%_25%)] hover:text-white",
+        active ? "bg-[hsl(220_45%_30%)] text-white" : "text-[hsl(0_0%_75%)] hover:bg-[hsl(220_45%_25%)] hover:text-white",
       ].join(" ")}
     >
       {active && <span className="absolute left-0 top-1.5 bottom-1.5 w-[3px] rounded-r-full bg-vs-red" />}
@@ -552,7 +552,7 @@ function IconBtn({
       data-testid={testid}
       className={[
         "w-8 h-8 flex items-center justify-center rounded-md transition-colors",
-        danger ? "text-vs-red hover:bg-[hsl(2_70%_55%/0.15)]" : "text-[hsl(0_0%_65%)] hover:text-white hover:bg-[hsl(232_45%_30%)]",
+        danger ? "text-vs-red hover:bg-[hsl(174_70%_55%/0.15)]" : "text-[hsl(0_0%_65%)] hover:text-white hover:bg-[hsl(220_45%_30%)]",
       ].join(" ")}
     >
       {children}
@@ -568,7 +568,7 @@ function AdminBtn() {
       onClick={() => setLocation("/admin")}
       title="Admin Panel"
       data-testid="button-admin-panel"
-      className="w-8 h-8 flex items-center justify-center rounded-md transition-colors text-vs-red hover:bg-[hsl(2_70%_55%/0.15)]"
+      className="w-8 h-8 flex items-center justify-center rounded-md transition-colors text-vs-red hover:bg-[hsl(174_70%_55%/0.15)]"
     >
       <ShieldCheck className="w-4 h-4" />
     </button>

@@ -25,18 +25,18 @@ interface Props {
 export const PRESENCE_COLOR: Record<string, string> = {
   online: "hsl(145 60% 48%)",   // green
   away: "hsl(45 100% 55%)",     // yellow
-  busy: "hsl(2 70% 55%)",       // red
-  offline: "hsl(232 10% 45%)",  // grey
+  busy: "hsl(174 70% 55%)",       // red
+  offline: "hsl(220 10% 45%)",  // grey
   // legacy aliases
   idle: "hsl(45 100% 55%)",
-  dnd: "hsl(2 70% 55%)",
+  dnd: "hsl(174 70% 55%)",
 };
 const STATUS_COLOR = PRESENCE_COLOR;
 
 const RING_COLOR: Record<string, string> = {
   none: "transparent",
-  red: "hsl(2 70% 55%)",
-  blue: "hsl(218 100% 68%)",
+  red: "hsl(174 70% 55%)",
+  blue: "hsl(199 100% 68%)",
   green: "hsl(145 60% 48%)",
   amber: "hsl(35 100% 60%)",
 };
@@ -85,7 +85,7 @@ export function Avatar({ member, size = 36, showStatus = false, ring = "none", c
           fontFamily="Satoshi, sans-serif"
           fontWeight="700"
           fontSize="15"
-          fill="hsl(232 60% 9%)"
+          fill="hsl(220 60% 9%)"
         >
           {initials}
         </text>
@@ -104,7 +104,7 @@ export function Avatar({ member, size = 36, showStatus = false, ring = "none", c
               (member.presence && PRESENCE_COLOR[member.presence]) ??
               (member.status && STATUS_COLOR[member.status]) ??
               PRESENCE_COLOR.online,
-            boxShadow: "0 0 0 2px hsl(232 50% 20%)",
+            boxShadow: "0 0 0 2px hsl(220 50% 20%)",
           }}
         />
       )}

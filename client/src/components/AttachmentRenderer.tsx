@@ -31,7 +31,7 @@ export function AttachmentList({ atts }: { atts: ApiAttachment[] }) {
               key={a.id}
               type="button"
               onClick={() => setLightbox(a)}
-              className="relative group rounded-lg overflow-hidden bg-[hsl(232_60%_9%)] border border-[hsl(232_40%_22%)] hover:border-vs-red transition-colors"
+              className="relative group rounded-lg overflow-hidden bg-[hsl(220_60%_9%)] border border-[hsl(220_40%_22%)] hover:border-vs-red transition-colors"
               data-testid={`attachment-image-${a.id}`}
             >
               <img
@@ -58,10 +58,10 @@ export function AttachmentList({ atts }: { atts: ApiAttachment[] }) {
               href={a.url}
               target="_blank"
               rel="noreferrer noopener"
-              className="flex items-center gap-3 px-3 py-2 rounded-lg bg-[hsl(232_50%_16%)] border border-[hsl(232_40%_22%)] hover:border-vs-red transition-colors group"
+              className="flex items-center gap-3 px-3 py-2 rounded-lg bg-[hsl(220_50%_16%)] border border-[hsl(220_40%_22%)] hover:border-vs-red transition-colors group"
               data-testid={`attachment-file-${a.id}`}
             >
-              <div className="w-9 h-9 rounded-md bg-[hsl(2_70%_55%/0.18)] border border-[hsl(2_70%_55%/0.4)] flex items-center justify-center shrink-0">
+              <div className="w-9 h-9 rounded-md bg-[hsl(174_70%_55%/0.18)] border border-[hsl(174_70%_55%/0.4)] flex items-center justify-center shrink-0">
                 <FileText className="w-4 h-4 text-vs-red" />
               </div>
               <div className="min-w-0 flex-1">

@@ -245,7 +245,7 @@ export function MeetingClerkButton({ channelId, canControl, roomName, compact }:
           type="button"
           onClick={() => stopMutation.mutate()}
           disabled={stopMutation.isPending}
-          className={`${baseClass} bg-vs-red/20 border border-vs-red/40 text-[hsl(2_85%_72%)] hover:bg-vs-red/30`}
+          className={`${baseClass} bg-vs-red/20 border border-vs-red/40 text-[hsl(174_85%_72%)] hover:bg-vs-red/30`}
           title="Stop AI clerk"
           data-testid="button-stop-clerk"
         >
@@ -257,7 +257,7 @@ export function MeetingClerkButton({ channelId, canControl, roomName, compact }:
     if (isProcessing) {
       return (
         <div
-          className={`${baseClass} bg-[hsl(232_50%_18%)] border border-[hsl(232_40%_25%)] text-[hsl(0_0%_70%)]`}
+          className={`${baseClass} bg-[hsl(220_50%_18%)] border border-[hsl(220_40%_25%)] text-[hsl(0_0%_70%)]`}
           title={`Clerk ${activeFromServer?.status ?? "processing"}…`}
           data-testid="status-clerk-processing"
         >
@@ -272,7 +272,7 @@ export function MeetingClerkButton({ channelId, canControl, roomName, compact }:
           type="button"
           onClick={() => startMutation.mutate()}
           disabled={startMutation.isPending}
-          className={`${baseClass} text-[hsl(0_0%_80%)] hover:bg-[hsl(232_50%_20%)] hover:text-vs-blue-light`}
+          className={`${baseClass} text-[hsl(0_0%_80%)] hover:bg-[hsl(220_50%_20%)] hover:text-vs-blue-light`}
           title={cfgWarning ? "AI clerk (some integrations not configured — pipeline will still run)" : "Start AI clerk — records, transcribes, summarizes, files notes to Synology"}
           data-testid="button-start-clerk"
         >
@@ -291,7 +291,7 @@ export function MeetingClerkButton({ channelId, canControl, roomName, compact }:
           type="button"
           onClick={() => stopMutation.mutate()}
           disabled={stopMutation.isPending}
-          className="px-2 py-1 rounded-md text-xs bg-vs-red/20 border border-vs-red/40 text-[hsl(2_85%_72%)] hover:bg-vs-red/30 flex items-center gap-1.5 whitespace-nowrap"
+          className="px-2 py-1 rounded-md text-xs bg-vs-red/20 border border-vs-red/40 text-[hsl(174_85%_72%)] hover:bg-vs-red/30 flex items-center gap-1.5 whitespace-nowrap"
           title="Stop AI clerk"
           data-testid="button-stop-clerk"
         >
@@ -299,7 +299,7 @@ export function MeetingClerkButton({ channelId, canControl, roomName, compact }:
         </button>
       ) : isProcessing ? (
         <div
-          className="px-2 py-1 rounded-md text-xs bg-[hsl(232_50%_18%)] border border-[hsl(232_40%_25%)] text-[hsl(0_0%_70%)] flex items-center gap-1.5 whitespace-nowrap"
+          className="px-2 py-1 rounded-md text-xs bg-[hsl(220_50%_18%)] border border-[hsl(220_40%_25%)] text-[hsl(0_0%_70%)] flex items-center gap-1.5 whitespace-nowrap"
           title={`Clerk ${activeFromServer?.status ?? "processing"}…`}
           data-testid="status-clerk-processing"
         >
@@ -310,7 +310,7 @@ export function MeetingClerkButton({ channelId, canControl, roomName, compact }:
           type="button"
           onClick={() => startMutation.mutate()}
           disabled={startMutation.isPending}
-          className="px-2 py-1 rounded-md text-xs bg-[hsl(232_50%_18%)] border border-[hsl(232_40%_25%)] hover:border-vs-blue hover:text-vs-blue-light text-[hsl(0_0%_80%)] flex items-center gap-1.5 whitespace-nowrap"
+          className="px-2 py-1 rounded-md text-xs bg-[hsl(220_50%_18%)] border border-[hsl(220_40%_25%)] hover:border-vs-blue hover:text-vs-blue-light text-[hsl(0_0%_80%)] flex items-center gap-1.5 whitespace-nowrap"
           title={cfgWarning ? "AI clerk (some integrations not configured — pipeline will still run)" : "Start AI clerk — records, transcribes, summarizes, files notes to Synology"}
           data-testid="button-start-clerk"
         >
@@ -320,7 +320,7 @@ export function MeetingClerkButton({ channelId, canControl, roomName, compact }:
       ) : null}
       {error && (
         <div
-          className="flex items-center gap-1 text-[10px] text-[hsl(2_85%_75%)] max-w-[180px] truncate"
+          className="flex items-center gap-1 text-[10px] text-[hsl(174_85%_75%)] max-w-[180px] truncate"
           title={error}
         >
           <AlertTriangle className="w-3 h-3" />
@@ -356,8 +356,8 @@ export function MeetingClerkBanner({ channelId }: { channelId: number }) {
     <div
       className={`px-4 py-2 border-b flex items-center gap-2 text-xs ${
         isLive
-          ? "bg-[hsl(218_100%_68%/0.12)] border-[hsl(218_100%_68%/0.3)]"
-          : "bg-[hsl(232_50%_18%)] border-[hsl(232_40%_25%)]"
+          ? "bg-[hsl(199_100%_68%/0.12)] border-[hsl(199_100%_68%/0.3)]"
+          : "bg-[hsl(220_50%_18%)] border-[hsl(220_40%_25%)]"
       }`}
       data-testid="banner-clerk-active"
     >

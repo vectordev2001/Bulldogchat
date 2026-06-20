@@ -1,5 +1,6 @@
-import { Hash, Pin, Plus, Smile, Paperclip, Send, Users, Search, Loader2, MessageSquare, X, Reply, Phone, Video, ClipboardList, MapPin, FileText, AlertTriangle, Link2, Unlink, Lock, Unlock, UserCog, PenLine, CheckCircle2, Trash2, Calendar as CalendarIcon, Mic, Ban, Check, HelpCircle, MoreHorizontal, ChevronDown } from "lucide-react";
+import { Hash, Pin, Plus, Smile, Paperclip, Send, Users, Search, Loader2, MessageSquare, X, Reply, Phone, Video, ClipboardList, MapPin, FileText, AlertTriangle, Link2, Unlink, Lock, Unlock, UserCog, PenLine, CheckCircle2, Trash2, Calendar as CalendarIcon, Mic, Ban, Check, HelpCircle, MoreHorizontal, ChevronDown, Headphones, Sparkles } from "lucide-react";
 import { ChannelCallDialog } from "@/components/ChannelCallDialog";
+import { CreateMeetingDialog } from "@/components/CreateMeetingDialog";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -36,7 +37,7 @@ interface Props {
 }
 
 const ROLE_COLOR: Record<UserRole, string> = {
-  admin: "text-[hsl(2_85%_72%)]",
+  admin: "text-[hsl(174_85%_72%)]",
   manager: "text-vs-blue-light",
   user: "text-vs-green",
 };
@@ -74,9 +75,11 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers, me
   const [mentionMatch, setMentionMatch] = useState<MentionMatch | null>(null);
   const [mentionSelectedIdx, setMentionSelectedIdx] = useState(0);
   const [callDialog, setCallDialog] = useState<null | "voice" | "video">(null);
+  const [createMeetingOpen, setCreateMeetingOpen] = useState(false);
   const [notesOpen, setNotesOpen] = useState(false);
-  const { active: activeCall, outgoing: outgoingCall } = useCalls();
+  const { active: activeCall, outgoing: outgoingCall, startGroupCall } = useCalls();
   const callBusy = !!activeCall || !!outgoingCall;
+  const [huddleStarting, setHuddleStarting] = useState(false);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
@@ -106,6 +109,32 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers, me
   });
 
   const { toast: channelToast } = useToast();
+
+  // Start a channel huddle: reuse the battle-tested group-call overlay (the
+  // caller drops straight into the LiveKit room) and post a shareable
+  // join-link message so anyone — including external guests — can hop in via
+  // the public /m/:code page.
+  const startHuddle = useCallback(async () => {
+    if (callBusy || huddleStarting) return;
+    setHuddleStarting(true);
+    try {
+      const { joinUrl } = await startGroupCall({
+        channelId: channel.id,
+        channelName: channel.name,
+        inviteeIds: [],
+        kind: "voice",
+      });
+      if (joinUrl) {
+        sendMutation.mutate({
+          content: `${me.name} started a huddle — join here: ${joinUrl}`,
+        });
+      }
+    } catch {
+      channelToast({ title: "Couldn't start the huddle", description: "Please try again.", variant: "destructive" });
+    } finally {
+      setHuddleStarting(false);
+    }
+  }, [callBusy, huddleStarting, startGroupCall, channel.id, channel.name, me.name, sendMutation, channelToast]);
 
   // Phase 1.9.36 — admin-only "clear channel". Double-confirmed because
   // the operation tombstones every message in the channel. Server fans
@@ -354,12 +383,12 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers, me
       onDragLeave={() => setDragOver(false)}
       onDrop={onDrop}
     >
-      <header className="h-14 px-4 max-md:pl-14 flex items-center gap-3 border-b border-[hsl(232_40%_22%)] shadow-sm shrink-0 bg-[hsl(232_60%_12%)]/60 backdrop-blur-sm">
+      <header className="h-14 px-4 max-md:pl-14 flex items-center gap-3 border-b border-[hsl(220_40%_22%)] shadow-sm shrink-0 bg-[hsl(220_60%_12%)]/60 backdrop-blur-sm">
         <Hash className="w-5 h-5 text-[hsl(0_0%_55%)]" />
         <div className="font-display text-white text-base" data-testid="text-channel-name">{channel.name}</div>
         {channel.topic && (
           <>
-            <span className="w-px h-5 bg-[hsl(232_40%_22%)]" />
+            <span className="w-px h-5 bg-[hsl(220_40%_22%)]" />
             <span className="text-xs text-[hsl(0_0%_70%)] truncate hidden md:inline">{channel.topic}</span>
           </>
         )}
@@ -369,6 +398,17 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers, me
               phone icon starts an instant voice call; the camera icon opens
               a small menu so "Schedule meeting" is discoverable on mobile
               (where the slash command is hard to type). */}
+          <button
+            type="button"
+            onClick={startHuddle}
+            disabled={callBusy || huddleStarting}
+            className="px-2.5 py-1.5 rounded hover-elevate text-[hsl(0_0%_70%)] hover:text-white disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-1.5 text-xs font-medium"
+            title={callBusy ? "Already in a call" : "Start a huddle (drop-in voice + shareable link)"}
+            data-testid="button-huddle"
+          >
+            {huddleStarting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Headphones className="w-4 h-4" />}
+            <span className="hidden md:inline">Huddle</span>
+          </button>
           <button
             type="button"
             onClick={() => setCallDialog("voice")}
@@ -408,6 +448,12 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers, me
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem
+                onSelect={() => setCreateMeetingOpen(true)}
+                data-testid="menu-new-meeting"
+              >
+                <Sparkles className="w-4 h-4 mr-2" /> New meeting (shareable link)…
+              </DropdownMenuItem>
+              <DropdownMenuItem
                 onSelect={() => onSlashSchedule?.(`Meeting in #${channel.name}`)}
                 data-testid="menu-schedule-meeting"
               >
@@ -415,7 +461,7 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers, me
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
-          <span className="w-px h-5 bg-[hsl(232_40%_22%)] mx-1" />
+          <span className="w-px h-5 bg-[hsl(220_40%_22%)] mx-1" />
 
           {/* Desktop (≥sm): pin / jobs / members shown inline. On mobile they
               collapse into the overflow menu below so the channel title has
@@ -448,13 +494,13 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers, me
             <button
               type="button"
               onClick={() => setSearchOpen(true)}
-              className="ml-1 flex items-center gap-2 bg-[hsl(232_60%_9%)] border border-[hsl(232_40%_22%)] text-xs text-[hsl(0_0%_65%)] hover:text-white hover:border-vs-red transition-colors rounded-md px-2 py-1"
+              className="ml-1 flex items-center gap-2 bg-[hsl(220_60%_9%)] border border-[hsl(220_40%_22%)] text-xs text-[hsl(0_0%_65%)] hover:text-white hover:border-vs-red transition-colors rounded-md px-2 py-1"
               title="Search (⌘K)"
               data-testid="button-open-search"
             >
               <Search className="w-3.5 h-3.5" />
               <span className="hidden sm:inline">Search</span>
-              <kbd className="hidden sm:inline font-mono text-[10px] text-[hsl(0_0%_55%)] border border-[hsl(232_40%_22%)] rounded px-1">⌘K</kbd>
+              <kbd className="hidden sm:inline font-mono text-[10px] text-[hsl(0_0%_55%)] border border-[hsl(220_40%_22%)] rounded px-1">⌘K</kbd>
             </button>
             {me.role === "admin" && (
               <HeaderIcon
@@ -506,7 +552,7 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers, me
                       onSelect={onClearChannel}
                       disabled={clearChannelMut.isPending}
                       data-testid="menu-clear-channel"
-                      className="text-[hsl(2_85%_72%)] focus:text-[hsl(2_85%_82%)]"
+                      className="text-[hsl(174_85%_72%)] focus:text-[hsl(174_85%_82%)]"
                     >
                       <Trash2 className="w-4 h-4 mr-2" /> Clear all messages
                     </DropdownMenuItem>
@@ -525,7 +571,7 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers, me
       )}
 
       {pinned && (
-        <div ref={pinnedBannerRef} className="px-4 py-2 bg-[hsl(2_70%_55%/0.08)] border-b border-[hsl(2_70%_55%/0.25)] flex items-start gap-2 text-xs transition-shadow rounded-sm">
+        <div ref={pinnedBannerRef} className="px-4 py-2 bg-[hsl(174_70%_55%/0.08)] border-b border-[hsl(174_70%_55%/0.25)] flex items-start gap-2 text-xs transition-shadow rounded-sm">
           <Pin className="w-3.5 h-3.5 text-vs-red mt-0.5 shrink-0" />
           <div className="text-[hsl(0_0%_82%)] leading-snug">
             <span className="text-vs-red font-semibold">Pinned · {pinned.authorName}: </span>
@@ -590,11 +636,11 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers, me
         {pendingAtts.length > 0 && (
           <div className="mb-2 flex flex-wrap gap-2" data-testid="row-pending-attachments">
             {pendingAtts.map((a) => (
-              <div key={a.id} className="relative group bg-[hsl(232_50%_16%)] border border-[hsl(232_40%_25%)] rounded-lg px-2 py-1.5 flex items-center gap-2 max-w-[200px]">
+              <div key={a.id} className="relative group bg-[hsl(220_50%_16%)] border border-[hsl(220_40%_25%)] rounded-lg px-2 py-1.5 flex items-center gap-2 max-w-[200px]">
                 {a.thumbnailUrl ? (
                   <img src={a.thumbnailUrl} alt="" className="w-9 h-9 rounded object-cover" />
                 ) : (
-                  <div className="w-9 h-9 rounded bg-[hsl(2_70%_55%/0.2)] flex items-center justify-center text-vs-red text-[10px] font-mono">FILE</div>
+                  <div className="w-9 h-9 rounded bg-[hsl(174_70%_55%/0.2)] flex items-center justify-center text-vs-red text-[10px] font-mono">FILE</div>
                 )}
                 <div className="min-w-0">
                   <div className="text-xs text-white truncate max-w-[120px]">{a.filename}</div>
@@ -620,8 +666,8 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers, me
         <div className="relative">
           {/* Mention popover */}
           {mentionMatch && mentionCandidates.length > 0 && (
-            <div className="absolute bottom-full left-0 mb-2 w-72 max-h-64 overflow-y-auto bg-[hsl(232_55%_14%)] border border-[hsl(232_40%_25%)] rounded-lg shadow-xl z-20" data-testid="popover-mention">
-              <div className="px-3 py-2 border-b border-[hsl(232_40%_22%)] text-[10px] uppercase tracking-wider font-mono text-[hsl(0_0%_55%)]">
+            <div className="absolute bottom-full left-0 mb-2 w-72 max-h-64 overflow-y-auto bg-[hsl(220_55%_14%)] border border-[hsl(220_40%_25%)] rounded-lg shadow-xl z-20" data-testid="popover-mention">
+              <div className="px-3 py-2 border-b border-[hsl(220_40%_22%)] text-[10px] uppercase tracking-wider font-mono text-[hsl(0_0%_55%)]">
                 Mention {mentionMatch.query && `· "${mentionMatch.query}"`}
               </div>
               {mentionCandidates.map((c, i) => {
@@ -630,7 +676,7 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers, me
                   <button
                     key={c.kind === "user" ? `u${c.user.id}` : `s${c.key}`}
                     type="button"
-                    className={`w-full text-left px-3 py-2 flex items-center gap-2 ${active ? "bg-[hsl(232_45%_22%)]" : "hover:bg-[hsl(232_45%_18%)]"}`}
+                    className={`w-full text-left px-3 py-2 flex items-center gap-2 ${active ? "bg-[hsl(220_45%_22%)]" : "hover:bg-[hsl(220_45%_18%)]"}`}
                     onMouseEnter={() => setMentionSelectedIdx(i)}
                     onClick={() => c.kind === "special" ? insertMention(c.key) : insertMention(c.user.name.split(/\s+/)[0].toLowerCase())}
                   >
@@ -657,7 +703,7 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers, me
             </div>
           )}
 
-          <div className="flex items-end gap-2 bg-[hsl(232_50%_16%)] border border-[hsl(232_40%_25%)] rounded-xl px-3 py-2 focus-within:border-vs-red transition-colors">
+          <div className="flex items-end gap-2 bg-[hsl(220_50%_16%)] border border-[hsl(220_40%_25%)] rounded-xl px-3 py-2 focus-within:border-vs-red transition-colors">
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
@@ -704,7 +750,7 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers, me
                 type="button"
                 onClick={submit}
                 disabled={(!draft.trim() && pendingAtts.length === 0) || sendMutation.isPending}
-                className="ml-1 w-8 h-8 rounded-md bg-vs-red text-white flex items-center justify-center hover:bg-[hsl(2_75%_60%)] transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                className="ml-1 w-8 h-8 rounded-md bg-vs-red text-white flex items-center justify-center hover:bg-[hsl(174_75%_60%)] transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                 title="Send (Enter)"
                 data-testid="button-send"
               >
@@ -739,6 +785,12 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers, me
         initialKind={callDialog || "voice"}
         onClose={() => setCallDialog(null)}
       />
+      <CreateMeetingDialog
+        channel={channel}
+        meId={me.id}
+        open={createMeetingOpen}
+        onClose={() => setCreateMeetingOpen(false)}
+      />
       <MeetingNotesHistory channelId={channel.id} open={notesOpen} onClose={() => setNotesOpen(false)} />
     </section>
   );
@@ -768,8 +820,8 @@ function HeaderIcon({
       data-testid={dataTestId}
       className={`w-8 h-8 flex items-center justify-center rounded-md transition-colors ${
         active
-          ? "bg-[hsl(232_45%_30%)] text-white"
-          : "hover:bg-[hsl(232_45%_30%)] hover:text-white"
+          ? "bg-[hsl(220_45%_30%)] text-white"
+          : "hover:bg-[hsl(220_45%_30%)] hover:text-white"
       } ${disabled ? "opacity-40 cursor-not-allowed" : ""}`}
     >
       {children}
@@ -780,14 +832,14 @@ function HeaderIcon({
 function ChannelIntro({ channel }: { channel: ApiChannel }) {
   return (
     <div className="py-6 mb-2">
-      <div className="w-14 h-14 rounded-2xl bg-[hsl(232_45%_27%)] border border-vs-red/30 flex items-center justify-center mb-3">
+      <div className="w-14 h-14 rounded-2xl bg-[hsl(220_45%_27%)] border border-vs-red/30 flex items-center justify-center mb-3">
         <Hash className="w-7 h-7 text-vs-red" />
       </div>
       <h2 className="text-xl font-display text-white">Welcome to #{channel.name}</h2>
       <p className="text-sm text-[hsl(0_0%_70%)] mt-1 max-w-xl">
         {channel.topic ?? "This is the start of the channel."}
       </p>
-      <div className="mt-3 h-px bg-[hsl(232_40%_22%)]" />
+      <div className="mt-3 h-px bg-[hsl(220_40%_22%)]" />
     </div>
   );
 }
@@ -832,7 +884,7 @@ function SystemMessageRow({ meta, content, createdAt, meId, myRole, onJoinMeetin
       initial={{ opacity: 0, y: 4 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
-      className="flex items-center justify-center gap-2 my-1 py-1 px-3 mx-12 border-l-2 border-[hsl(232_40%_22%)] text-[11px] text-[hsl(0_0%_55%)] italic text-center"
+      className="flex items-center justify-center gap-2 my-1 py-1 px-3 mx-12 border-l-2 border-[hsl(220_40%_22%)] text-[11px] text-[hsl(0_0%_55%)] italic text-center"
       data-testid={`system-message-${wo.kind}`}
       title={fmtTime(createdAt)}
     >
@@ -864,11 +916,11 @@ function MeetingSummaryCard({ meta, createdAt, onOpenNotes }: { meta: ApiMeeting
       initial={{ opacity: 0, y: 4 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
-      className="my-2 mx-12 rounded-lg border border-[hsl(218_100%_68%/0.3)] bg-[hsl(218_100%_68%/0.08)] overflow-hidden"
+      className="my-2 mx-12 rounded-lg border border-[hsl(199_100%_68%/0.3)] bg-[hsl(199_100%_68%/0.08)] overflow-hidden"
       data-testid="system-message-meeting_summary"
       title={fmtTime(createdAt)}
     >
-      <div className="px-3 py-2 flex items-center gap-2 border-b border-[hsl(218_100%_68%/0.2)]">
+      <div className="px-3 py-2 flex items-center gap-2 border-b border-[hsl(199_100%_68%/0.2)]">
         <FileText className="w-4 h-4 text-vs-blue-light shrink-0" />
         <span className="text-sm font-semibold text-white truncate">{meta.title || "Meeting notes"}</span>
         <span className="ml-auto text-[10px] font-mono text-[hsl(0_0%_60%)] whitespace-nowrap shrink-0">
@@ -880,11 +932,11 @@ function MeetingSummaryCard({ meta, createdAt, onOpenNotes }: { meta: ApiMeeting
           {meta.summaryPreview}
         </div>
       )}
-      <div className="px-3 py-2 border-t border-[hsl(218_100%_68%/0.2)]">
+      <div className="px-3 py-2 border-t border-[hsl(199_100%_68%/0.2)]">
         <button
           type="button"
           onClick={() => onOpenNotes?.()}
-          className="px-2.5 py-1 rounded-md text-xs bg-[hsl(232_50%_18%)] border border-[hsl(232_40%_25%)] hover:border-vs-blue hover:text-vs-blue-light text-[hsl(0_0%_80%)] flex items-center gap-1.5"
+          className="px-2.5 py-1 rounded-md text-xs bg-[hsl(220_50%_18%)] border border-[hsl(220_40%_25%)] hover:border-vs-blue hover:text-vs-blue-light text-[hsl(0_0%_80%)] flex items-center gap-1.5"
           data-testid="button-view-full-notes"
         >
           <FileText className="w-3 h-3" /> View full notes
@@ -971,7 +1023,7 @@ function MessageRow({ msg, grouped, isMe, meId, myRole, onOpenThread, onJoinMeet
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
       className={[
-        "group relative flex gap-3 px-2 py-1 rounded -mx-2 hover:bg-[hsl(232_45%_18%/0.5)]",
+        "group relative flex gap-3 px-2 py-1 rounded -mx-2 hover:bg-[hsl(220_45%_18%/0.5)]",
         grouped ? "" : "mt-4",
       ].join(" ")}
       data-testid={`message-${msg.id}`}
@@ -1003,7 +1055,7 @@ function MessageRow({ msg, grouped, isMe, meId, myRole, onOpenThread, onJoinMeet
             {msg.reactions.map((r) => (
               <span
                 key={r.emoji}
-                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md border text-[11px] font-mono bg-[hsl(232_45%_27%)] border-[hsl(232_40%_25%)] text-[hsl(0_0%_82%)]"
+                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md border text-[11px] font-mono bg-[hsl(220_45%_27%)] border-[hsl(220_40%_25%)] text-[hsl(0_0%_82%)]"
               >
                 <span>{r.emoji}</span>
                 <span>{r.count}</span>
@@ -1015,7 +1067,7 @@ function MessageRow({ msg, grouped, isMe, meId, myRole, onOpenThread, onJoinMeet
           <button
             type="button"
             onClick={onOpenThread}
-            className="mt-1.5 inline-flex items-center gap-1.5 px-2 py-1 rounded-md border border-[hsl(232_40%_25%)] bg-[hsl(232_50%_16%)] hover:bg-[hsl(232_45%_22%)] hover:border-vs-red text-xs text-vs-blue-light font-semibold transition-colors"
+            className="mt-1.5 inline-flex items-center gap-1.5 px-2 py-1 rounded-md border border-[hsl(220_40%_25%)] bg-[hsl(220_50%_16%)] hover:bg-[hsl(220_45%_22%)] hover:border-vs-red text-xs text-vs-blue-light font-semibold transition-colors"
             data-testid={`button-open-thread-${msg.id}`}
           >
             <MessageSquare className="w-3 h-3" />
@@ -1028,13 +1080,13 @@ function MessageRow({ msg, grouped, isMe, meId, myRole, onOpenThread, onJoinMeet
       {/* Desktop hover action bar — quick access for mouse users. Hidden
           on touch (no hover state); touch users use the kebab below. */}
       <div
-        className="transition-opacity absolute top-0 right-10 hidden md:flex items-center gap-1 -translate-y-2 bg-[hsl(232_55%_14%)] border border-[hsl(232_40%_25%)] rounded-md px-1 py-0.5 shadow-md opacity-0 group-hover:opacity-100"
+        className="transition-opacity absolute top-0 right-10 hidden md:flex items-center gap-1 -translate-y-2 bg-[hsl(220_55%_14%)] border border-[hsl(220_40%_25%)] rounded-md px-1 py-0.5 shadow-md opacity-0 group-hover:opacity-100"
         onClick={(e) => e.stopPropagation()}
       >
         <button
           type="button"
           onClick={onOpenThread}
-          className="p-1 rounded hover:bg-[hsl(232_45%_22%)] text-[hsl(0_0%_70%)] hover:text-vs-red"
+          className="p-1 rounded hover:bg-[hsl(220_45%_22%)] text-[hsl(0_0%_70%)] hover:text-vs-red"
           title="Reply in comms"
           data-testid={`button-reply-thread-${msg.id}`}
         >
@@ -1045,7 +1097,7 @@ function MessageRow({ msg, grouped, isMe, meId, myRole, onOpenThread, onJoinMeet
             type="button"
             onClick={onDelete}
             disabled={deleteMut.isPending}
-            className="p-1 rounded hover:bg-[hsl(232_45%_22%)] text-[hsl(0_0%_70%)] hover:text-vs-red disabled:opacity-40"
+            className="p-1 rounded hover:bg-[hsl(220_45%_22%)] text-[hsl(0_0%_70%)] hover:text-vs-red disabled:opacity-40"
             title={isMe ? "Delete message" : "Delete message (admin)"}
             data-testid={`button-delete-message-${msg.id}`}
           >
@@ -1065,7 +1117,7 @@ function MessageRow({ msg, grouped, isMe, meId, myRole, onOpenThread, onJoinMeet
         <button
           type="button"
           onClick={() => setMenuOpen(v => !v)}
-          className="p-1.5 rounded-md text-[hsl(0_0%_55%)] hover:text-white hover:bg-[hsl(232_45%_22%)] md:opacity-40 md:group-hover:opacity-100 transition-opacity"
+          className="p-1.5 rounded-md text-[hsl(0_0%_55%)] hover:text-white hover:bg-[hsl(220_45%_22%)] md:opacity-40 md:group-hover:opacity-100 transition-opacity"
           title="Message actions"
           aria-label="Message actions"
           data-testid={`button-message-menu-${msg.id}`}
@@ -1074,14 +1126,14 @@ function MessageRow({ msg, grouped, isMe, meId, myRole, onOpenThread, onJoinMeet
         </button>
         {menuOpen && (
           <div
-            className="absolute top-full right-0 mt-1 min-w-[160px] rounded-md border border-[hsl(232_40%_25%)] bg-[hsl(232_55%_12%)] shadow-xl py-1"
+            className="absolute top-full right-0 mt-1 min-w-[160px] rounded-md border border-[hsl(220_40%_25%)] bg-[hsl(220_55%_12%)] shadow-xl py-1"
             role="menu"
             data-testid={`menu-message-${msg.id}`}
           >
             <button
               type="button"
               onClick={() => { setMenuOpen(false); onOpenThread(); }}
-              className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[hsl(0_0%_85%)] hover:bg-[hsl(232_45%_18%)] hover:text-white text-left"
+              className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[hsl(0_0%_85%)] hover:bg-[hsl(220_45%_18%)] hover:text-white text-left"
               data-testid={`menu-item-reply-${msg.id}`}
             >
               <Reply className="w-3.5 h-3.5" />
@@ -1092,7 +1144,7 @@ function MessageRow({ msg, grouped, isMe, meId, myRole, onOpenThread, onJoinMeet
                 type="button"
                 onClick={() => { setMenuOpen(false); onDelete(); }}
                 disabled={deleteMut.isPending}
-                className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[hsl(2_85%_72%)] hover:bg-[hsl(232_45%_18%)] hover:text-[hsl(2_85%_82%)] text-left disabled:opacity-40"
+                className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[hsl(174_85%_72%)] hover:bg-[hsl(220_45%_18%)] hover:text-[hsl(174_85%_82%)] text-left disabled:opacity-40"
                 data-testid={`menu-item-delete-${msg.id}`}
               >
                 <Trash2 className="w-3.5 h-3.5" />
@@ -1108,8 +1160,8 @@ function MessageRow({ msg, grouped, isMe, meId, myRole, onOpenThread, onJoinMeet
 
 function RoleBadge({ role }: { role: UserRole }) {
   const color = {
-    admin:   "bg-[hsl(2_70%_55%/0.18)] text-[hsl(2_85%_72%)] border-[hsl(2_70%_55%/0.4)]",
-    manager: "bg-[hsl(218_100%_68%/0.15)] text-vs-blue-light border-[hsl(218_100%_68%/0.4)]",
+    admin:   "bg-[hsl(174_70%_55%/0.18)] text-[hsl(174_85%_72%)] border-[hsl(174_70%_55%/0.4)]",
+    manager: "bg-[hsl(199_100%_68%/0.15)] text-vs-blue-light border-[hsl(199_100%_68%/0.4)]",
     user:    "bg-[hsl(145_60%_48%/0.15)] text-vs-green border-[hsl(145_60%_48%/0.4)]",
   }[role];
 
@@ -1128,7 +1180,7 @@ function MessageBody({ body, mentions, meId }: { body: string; mentions?: ApiMes
   return (
     <div className="text-[13.5px] text-[hsl(0_0%_88%)] leading-relaxed mt-0.5 whitespace-pre-wrap break-words">
       {(myMention || hasBroadcast) && (
-        <div className={`-ml-2 pl-2 border-l-4 ${myMention ? "border-vs-red bg-[hsl(2_70%_55%/0.06)]" : "border-[hsl(35_100%_60%)] bg-[hsl(35_100%_60%/0.05)]"} -mr-2 pr-2 py-0.5 rounded-r-sm`}>
+        <div className={`-ml-2 pl-2 border-l-4 ${myMention ? "border-vs-red bg-[hsl(174_70%_55%/0.06)]" : "border-[hsl(35_100%_60%)] bg-[hsl(35_100%_60%/0.05)]"} -mr-2 pr-2 py-0.5 rounded-r-sm`}>
           {lines.map((line, i) => (
             <Line key={i} line={line} mentions={mentions} meId={meId} />
           ))}
@@ -1153,10 +1205,31 @@ function Line({ line, mentions, meId }: { line: string; mentions?: ApiMessage["m
 }
 
 function renderInline(text: string, mentions: ApiMessage["mentions"] | undefined, meId: number) {
-  const parts = text.split(/(\*\*[^*]+\*\*|@[a-zA-Z0-9_.-]+)/g);
+  const parts = text.split(/(\*\*[^*]+\*\*|@[a-zA-Z0-9_.-]+|https?:\/\/[^\s]+)/g);
   return parts.map((p, i) => {
     if (p.startsWith("**") && p.endsWith("**")) {
       return <strong key={i} className="font-bold text-white">{p.slice(2, -2)}</strong>;
+    }
+    if (/^https?:\/\//.test(p)) {
+      // Trailing punctuation shouldn't be swallowed into the href (e.g. a URL
+      // that ends a sentence with a period or sits inside parentheses).
+      const m = p.match(/^(https?:\/\/[^\s]*?)([.,)\]]*)$/);
+      const href = m ? m[1] : p;
+      const tail = m ? m[2] : "";
+      return (
+        <span key={i}>
+          <a
+            href={href}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-vs-blue-light underline underline-offset-2 hover:text-white break-all"
+            data-testid="message-link"
+          >
+            {href}
+          </a>
+          {tail}
+        </span>
+      );
     }
     if (p.startsWith("@")) {
       const handle = p.slice(1).toLowerCase();
@@ -1171,10 +1244,10 @@ function renderInline(text: string, mentions: ApiMessage["mentions"] | undefined
       });
       const selfMention = !isBroadcast && mentions?.some((m) => m.type === "user" && m.mentionedUserId === meId);
       const className = selfMention
-        ? "bg-[hsl(2_70%_55%/0.25)] text-[hsl(2_85%_72%)] px-1 rounded font-semibold"
+        ? "bg-[hsl(174_70%_55%/0.25)] text-[hsl(174_85%_72%)] px-1 rounded font-semibold"
         : isBroadcast
         ? "bg-[hsl(35_100%_60%/0.22)] text-[hsl(35_100%_72%)] px-1 rounded font-semibold"
-        : "bg-[hsl(218_100%_68%/0.22)] text-vs-blue-light px-1 rounded font-semibold";
+        : "bg-[hsl(199_100%_68%/0.22)] text-vs-blue-light px-1 rounded font-semibold";
       return (
         <span key={i} className={className} data-testid={`mention-${handle}`}>
           {p}
@@ -1271,7 +1344,7 @@ function ScheduledCallCard({ meta, createdAt, meId, myRole, onJoin }: { meta: Ap
       initial={{ opacity: 0, y: 6 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
-      className={`mx-2 md:mx-12 my-2 border rounded-lg p-3 ${cancelled ? "opacity-60 border-[hsl(232_40%_22%)]" : `border-${accent}/40 bg-${accent}/5`}`}
+      className={`mx-2 md:mx-12 my-2 border rounded-lg p-3 ${cancelled ? "opacity-60 border-[hsl(220_40%_22%)]" : `border-${accent}/40 bg-${accent}/5`}`}
       data-testid={`scheduled-call-card-${meta.scheduledCallId}`}
     >
       <div className="flex items-start gap-3">

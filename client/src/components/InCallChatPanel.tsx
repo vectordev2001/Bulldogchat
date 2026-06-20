@@ -80,15 +80,15 @@ export function InCallChatPanel({ channelId, onClose }: Props) {
   }
 
   return (
-    <div className="w-full sm:w-[360px] h-full flex flex-col bg-[hsl(232_55%_10%)] border-l border-[hsl(232_40%_22%)]">
+    <div className="w-full sm:w-[360px] h-full flex flex-col bg-[hsl(220_55%_10%)] border-l border-[hsl(220_40%_22%)]">
       {/* Header */}
-      <div className="shrink-0 flex items-center justify-between px-3 py-2 border-b border-[hsl(232_40%_22%)] bg-[hsl(232_60%_11%)]">
+      <div className="shrink-0 flex items-center justify-between px-3 py-2 border-b border-[hsl(220_40%_22%)] bg-[hsl(220_60%_11%)]">
         <div className="text-sm font-semibold text-white">In-call chat</div>
         <button
           type="button"
           onClick={onClose}
           aria-label="Close chat"
-          className="p-1 rounded hover:bg-[hsl(232_50%_18%)] text-[hsl(0_0%_70%)]"
+          className="p-1 rounded hover:bg-[hsl(220_50%_18%)] text-[hsl(0_0%_70%)]"
         >
           <X className="w-4 h-4" />
         </button>
@@ -160,8 +160,8 @@ export function InCallChatPanel({ channelId, onClose }: Props) {
                 <div
                   className={`max-w-[85%] px-3 py-1.5 rounded-2xl text-sm break-words whitespace-pre-wrap ${
                     mine
-                      ? "bg-vs-blue text-[hsl(232_60%_9%)]"
-                      : "bg-[hsl(232_50%_18%)] text-white"
+                      ? "bg-vs-blue text-[hsl(220_60%_9%)]"
+                      : "bg-[hsl(220_50%_18%)] text-white"
                   }`}
                 >
                   {m.content || "[attachment]"}
@@ -173,7 +173,7 @@ export function InCallChatPanel({ channelId, onClose }: Props) {
       </div>
 
       {/* Composer */}
-      <div className="shrink-0 border-t border-[hsl(232_40%_22%)] bg-[hsl(232_60%_11%)] p-2">
+      <div className="shrink-0 border-t border-[hsl(220_40%_22%)] bg-[hsl(220_60%_11%)] p-2">
         <div className="flex items-end gap-2">
           <textarea
             ref={taRef}
@@ -182,14 +182,14 @@ export function InCallChatPanel({ channelId, onClose }: Props) {
             onKeyDown={onKeyDown}
             placeholder="Message the channel…"
             rows={1}
-            className="flex-1 resize-none rounded-md bg-[hsl(232_50%_15%)] border border-[hsl(232_40%_22%)] text-white text-sm placeholder:text-[hsl(0_0%_50%)] px-3 py-2 focus:outline-none focus:ring-1 focus:ring-vs-blue max-h-[120px] overflow-y-auto"
+            className="flex-1 resize-none rounded-md bg-[hsl(220_50%_15%)] border border-[hsl(220_40%_22%)] text-white text-sm placeholder:text-[hsl(0_0%_50%)] px-3 py-2 focus:outline-none focus:ring-1 focus:ring-vs-blue max-h-[120px] overflow-y-auto"
             data-testid="incall-chat-composer"
           />
           <button
             type="button"
             onClick={send}
             disabled={!draft.trim() || sendMutation.isPending}
-            className="shrink-0 h-9 w-9 rounded-md bg-vs-blue text-[hsl(232_60%_9%)] flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed hover:bg-vs-blue-light"
+            className="shrink-0 h-9 w-9 rounded-md bg-vs-blue text-[hsl(220_60%_9%)] flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed hover:bg-vs-blue-light"
             aria-label="Send"
             data-testid="incall-chat-send"
           >
