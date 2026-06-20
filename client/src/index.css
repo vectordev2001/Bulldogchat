@@ -2,81 +2,84 @@
 @tailwind components;
 @tailwind utilities;
 
-/* BULLDOG CHAT — Bulldog Suite palette
-   Navy + Red + Blue + Tan
-   Dark mode is default and primary.
-   Source: vectorservicesus.com brand colors. */
+/* BULLDOG CHAT — refreshed palette
+   Teal + off-white, light mode is default and primary; dark is opt-in.
+   The legacy --vs-* variable NAMES are preserved (lots of code references
+   them) but their VALUES are remapped onto the teal palette so any
+   not-yet-swept hard-coded usage degrades gracefully into the new look. */
 
 :root {
-  /* Light variant — fallback only */
+  /* Light is now the primary theme. */
   --button-outline: rgba(0, 0, 0, 0.1);
   --badge-outline: rgba(0, 0, 0, 0.05);
   --opaque-button-border-intensity: -8;
   --elevate-1: rgba(0, 0, 0, 0.04);
   --elevate-2: rgba(0, 0, 0, 0.08);
-  --background: 232 30% 96%;
-  --foreground: 232 50% 14%;
-  --border: 232 20% 86%;
+  --background: 60 20% 98%;          /* warm off-white */
+  --foreground: 215 28% 17%;
+  --border: 215 16% 88%;
   --card: 0 0% 100%;
-  --card-foreground: 232 50% 14%;
-  --card-border: 232 20% 88%;
-  --sidebar: 232 50% 20%;
-  --sidebar-foreground: 0 0% 92%;
-  --sidebar-border: 232 60% 12%;
-  --sidebar-primary: 2 70% 55%;
+  --card-foreground: 215 28% 17%;
+  --card-border: 215 16% 88%;
+  --sidebar: 60 14% 96%;
+  --sidebar-foreground: 215 28% 17%;
+  --sidebar-border: 215 16% 88%;
+  --sidebar-primary: 174 76% 26%;    /* teal CTA */
   --sidebar-primary-foreground: 0 0% 100%;
-  --sidebar-accent: 232 45% 28%;
-  --sidebar-accent-foreground: 0 0% 96%;
-  --sidebar-ring: 2 70% 55%;
+  --sidebar-accent: 174 30% 92%;
+  --sidebar-accent-foreground: 174 76% 20%;
+  --sidebar-ring: 174 76% 26%;
   --popover: 0 0% 100%;
-  --popover-foreground: 232 50% 14%;
-  --popover-border: 232 20% 88%;
-  --primary: 2 70% 55%;
+  --popover-foreground: 215 28% 17%;
+  --popover-border: 215 16% 88%;
+  --primary: 174 76% 26%;            /* teal */
   --primary-foreground: 0 0% 100%;
-  --secondary: 232 20% 90%;
-  --secondary-foreground: 232 50% 14%;
-  --muted: 232 15% 92%;
-  --muted-foreground: 232 15% 40%;
-  --accent: 218 100% 68%;
-  --accent-foreground: 232 50% 14%;
-  --destructive: 2 70% 55%;
+  --secondary: 60 14% 94%;
+  --secondary-foreground: 215 28% 17%;
+  --muted: 60 14% 94%;
+  --muted-foreground: 215 14% 42%;
+  --accent: 174 30% 92%;
+  --accent-foreground: 174 76% 20%;
+  --destructive: 0 72% 47%;
   --destructive-foreground: 0 0% 98%;
-  --input: 232 15% 80%;
-  --ring: 2 70% 55%;
-  --chart-1: 2 70% 55%;
-  --chart-2: 218 100% 68%;
-  --chart-3: 207 63% 36%;
-  --chart-4: 204 70% 70%;
+  --input: 215 16% 84%;
+  --ring: 174 76% 26%;
+  --chart-1: 174 76% 26%;
+  --chart-2: 199 89% 48%;
+  --chart-3: 142 71% 45%;
+  --chart-4: 38 92% 50%;
   --chart-5: 28 35% 58%;
-  --font-sans: "Satoshi", "Inter", -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-display: "DM Sans", "Inter", sans-serif;
   --font-serif: Georgia, serif;
-  --font-mono: "JetBrains Mono", "Menlo", monospace;
-  --radius: 0.5rem;
-  --shadow-sm: 0 1px 2px hsl(232 50% 8% / 0.2);
-  --shadow: 0 2px 4px hsl(232 50% 8% / 0.25);
-  --shadow-md: 0 4px 8px hsl(232 50% 8% / 0.3);
-  --shadow-lg: 0 10px 24px hsl(232 50% 8% / 0.35);
-  --shadow-xl: 0 20px 40px hsl(232 50% 8% / 0.4);
-  --shadow-2xl: 0 30px 60px hsl(232 50% 8% / 0.5);
+  --font-mono: "Geist Mono", "IBM Plex Mono", "Menlo", monospace;
+  --radius: 0.625rem;
+  --shadow-sm: 0 1px 2px hsl(215 28% 17% / 0.06);
+  --shadow: 0 2px 4px hsl(215 28% 17% / 0.08);
+  --shadow-md: 0 4px 8px hsl(215 28% 17% / 0.1);
+  --shadow-lg: 0 10px 24px hsl(215 28% 17% / 0.12);
+  --shadow-xl: 0 20px 40px hsl(215 28% 17% / 0.16);
+  --shadow-2xl: 0 30px 60px hsl(215 28% 17% / 0.2);
   --tracking-normal: 0em;
   --spacing: 0.25rem;
 
-  /* Vector signature colors — pulled from vectorservicesus.com */
-  --vs-navy: 232 50% 20%;          /* #191E4A */
-  --vs-navy-deep: 232 60% 12%;     /* #0F1230 darker */
-  --vs-navy-panel: 232 45% 27%;    /* #252A5C lighter panel */
-  --vs-navy-soft: 232 40% 22%;
-  --vs-red: 2 70% 55%;             /* #DD403D */
-  --vs-red-bright: 2 80% 62%;
-  --vs-blue: 218 100% 68%;         /* #5E97FF */
-  --vs-blue-deep: 207 63% 36%;     /* #226294 */
-  --vs-blue-light: 204 70% 70%;    /* #7FBDE8 */
-  --vs-tan: 28 35% 58%;            /* #BB936C */
-  --vs-text: 0 0% 100%;
-  --vs-text-muted: 0 0% 89%;
-  --vs-text-dim: 0 0% 56%;
-  --vs-green: 145 60% 48%;         /* status only */
-  --vs-amber: 35 100% 60%;         /* status idle */
+  /* Legacy Vector brand vars — names kept, values remapped to teal so
+     unswept hard-coded usages still read on-brand. */
+  --vs-navy: 174 76% 20%;          /* was navy → deep teal */
+  --vs-navy-deep: 174 76% 14%;
+  --vs-navy-panel: 174 30% 92%;
+  --vs-navy-soft: 174 24% 88%;
+  --vs-red: 174 76% 26%;           /* was red → teal (primary accent) */
+  --vs-red-bright: 174 70% 34%;
+  --vs-blue: 199 89% 48%;          /* secondary accent → sky */
+  --vs-blue-deep: 199 89% 36%;
+  --vs-blue-light: 199 84% 58%;
+  --vs-tan: 28 35% 58%;
+  --vs-text: 215 28% 17%;
+  --vs-text-muted: 215 14% 42%;
+  --vs-text-dim: 215 12% 55%;
+  --vs-green: 142 71% 40%;          /* status only */
+  --vs-amber: 38 92% 50%;           /* status idle */
 
   --sidebar-primary-border: hsl(var(--sidebar-primary));
   --sidebar-accent-border: hsl(var(--sidebar-accent));
@@ -94,46 +97,45 @@
   --elevate-1: rgba(255, 255, 255, 0.04);
   --elevate-2: rgba(255, 255, 255, 0.08);
 
-  /* Surfaces — layered navy */
-  --background: 232 60% 9%;          /* deep navy app background */
+  /* Surfaces — near-black slate */
+  --background: 220 16% 7%;
   --foreground: 0 0% 96%;
-  --border: 232 40% 25%;
-  --card: 232 50% 16%;
+  --border: 220 12% 22%;
+  --card: 220 14% 11%;
   --card-foreground: 0 0% 96%;
-  --card-border: 232 40% 25%;
+  --card-border: 220 12% 22%;
 
-  /* Sidebar = primary navy */
-  --sidebar: 232 50% 20%;            /* #191E4A */
+  --sidebar: 220 14% 10%;
   --sidebar-foreground: 0 0% 92%;
-  --sidebar-border: 232 65% 10%;
-  --sidebar-primary: 2 70% 55%;      /* red CTA on sidebar */
-  --sidebar-primary-foreground: 0 0% 100%;
-  --sidebar-accent: 232 45% 30%;
+  --sidebar-border: 220 14% 16%;
+  --sidebar-primary: 173 65% 42%;    /* brighter teal on dark */
+  --sidebar-primary-foreground: 220 16% 7%;
+  --sidebar-accent: 220 14% 16%;
   --sidebar-accent-foreground: 0 0% 96%;
-  --sidebar-ring: 2 70% 55%;
+  --sidebar-ring: 173 65% 42%;
 
-  --popover: 232 55% 14%;
+  --popover: 220 14% 11%;
   --popover-foreground: 0 0% 96%;
-  --popover-border: 232 40% 25%;
+  --popover-border: 220 12% 22%;
 
-  --primary: 2 70% 55%;              /* red */
-  --primary-foreground: 0 0% 100%;
-  --secondary: 232 45% 20%;
+  --primary: 173 65% 42%;            /* teal */
+  --primary-foreground: 220 16% 7%;
+  --secondary: 220 14% 16%;
   --secondary-foreground: 0 0% 96%;
-  --muted: 232 45% 18%;
+  --muted: 220 14% 16%;
   --muted-foreground: 0 0% 70%;
-  --accent: 218 100% 68%;            /* secondary blue */
-  --accent-foreground: 232 60% 9%;
-  --destructive: 2 70% 55%;
+  --accent: 220 14% 18%;
+  --accent-foreground: 173 65% 60%;
+  --destructive: 0 72% 51%;
   --destructive-foreground: 0 0% 100%;
-  --input: 232 40% 26%;
-  --ring: 2 70% 55%;
+  --input: 220 12% 24%;
+  --ring: 173 65% 42%;
 
-  --chart-1: 2 70% 55%;
-  --chart-2: 218 100% 68%;
-  --chart-3: 207 63% 36%;
-  --chart-4: 204 70% 70%;
-  --chart-5: 28 35% 58%;
+  --chart-1: 173 65% 42%;
+  --chart-2: 199 89% 58%;
+  --chart-3: 142 71% 50%;
+  --chart-4: 38 92% 56%;
+  --chart-5: 28 35% 62%;
 
   --shadow-sm: 0 1px 2px hsl(0 0% 0% / 0.3);
   --shadow: 0 2px 6px hsl(0 0% 0% / 0.4);
@@ -141,6 +143,22 @@
   --shadow-lg: 0 10px 24px hsl(0 0% 0% / 0.6);
   --shadow-xl: 0 20px 40px hsl(0 0% 0% / 0.7);
   --shadow-2xl: 0 30px 60px hsl(0 0% 0% / 0.8);
+
+  /* Legacy --vs-* remapped for dark. */
+  --vs-navy: 173 65% 32%;
+  --vs-navy-deep: 173 65% 22%;
+  --vs-navy-panel: 220 14% 16%;
+  --vs-navy-soft: 220 14% 20%;
+  --vs-red: 173 65% 42%;
+  --vs-red-bright: 173 60% 52%;
+  --vs-blue: 199 89% 58%;
+  --vs-blue-deep: 199 89% 44%;
+  --vs-blue-light: 199 84% 66%;
+  --vs-text: 0 0% 96%;
+  --vs-text-muted: 0 0% 75%;
+  --vs-text-dim: 0 0% 58%;
+  --vs-green: 142 71% 50%;
+  --vs-amber: 38 92% 56%;
 
   --sidebar-primary-border: hsl(var(--sidebar-primary));
   --sidebar-accent-border: hsl(var(--sidebar-accent));
@@ -178,13 +196,13 @@
   #root { overflow: hidden; }
   ::-webkit-scrollbar { width: 8px; height: 8px; }
   ::-webkit-scrollbar-track { background: transparent; }
-  ::-webkit-scrollbar-thumb { background: hsl(232 40% 25%); border-radius: 4px; }
-  ::-webkit-scrollbar-thumb:hover { background: hsl(232 40% 32%); }
+  ::-webkit-scrollbar-thumb { background: hsl(var(--border)); border-radius: 4px; }
+  ::-webkit-scrollbar-thumb:hover { background: hsl(var(--muted-foreground) / 0.5); }
 }
 
 @layer utilities {
   .font-display {
-    font-family: var(--font-sans);
+    font-family: var(--font-display);
     font-weight: 700;
     letter-spacing: -0.01em;
   }
@@ -270,7 +288,7 @@
   /* Atmospheric grain on chat surface */
   .vs-grain {
     background-image:
-      radial-gradient(circle at 1px 1px, hsl(232 30% 25% / 0.4) 1px, transparent 0);
+      radial-gradient(circle at 1px 1px, hsl(var(--foreground) / 0.05) 1px, transparent 0);
     background-size: 24px 24px;
   }
 
