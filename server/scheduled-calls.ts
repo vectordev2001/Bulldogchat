@@ -23,6 +23,7 @@ import { db, rawDb } from "./db";
 import { storage } from "./storage";
 import { signCallJoinToken, sendSms, buildScheduledCallSmsBody, buildReminderSmsBody, generateRsvpCode, buildIcsForScheduledCall, parseRsvpSms, smsAvailable, verifyTwilioSignature } from "./sms";
 import { mintShortLink, resolveShortLink } from "./short-links";
+import { createMeeting as createMeetingRow, linkExistingCallToMeeting } from "./storage/meetings";
 import { checkSmsConsent } from "./auth-consent";
 import { emitMessageNew, emitMessageDelete } from "./events";
 import { requireAuth, type AuthedRequest } from "./auth";
@@ -128,7 +129,30 @@ function createScheduledCallRow(input: CreateInput): ScheduledCall {
   });
   const id = tx();
   const row = rawDb.prepare("SELECT * FROM scheduled_calls WHERE id = ?").get(id);
-  return rowToScheduledCall(row);
+  const call = rowToScheduledCall(row);
+
+  // Unified meetings model — mirror the scheduled call into a meeting using the
+  // SAME pre-allocated room name, and link the scheduled_calls row. The
+  // scheduled_call row keeps owning RSVP/reminder state; the meeting is the
+  // durable identity (stable code + room). Best-effort: a failure here must not
+  // block scheduling the call.
+  try {
+    const meeting = createMeetingRow({
+      orgId: call.orgId,
+      kind: "scheduled",
+      hostUserId: call.organizerId,
+      channelId: call.channelId ?? null,
+      livekitRoomName: call.roomName,
+      title: call.title,
+      status: "scheduled",
+      scheduledStartAt: call.startAt,
+    });
+    linkExistingCallToMeeting("scheduled_calls", call.id, meeting.id);
+  } catch (e) {
+    console.warn(`[meetings] link scheduled_call#${call.id} failed:`, (e as { message?: string })?.message ?? e);
+  }
+
+  return call;
 }
 
 function createInvitees(call: ScheduledCall, input: CreateInput): ScheduledCallInvitee[] {

@@ -32,6 +32,8 @@ function escapeHtml(s: string): string {
     .replace(/"/g, "&quot;");
 }
 import { registerScheduledCallRoutes, startReminderLoop } from "./scheduled-calls";
+import { registerMeetingRoutes } from "./routes-meetings";
+import { createMeeting as createMeetingRow, linkExistingCallToMeeting, type CreateMeetingInput } from "./storage/meetings";
 import { syncDeactivatedFromAuth } from "./users-sync";
 import {
   startClerk,
@@ -58,6 +60,29 @@ function authorFor(userId: number) {
   if (!u) return { authorName: "Unknown", authorHue: 220, authorRole: "field", authorInitials: "?" };
   const initials = u.name.split(/\s+/).slice(0, 2).map(s => s[0] ?? "").join("").toUpperCase();
   return { authorName: u.name, authorHue: u.hue, authorRole: u.role, authorInitials: initials };
+}
+
+// Unified meetings model — create a meeting row for an already-allocated legacy
+// call/room and link the legacy row to it. Best-effort and synchronous-safe:
+// any failure is logged and swallowed so the underlying call path is unaffected.
+// Returns the new meeting id (or null on failure) for callers that want to
+// surface the join code.
+type LinkableCallTable = "direct_calls" | "scheduled_calls" | "livekit_rooms";
+function linkCallToMeeting(
+  table: LinkableCallTable,
+  rowId: number,
+  input: CreateMeetingInput,
+): string | null {
+  try {
+    const meeting = createMeetingRow(input);
+    // rowId < 0 means there is no legacy row to back-link (e.g. group calls
+    // don't pre-create a livekit_rooms row); just mint the meeting.
+    if (rowId >= 0) linkExistingCallToMeeting(table, rowId, meeting.id);
+    return meeting.id;
+  } catch (e) {
+    console.warn(`[meetings] linkCallToMeeting(${table}#${rowId}) failed:`, (e as { message?: string })?.message ?? e);
+    return null;
+  }
 }
 
 function buildWireMessage(messageId: number): WireMessage | null {
@@ -130,6 +155,21 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
   registerWorkObjectRoutes(app);
   registerIntegrationRoutes(app);
   registerScheduledCallRoutes(app);
+  registerMeetingRoutes(app);
+
+  // Clean public meeting URLs → SPA hash routes. The app uses wouter's
+  // useHashLocation, so a bare https://chat.bulldogops.com/m/<code> would boot
+  // the SPA at an empty hash and miss the route. Rewrite the three public
+  // meeting paths to their /#/ equivalents. These are GET navigations only and
+  // sit before the SPA catch-all; /api routes are untouched.
+  const cleanMeetingUrl = /^\/(m|r|end)\/([^/]+)\/?$/;
+  app.get(cleanMeetingUrl, (req, res) => {
+    const m = req.path.match(cleanMeetingUrl);
+    if (!m) return res.status(404).end();
+    const [, seg, code] = m;
+    res.redirect(302, `/#/${seg}/${encodeURIComponent(code)}`);
+  });
+
   // Kick off the in-process reminder loop. Cheap (60s tick), idempotent.
   startReminderLoop();
 
@@ -1780,6 +1820,15 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     // by updating status (already done) and patching room_name here.
     (await import("./db")).rawDb.prepare(`UPDATE direct_calls SET room_name = ? WHERE id = ?`).run(roomName, row.id);
 
+    // Unified meetings model — mirror this 1:1 call into a meeting and link the
+    // legacy row. The direct_call row keeps owning the ringing/missed lifecycle;
+    // the meeting is the durable identity (stable code + LiveKit room). Best-
+    // effort: a failure here must not break the call itself.
+    linkCallToMeeting("direct_calls", row.id, {
+      orgId: u.orgId, kind: "direct", hostUserId: u.id, livekitRoomName: roomName,
+      title: `Call with ${callee.name}`, status: "active", startedAt: new Date(),
+    });
+
     const token = await generateLivekitToken({
       userId: u.id, userName: u.name, roomName, canPublish: true,
     });
@@ -1921,6 +1970,22 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     // One shared LiveKit room for the whole group call. We tie it to the
     // channel id + epoch so back-to-back group calls don't collide.
     const groupRoomName = `group-channel-${channelId}-${Date.now()}`;
+
+    // Unified meetings model — one meeting for the whole group call, bound to
+    // the channel. The per-invitee direct_call rows below carry the ringing
+    // state; this meeting is the durable identity. Best-effort.
+    // rowId -1: group calls have no pre-created livekit_rooms row, so the
+    // meeting just owns the room name (no back-link needed).
+    linkCallToMeeting("livekit_rooms", -1, {
+      orgId: u.orgId,
+      kind: "channel_huddle",
+      hostUserId: u.id,
+      channelId,
+      livekitRoomName: groupRoomName,
+      title: access.channel?.name ? `#${access.channel.name} call` : "Channel call",
+      status: "active",
+      startedAt: new Date(),
+    });
 
     // Validate invitees and filter to same-org, non-deactivated users.
     // It's OK if this list is empty as long as phoneNumbers is non-empty
