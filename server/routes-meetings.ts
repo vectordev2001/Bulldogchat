@@ -76,7 +76,7 @@ const joinBodySchema = z.object({
 export function registerMeetingRoutes(app: Express) {
   // ── CREATE a meeting (authed) ──
   app.post("/api/meetings", requireAuth, (req: Request, res: Response) => {
-    const u = (req as AuthedRequest).user;
+    const u = (req as unknown as AuthedRequest).user;
     const parsed = createBodySchema.safeParse(req.body ?? {});
     if (!parsed.success) {
       return res.status(400).json({ message: "Invalid meeting", issues: parsed.error.flatten() });
@@ -144,7 +144,7 @@ export function registerMeetingRoutes(app: Express) {
     if (!parsed.success) {
       return res.status(400).json({ message: "Invalid join request" });
     }
-    const authed = (req as Partial<AuthedRequest>).user;
+    const authed = (req as unknown as Partial<AuthedRequest>).user;
 
     let identity: string;
     let name: string;
@@ -217,7 +217,7 @@ export function registerMeetingRoutes(app: Express) {
 
   // ── PATCH a meeting (authed host) ──
   app.patch("/api/meetings/:id", requireAuth, (req: Request, res: Response) => {
-    const u = (req as AuthedRequest).user;
+    const u = (req as unknown as AuthedRequest).user;
     const meeting = getMeetingById(String(req.params.id));
     if (!meeting) return res.status(404).json({ message: "Meeting not found" });
     if (meeting.hostUserId !== u.id && u.role !== "admin") {
@@ -234,7 +234,7 @@ export function registerMeetingRoutes(app: Express) {
 
   // ── END a meeting (authed host) ──
   app.post("/api/meetings/:id/end", requireAuth, async (req: Request, res: Response) => {
-    const u = (req as AuthedRequest).user;
+    const u = (req as unknown as AuthedRequest).user;
     const meeting = getMeetingById(String(req.params.id));
     if (!meeting) return res.status(404).json({ message: "Meeting not found" });
     if (meeting.hostUserId !== u.id && u.role !== "admin") {
@@ -252,7 +252,7 @@ export function registerMeetingRoutes(app: Express) {
 
   // ── PARTICIPANTS (authed) ──
   app.get("/api/meetings/:id/participants", requireAuth, (req: Request, res: Response) => {
-    const u = (req as AuthedRequest).user;
+    const u = (req as unknown as AuthedRequest).user;
     const meeting = getMeetingById(String(req.params.id));
     if (!meeting) return res.status(404).json({ message: "Meeting not found" });
     if (meeting.orgId !== u.orgId) {
