@@ -1,6 +1,119 @@
 import { SiZoom, SiGooglemeet } from "react-icons/si";
 import type { Origin } from "@/lib/meeting";
 
+// ── App-identity logo ──────────────────────────────────────────────────────
+// Shared Bulldog Suite mark: three stars in a row above three chevron stripes,
+// approximating the Vector logo (vectorservicesus.com). Each app highlights ONE
+// star and ONE chevron in an app-specific color; every other stroke uses the
+// muted neutral. Self-contained inline SVG — scales cleanly 28→32px.
+
+type AppId = "chat" | "contracts" | "ops";
+
+const NEUTRAL = "hsl(232 30% 60%)"; // muted navy — everything not highlighted
+
+// Per-app highlight: which star index (0=left,1=mid,2=right) and which chevron
+// index (0=top,1=mid,2=bottom) get the accent, plus the accent color. Chat's
+// highlight is white, which would vanish on the white header, so it also carries
+// a navy outline to stay readable.
+const HIGHLIGHT: Record<AppId, { star: number; chevron: number; color: string; outline?: string }> = {
+  chat: { star: 1, chevron: 1, color: "#FFFFFF", outline: "hsl(232 50% 20%)" },
+  contracts: { star: 0, chevron: 0, color: "#BB936C" },
+  ops: { star: 2, chevron: 2, color: "#DD403D" },
+};
+
+function starPoints(cx: number, cy: number, r: number): string {
+  const pts: string[] = [];
+  for (let i = 0; i < 10; i++) {
+    const angle = (i * Math.PI) / 5 - Math.PI / 2;
+    const radius = i % 2 === 0 ? r : r * 0.42;
+    pts.push(`${(cx + Math.cos(angle) * radius).toFixed(2)},${(cy + Math.sin(angle) * radius).toFixed(2)}`);
+  }
+  return pts.join(" ");
+}
+
+/**
+ * <BulldogLogo app="chat" /> — app-identity mark for the unified header.
+ * `size` is the rendered height in px; the viewBox keeps a 2:1 aspect ratio so
+ * the row of stars + chevrons stays proportional at any scale.
+ */
+export function BulldogLogo({
+  app,
+  size = 32,
+  className = "",
+}: {
+  app: AppId;
+  size?: number;
+  className?: string;
+}) {
+  const hl = HIGHLIGHT[app];
+  // viewBox 64×32: stars centered around y=9, chevrons nested below.
+  const starCx = [16, 32, 48];
+  const starR = 5;
+  // Three nested chevrons (top widest), drawn as open V strokes.
+  const chevrons = [
+    "M10 30 L32 14 L54 30", // top
+    "M16 30 L32 19 L48 30", // mid
+    "M22 30 L32 24 L42 30", // bottom
+  ];
+  const baseStroke = 2.4;
+
+  return (
+    <svg
+      width={size * 2}
+      height={size}
+      viewBox="0 0 64 32"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      role="img"
+      aria-label={`Bulldog ${app.charAt(0).toUpperCase()}${app.slice(1)}`}
+      className={className}
+    >
+      {/* Stars */}
+      {starCx.map((cx, i) => {
+        const on = i === hl.star;
+        return (
+          <polygon
+            key={`star-${i}`}
+            points={starPoints(cx, 9, starR)}
+            fill={on ? hl.color : NEUTRAL}
+            stroke={on && hl.outline ? hl.outline : "none"}
+            strokeWidth={on && hl.outline ? 1 : 0}
+            strokeLinejoin="round"
+          />
+        );
+      })}
+
+      {/* Chevron stripes. The highlighted stripe gets a 1.5× stroke; when its
+          color is white (Chat) we first lay down a slightly wider navy stroke so
+          the white reads as a distinct highlight on the white header. */}
+      {chevrons.map((d, i) => {
+        const on = i === hl.chevron;
+        const w = on ? baseStroke * 1.5 : baseStroke;
+        return (
+          <g key={`chev-${i}`}>
+            {on && hl.outline && (
+              <path
+                d={d}
+                stroke={hl.outline}
+                strokeWidth={w + 2}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            )}
+            <path
+              d={d}
+              stroke={on ? hl.color : NEUTRAL}
+              strokeWidth={w}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
 // react-icons/si has no Microsoft Teams glyph in this version, so we draw a
 // small honest Teams-colored mark inline.
 export function TeamsLogo({ size = 18 }: { size?: number }) {
