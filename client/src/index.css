@@ -73,8 +73,8 @@
   --vs-navy-deep: 232 55% 14%;
   --vs-navy-panel: 207 60% 95%;
   --vs-navy-soft: 210 20% 96%;
-  --vs-red: 207 63% 36%;           /* primary accent → Vector deep blue */
-  --vs-red-bright: 207 63% 30%;    /* accent hover */
+  --vs-red: 2 70% 55%;             /* Vector red #DD403D — destructive states */
+  --vs-red-bright: 2 70% 48%;      /* darker red for hover */
   --vs-accent: 207 63% 36%;        /* Vector deep blue #226294 */
   --vs-accent-hover: 207 63% 30%;
   --vs-accent-soft: 207 60% 95%;
@@ -161,8 +161,8 @@
   --vs-navy-deep: 232 50% 14%;
   --vs-navy-panel: 232 45% 16%;
   --vs-navy-soft: 232 40% 20%;
-  --vs-red: 218 100% 68%;          /* primary accent → Vector blue */
-  --vs-red-bright: 218 100% 60%;
+  --vs-red: 2 70% 58%;             /* Vector red — destructive states (dark) */
+  --vs-red-bright: 2 70% 50%;
   --vs-accent: 218 100% 68%;
   --vs-accent-hover: 218 100% 60%;
   --vs-accent-soft: 232 45% 18%;

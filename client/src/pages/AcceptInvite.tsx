@@ -88,7 +88,7 @@ export default function AcceptInvite() {
           <button
             type="submit"
             disabled={submitting}
-            className="w-full h-11 rounded-lg bg-vs-red hover:bg-[hsl(var(--vs-accent-hover))] text-white font-semibold flex items-center justify-center gap-2 transition-colors disabled:opacity-50"
+            className="w-full h-11 rounded-lg bg-vs-red hover:bg-[hsl(var(--vs-red-bright))] text-white font-semibold flex items-center justify-center gap-2 transition-colors disabled:opacity-50"
             data-testid="button-submit-invite"
           >
             {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <>Accept invite <ArrowRight className="w-4 h-4" /></>}

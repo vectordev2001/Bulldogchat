@@ -74,7 +74,7 @@ export default function Login() {
         <button
           type="submit"
           disabled={loading || !email || !password}
-          className="w-full h-11 rounded-lg bg-vs-red hover:bg-[hsl(var(--vs-accent-hover))] text-white font-semibold flex items-center justify-center gap-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          className="w-full h-11 rounded-lg bg-vs-red hover:bg-[hsl(var(--vs-red-bright))] text-white font-semibold flex items-center justify-center gap-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           data-testid="button-submit-login"
         >
           {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <>Sign in <ArrowRight className="w-4 h-4" /></>}

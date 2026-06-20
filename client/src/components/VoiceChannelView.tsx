@@ -695,7 +695,7 @@ export function VoiceChannelView(props: Props) {
           }}
           title="Leave call"
           data-testid="button-call-leave"
-          className="h-11 px-5 rounded-full bg-vs-red hover:bg-[hsl(var(--vs-accent-hover))] text-white flex items-center gap-2 transition-colors shadow-lg shadow-red-900/30"
+          className="h-11 px-5 rounded-full bg-vs-red hover:bg-[hsl(var(--vs-red-bright))] text-white flex items-center gap-2 transition-colors shadow-lg shadow-red-900/30"
         >
           <PhoneOff className="w-4 h-4" />
           <span className="text-sm font-semibold">Leave</span>

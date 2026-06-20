@@ -94,7 +94,7 @@ function IncomingCallModal() {
           <button
             type="button"
             onClick={() => { void declineIncoming(); }}
-            className="h-14 w-14 rounded-full bg-vs-red hover:bg-[hsl(var(--vs-accent-hover))] text-white flex items-center justify-center shadow-lg transition-colors"
+            className="h-14 w-14 rounded-full bg-vs-red hover:bg-[hsl(var(--vs-red-bright))] text-white flex items-center justify-center shadow-lg transition-colors"
             title="Decline"
             data-testid="button-decline-call"
           >
@@ -137,7 +137,7 @@ function OutgoingCallModal() {
         <button
           type="button"
           onClick={() => { void cancelOutgoing(); }}
-          className="h-12 px-6 rounded-full bg-vs-red hover:bg-[hsl(var(--vs-accent-hover))] text-white flex items-center gap-2 mx-auto shadow-lg transition-colors"
+          className="h-12 px-6 rounded-full bg-vs-red hover:bg-[hsl(var(--vs-red-bright))] text-white flex items-center gap-2 mx-auto shadow-lg transition-colors"
           data-testid="button-cancel-call"
         >
           <PhoneOff className="w-4 h-4" />
@@ -506,7 +506,7 @@ function ActiveCallOverlay() {
         <button
           type="button"
           onClick={endCallWithClerkStop}
-          className="ml-1 sm:ml-2 shrink-0 flex flex-col items-center gap-0.5 px-2 sm:px-3 py-1.5 rounded-md bg-vs-red hover:bg-[hsl(var(--vs-accent-hover))] text-white transition-colors min-w-[44px]"
+          className="ml-1 sm:ml-2 shrink-0 flex flex-col items-center gap-0.5 px-2 sm:px-3 py-1.5 rounded-md bg-vs-red hover:bg-[hsl(var(--vs-red-bright))] text-white transition-colors min-w-[44px]"
           data-testid="button-end-call"
           title="Leave call"
         >
@@ -986,7 +986,7 @@ function InCallAddDialog({ onClose }: { onClose: () => void }) {
               type="button"
               onClick={submit}
               disabled={submitting || totalTargets === 0}
-              className="px-4 py-1.5 rounded-md bg-vs-red hover:bg-[hsl(var(--vs-accent-hover))] text-white text-sm font-semibold disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
+              className="px-4 py-1.5 rounded-md bg-vs-red hover:bg-[hsl(var(--vs-red-bright))] text-white text-sm font-semibold disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
               data-testid="button-in-call-add-submit"
             >
               {submitting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}

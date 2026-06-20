@@ -782,7 +782,7 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers, me
                 type="button"
                 onClick={submit}
                 disabled={(!draft.trim() && pendingAtts.length === 0) || sendMutation.isPending}
-                className="ml-1 w-8 h-8 rounded-md bg-vs-red text-white flex items-center justify-center hover:bg-[hsl(var(--vs-accent-hover))] transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                className="ml-1 w-8 h-8 rounded-md bg-vs-red text-white flex items-center justify-center hover:bg-[hsl(var(--vs-red-bright))] transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                 title="Send (Enter)"
                 data-testid="button-send"
               >
