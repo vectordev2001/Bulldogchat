@@ -228,15 +228,25 @@ export function NotificationsButton({ variant = "header" }: NotificationsButtonP
 
   const isHeader = variant === "header";
 
-  // Base box + neutral (idle) styling differs per context. The "subscribed"
-  // and "needs-install" accent treatments are shared so the bell reads the
-  // same regardless of where it's mounted.
+  // Unified notification treatment (spec §2): outline icon, no filled
+  // background. Idle = muted stroke. "Attention" states (push needs the user's
+  // action, or an error/blocked condition) read as the accent (deep blue)
+  // stroke plus a small red dot at the top-right — NOT a gold/colored filled
+  // rounded rectangle. The dot is the only red element.
+  const needsAttention = state === "needs-install" || state === "denied";
+
+  // 40×40 header button per spec; rail keeps its larger Discord-style box.
   const baseClass = isHeader
-    ? "h-9 w-9 rounded-md flex items-center justify-center transition-colors"
-    : "w-12 h-12 rounded-2xl flex items-center justify-center transition-all";
-  const idleClass = isHeader
-    ? "hover:bg-accent text-foreground/70 hover:text-foreground"
-    : "hover:bg-[hsl(220_45%_27%)] text-[hsl(0_0%_70%)]";
+    ? "relative h-10 w-10 rounded-md flex items-center justify-center transition-colors hover:bg-[hsl(var(--vs-navy-soft))]"
+    : "relative w-12 h-12 rounded-2xl flex items-center justify-center transition-all hover:bg-[hsl(220_45%_27%)]";
+
+  // Stroke color: idle muted, attention = accent (deep blue), subscribed reads
+  // as success green stroke (no fill).
+  const strokeClass = needsAttention
+    ? "text-[hsl(var(--vs-accent))]"
+    : state === "subscribed"
+      ? "text-vs-green"
+      : "text-[hsl(var(--vs-text-muted))] hover:text-[hsl(var(--vs-text))]";
 
   return (
     <Tooltip>
@@ -250,18 +260,17 @@ export function NotificationsButton({ variant = "header" }: NotificationsButtonP
             state === "unsupported" ||
             state === "subscribed"
           }
-          className={[
-            baseClass,
-            state === "subscribed"
-              ? "bg-vs-green/15 text-vs-green ring-1 ring-vs-green/40"
-              : state === "needs-install"
-                ? "bg-amber-500/15 text-amber-400 ring-1 ring-amber-500/40 hover:bg-amber-500/25"
-                : idleClass,
-          ].join(" ")}
+          className={[baseClass, strokeClass].join(" ")}
           data-testid="button-notifications"
           aria-label={title}
         >
           {icon}
+          {needsAttention && (
+            <span
+              className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-[hsl(var(--vs-danger))] ring-2 ring-white"
+              aria-hidden="true"
+            />
+          )}
         </button>
       </TooltipTrigger>
       <TooltipContent

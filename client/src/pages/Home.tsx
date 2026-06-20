@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Menu, X, Loader2 } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "@/lib/auth";
 import { queryClient, apiRequest } from "@/lib/queryClient";
@@ -13,8 +13,7 @@ import { MemberList } from "@/components/MemberList";
 import { WorkObjectPanel } from "@/components/WorkObjectPanel";
 import { WorkObjectsListDialog } from "@/components/WorkObjectsListDialog";
 import { ScheduleCallDialog, MeetingsListDialog } from "@/components/ScheduleCallDialog";
-import { NotificationsButton } from "@/components/NotificationsButton";
-import { AppSwitcher } from "@/lib/AppSwitcher";
+import { UnifiedHeader } from "@/components/UnifiedHeader";
 import { VectorLogo } from "@/components/VectorLogo";
 import type { ApiProject, ApiChannel, ApiMessage, ApiUser } from "@/types/api";
 
@@ -426,37 +425,20 @@ export default function Home() {
           column taller than the viewport. On iPhone PWAs that hides the
           shrink-0 bottom call-controls bar below the fold. */}
       <main className="flex-1 min-w-0 min-h-0 flex flex-col">
-        {/* Mobile top bar */}
-        <div className="md:hidden h-12 shrink-0 flex items-center justify-between px-3 bg-secondary text-[hsl(var(--vs-text))] border-b border-border sticky top-0 z-30">
-          <button
-            type="button"
-            className="p-2 rounded hover-elevate"
-            onClick={() => setMobileNavOpen((v) => !v)}
-            data-testid="button-mobile-nav"
-            aria-label="Toggle navigation"
-          >
-            {mobileNavOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
-          </button>
-          <div className="flex items-center gap-2">
-            <VectorLogo size={22} />
-            <span className="text-sm font-display tracking-wide">Bulldog Chat</span>
-          </div>
-          {/* Suite chrome, top-right: bell left of the AppSwitcher. Kept in the
-              mobile bar so the bell stays reachable on phones (<md), where the
-              desktop header is hidden. */}
-          <div className="flex items-center gap-1">
-            <NotificationsButton variant="header" />
-            <AppSwitcher currentApp="chat" placement="bottom-end" />
-          </div>
-        </div>
-
-        {/* Desktop top header (≥md): slim suite chrome bar. Notification bell
-            sits to the LEFT of the AppSwitcher, matching the unified position
-            across Chat / Ops / Contracts. */}
-        <div className="hidden md:flex h-12 shrink-0 items-center justify-end gap-1 px-3 bg-card border-b sticky top-0 z-30">
-          <NotificationsButton variant="header" />
-          <AppSwitcher currentApp="chat" placement="bottom-end" />
-        </div>
+        {/* Unified Bulldog Suite top header — identical layout across
+            Chat / Contracts / Ops. Per-app identity comes only from the
+            BulldogLogo. Light theme; sign-out lives in the avatar menu. */}
+        <UnifiedHeader
+          navOpen={mobileNavOpen}
+          onToggleNav={() => setMobileNavOpen((v) => !v)}
+          onLogoClick={() => {
+            const first = projectsQ.data?.[0];
+            if (first) {
+              setActiveProjectId(first.id);
+              setActiveDmId(null);
+            }
+          }}
+        />
 
         {/* Channel content */}
         {activeDmId ? (
