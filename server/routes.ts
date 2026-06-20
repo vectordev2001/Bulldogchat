@@ -33,7 +33,7 @@ function escapeHtml(s: string): string {
 }
 import { registerScheduledCallRoutes, startReminderLoop } from "./scheduled-calls";
 import { registerMeetingRoutes } from "./routes-meetings";
-import { createMeeting as createMeetingRow, linkExistingCallToMeeting, type CreateMeetingInput } from "./storage/meetings";
+import { createMeeting as createMeetingRow, linkExistingCallToMeeting, getMeetingById, type CreateMeetingInput } from "./storage/meetings";
 import { syncDeactivatedFromAuth } from "./users-sync";
 import {
   startClerk,
@@ -1976,16 +1976,21 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     // state; this meeting is the durable identity. Best-effort.
     // rowId -1: group calls have no pre-created livekit_rooms row, so the
     // meeting just owns the room name (no back-link needed).
-    linkCallToMeeting("livekit_rooms", -1, {
+    const huddleMeetingId = linkCallToMeeting("livekit_rooms", -1, {
       orgId: u.orgId,
       kind: "channel_huddle",
       hostUserId: u.id,
       channelId,
+      allowGuests: true,
       livekitRoomName: groupRoomName,
       title: access.channel?.name ? `#${access.channel.name} call` : "Channel call",
       status: "active",
       startedAt: new Date(),
     });
+    // The huddle's shareable code/link, surfaced in the response so the client
+    // can post a join card into the channel. Best-effort: a null meetingId
+    // (createMeeting failed) just omits the link rather than failing the call.
+    const huddleMeeting = huddleMeetingId ? getMeetingById(huddleMeetingId) : null;
 
     // Validate invitees and filter to same-org, non-deactivated users.
     // It's OK if this list is empty as long as phoneNumbers is non-empty
@@ -2259,6 +2264,8 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
       dialWarnings,
       smsResults,
       kind,
+      meetingCode: huddleMeeting?.code ?? null,
+      joinUrl: huddleMeeting ? `https://chat.bulldogops.com/m/${huddleMeeting.code}` : null,
     });
   });
 

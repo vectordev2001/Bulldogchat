@@ -1,4 +1,4 @@
-import { Hash, Pin, Plus, Smile, Paperclip, Send, Users, Search, Loader2, MessageSquare, X, Reply, Phone, Video, ClipboardList, MapPin, FileText, AlertTriangle, Link2, Unlink, Lock, Unlock, UserCog, PenLine, CheckCircle2, Trash2, Calendar as CalendarIcon, Mic, Ban, Check, HelpCircle, MoreHorizontal, ChevronDown } from "lucide-react";
+import { Hash, Pin, Plus, Smile, Paperclip, Send, Users, Search, Loader2, MessageSquare, X, Reply, Phone, Video, ClipboardList, MapPin, FileText, AlertTriangle, Link2, Unlink, Lock, Unlock, UserCog, PenLine, CheckCircle2, Trash2, Calendar as CalendarIcon, Mic, Ban, Check, HelpCircle, MoreHorizontal, ChevronDown, Headphones } from "lucide-react";
 import { ChannelCallDialog } from "@/components/ChannelCallDialog";
 import {
   DropdownMenu,
@@ -75,8 +75,9 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers, me
   const [mentionSelectedIdx, setMentionSelectedIdx] = useState(0);
   const [callDialog, setCallDialog] = useState<null | "voice" | "video">(null);
   const [notesOpen, setNotesOpen] = useState(false);
-  const { active: activeCall, outgoing: outgoingCall } = useCalls();
+  const { active: activeCall, outgoing: outgoingCall, startGroupCall } = useCalls();
   const callBusy = !!activeCall || !!outgoingCall;
+  const [huddleStarting, setHuddleStarting] = useState(false);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
@@ -106,6 +107,32 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers, me
   });
 
   const { toast: channelToast } = useToast();
+
+  // Start a channel huddle: reuse the battle-tested group-call overlay (the
+  // caller drops straight into the LiveKit room) and post a shareable
+  // join-link message so anyone — including external guests — can hop in via
+  // the public /m/:code page.
+  const startHuddle = useCallback(async () => {
+    if (callBusy || huddleStarting) return;
+    setHuddleStarting(true);
+    try {
+      const { joinUrl } = await startGroupCall({
+        channelId: channel.id,
+        channelName: channel.name,
+        inviteeIds: [],
+        kind: "voice",
+      });
+      if (joinUrl) {
+        sendMutation.mutate({
+          content: `${me.name} started a huddle — join here: ${joinUrl}`,
+        });
+      }
+    } catch {
+      channelToast({ title: "Couldn't start the huddle", description: "Please try again.", variant: "destructive" });
+    } finally {
+      setHuddleStarting(false);
+    }
+  }, [callBusy, huddleStarting, startGroupCall, channel.id, channel.name, me.name, sendMutation, channelToast]);
 
   // Phase 1.9.36 — admin-only "clear channel". Double-confirmed because
   // the operation tombstones every message in the channel. Server fans
@@ -369,6 +396,17 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers, me
               phone icon starts an instant voice call; the camera icon opens
               a small menu so "Schedule meeting" is discoverable on mobile
               (where the slash command is hard to type). */}
+          <button
+            type="button"
+            onClick={startHuddle}
+            disabled={callBusy || huddleStarting}
+            className="px-2.5 py-1.5 rounded hover-elevate text-[hsl(0_0%_70%)] hover:text-white disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-1.5 text-xs font-medium"
+            title={callBusy ? "Already in a call" : "Start a huddle (drop-in voice + shareable link)"}
+            data-testid="button-huddle"
+          >
+            {huddleStarting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Headphones className="w-4 h-4" />}
+            <span className="hidden md:inline">Huddle</span>
+          </button>
           <button
             type="button"
             onClick={() => setCallDialog("voice")}
@@ -1153,10 +1191,31 @@ function Line({ line, mentions, meId }: { line: string; mentions?: ApiMessage["m
 }
 
 function renderInline(text: string, mentions: ApiMessage["mentions"] | undefined, meId: number) {
-  const parts = text.split(/(\*\*[^*]+\*\*|@[a-zA-Z0-9_.-]+)/g);
+  const parts = text.split(/(\*\*[^*]+\*\*|@[a-zA-Z0-9_.-]+|https?:\/\/[^\s]+)/g);
   return parts.map((p, i) => {
     if (p.startsWith("**") && p.endsWith("**")) {
       return <strong key={i} className="font-bold text-white">{p.slice(2, -2)}</strong>;
+    }
+    if (/^https?:\/\//.test(p)) {
+      // Trailing punctuation shouldn't be swallowed into the href (e.g. a URL
+      // that ends a sentence with a period or sits inside parentheses).
+      const m = p.match(/^(https?:\/\/[^\s]*?)([.,)\]]*)$/);
+      const href = m ? m[1] : p;
+      const tail = m ? m[2] : "";
+      return (
+        <span key={i}>
+          <a
+            href={href}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-vs-blue-light underline underline-offset-2 hover:text-white break-all"
+            data-testid="message-link"
+          >
+            {href}
+          </a>
+          {tail}
+        </span>
+      );
     }
     if (p.startsWith("@")) {
       const handle = p.slice(1).toLowerCase();
