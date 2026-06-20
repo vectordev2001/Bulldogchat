@@ -37,7 +37,7 @@ const KIND_META: Record<WorkObjectKind, { label: string; icon: typeof MapPin; to
   job_site: { label: "Job Site", icon: MapPin, tone: "bg-[hsl(150_50%_22%)] text-vs-green border-vs-green/30" },
   work_project: { label: "Project", icon: Briefcase, tone: "bg-[hsl(210_50%_22%)] text-vs-blue-light border-vs-blue-light/30" },
   change_order: { label: "Change Order", icon: FileEdit, tone: "bg-[hsl(35_60%_22%)] text-[hsl(35_100%_70%)] border-[hsl(35_100%_70%)]/30" },
-  safety_incident: { label: "Safety", icon: AlertTriangle, tone: "bg-[hsl(174_60%_22%)] text-[hsl(174_85%_72%)] border-[hsl(174_85%_72%)]/30" },
+  safety_incident: { label: "Safety", icon: AlertTriangle, tone: "bg-[hsl(var(--vs-accent)/0.15)] text-[hsl(var(--vs-accent))] border-[hsl(var(--vs-accent)/0.3)]" },
 };
 
 const STATUS_TONE: Record<string, string> = {
@@ -153,7 +153,7 @@ export function WorkObjectPanel({ channelId, me, orgMembers, onClose, onSelectCh
           </div>
         )}
         {listQ.isError && (
-          <div className="px-2 py-2 text-xs text-[hsl(174_85%_72%)]" data-testid="linked-job-error">
+          <div className="px-2 py-2 text-xs text-[hsl(var(--vs-accent))]" data-testid="linked-job-error">
             Failed to load job
           </div>
         )}
@@ -223,7 +223,7 @@ export function WorkObjectPanel({ channelId, me, orgMembers, onClose, onSelectCh
                 Cancel
               </button>
             )}
-            {linkError && <div className="text-[11px] text-[hsl(174_85%_72%)] px-1">{linkError}</div>}
+            {linkError && <div className="text-[11px] text-[hsl(var(--vs-accent))] px-1">{linkError}</div>}
           </form>
         )}
 
@@ -239,7 +239,7 @@ export function WorkObjectPanel({ channelId, me, orgMembers, onClose, onSelectCh
               </div>
             )}
             {siblingsQ.isError && (
-              <div className="px-1 py-2 text-[11px] text-[hsl(174_85%_72%)]" data-testid="other-channels-error">
+              <div className="px-1 py-2 text-[11px] text-[hsl(var(--vs-accent))]" data-testid="other-channels-error">
                 Failed to load channels
               </div>
             )}

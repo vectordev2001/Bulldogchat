@@ -63,7 +63,7 @@ const KIND_META: Record<WorkObjectKind, { label: string; plural: string; icon: t
   },
   safety_incident: {
     label: "Safety", plural: "Safety Incidents", icon: AlertTriangle,
-    tone: "bg-[hsl(174_60%_22%)] text-[hsl(174_85%_72%)] border-[hsl(174_85%_72%)]/30",
+    tone: "bg-[hsl(var(--vs-accent)/0.15)] text-[hsl(var(--vs-accent))] border-[hsl(var(--vs-accent)/0.3)]",
   },
 };
 

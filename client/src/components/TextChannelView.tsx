@@ -37,7 +37,7 @@ interface Props {
 }
 
 const ROLE_COLOR: Record<UserRole, string> = {
-  admin: "text-[hsl(174_85%_72%)]",
+  admin: "text-[hsl(var(--vs-accent))]",
   manager: "text-vs-blue-light",
   user: "text-vs-green",
 };
@@ -372,6 +372,42 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers, me
 
   const pinned = messages.find((m) => m.isPinned);
 
+  // Collapse consecutive runs of deleted (tombstoned) messages into a single
+  // muted divider so a bulk-delete doesn't flood the view with N "Message
+  // deleted" rows. Pure presentation: deletion semantics/API/DB untouched —
+  // we only change how an already-deleted run is drawn. Mixed authors in a
+  // run collapse together.
+  const renderItems = useMemo(() => {
+    type Item =
+      | { type: "msg"; msg: ApiMessage; grouped: boolean }
+      | { type: "deleted-run"; key: string; count: number };
+    const items: Item[] = [];
+    for (let i = 0; i < messages.length; i++) {
+      const msg = messages[i];
+      if (msg.deletedAt) {
+        let count = 0;
+        const firstId = msg.id;
+        while (i < messages.length && messages[i].deletedAt) {
+          count++;
+          i++;
+        }
+        i--; // for-loop will re-increment
+        items.push({ type: "deleted-run", key: `del-${firstId}`, count });
+        continue;
+      }
+      const prev = messages[i - 1];
+      const grouped = !!(
+        prev &&
+        !prev.deletedAt &&
+        prev.userId === msg.userId &&
+        !msg.isPinned &&
+        new Date(msg.createdAt).getTime() - new Date(prev.createdAt).getTime() < 5 * 60 * 1000
+      );
+      items.push({ type: "msg", msg, grouped });
+    }
+    return items;
+  }, [messages]);
+
   return (
     <section
       // min-h-0 is required so the inner `flex-1 overflow-y-auto` message
@@ -383,16 +419,16 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers, me
       onDragLeave={() => setDragOver(false)}
       onDrop={onDrop}
     >
-      <header className="h-14 px-4 max-md:pl-14 flex items-center gap-3 border-b border-[hsl(220_40%_22%)] shadow-sm shrink-0 bg-[hsl(220_60%_12%)]/60 backdrop-blur-sm">
-        <Hash className="w-5 h-5 text-[hsl(0_0%_55%)]" />
-        <div className="font-display text-white text-base" data-testid="text-channel-name">{channel.name}</div>
+      <header className="h-14 px-4 max-md:pl-14 flex items-center gap-3 border-b border-border shadow-sm shrink-0 bg-secondary/80 backdrop-blur-sm">
+        <Hash className="w-5 h-5 text-[hsl(var(--vs-text-muted))]" />
+        <div className="font-display text-[hsl(var(--vs-text))] text-base" data-testid="text-channel-name">{channel.name}</div>
         {channel.topic && (
           <>
-            <span className="w-px h-5 bg-[hsl(220_40%_22%)]" />
-            <span className="text-xs text-[hsl(0_0%_70%)] truncate hidden md:inline">{channel.topic}</span>
+            <span className="w-px h-5 bg-border" />
+            <span className="text-xs text-[hsl(var(--vs-text-muted))] truncate hidden md:inline">{channel.topic}</span>
           </>
         )}
-        <div className="ml-auto flex items-center gap-1 text-[hsl(0_0%_65%)]">
+        <div className="ml-auto flex items-center gap-1 text-[hsl(var(--vs-text-muted))]">
           {/* Group-call quick actions — ring channel members from the
               text view without having to navigate to a voice channel. The
               phone icon starts an instant voice call; the camera icon opens
@@ -402,7 +438,7 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers, me
             type="button"
             onClick={startHuddle}
             disabled={callBusy || huddleStarting}
-            className="px-2.5 py-1.5 rounded hover-elevate text-[hsl(0_0%_70%)] hover:text-white disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-1.5 text-xs font-medium"
+            className="px-2.5 py-1.5 rounded hover-elevate text-[hsl(var(--vs-text-muted))] hover:text-[hsl(var(--vs-accent))] disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-1.5 text-xs font-medium"
             title={callBusy ? "Already in a call" : "Start a huddle (drop-in voice + shareable link)"}
             data-testid="button-huddle"
           >
@@ -413,7 +449,7 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers, me
             type="button"
             onClick={() => setCallDialog("voice")}
             disabled={callBusy}
-            className="p-2 rounded hover-elevate text-[hsl(0_0%_70%)] hover:text-white disabled:opacity-40 disabled:cursor-not-allowed"
+            className="p-2 rounded hover-elevate text-[hsl(var(--vs-text-muted))] hover:text-[hsl(var(--vs-accent))] disabled:opacity-40 disabled:cursor-not-allowed"
             title={callBusy ? "Already in a call" : "Start voice call"}
             data-testid="button-channel-call"
           >
@@ -423,7 +459,7 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers, me
             <DropdownMenuTrigger asChild>
               <button
                 type="button"
-                className="p-2 rounded hover-elevate text-[hsl(0_0%_70%)] hover:text-white inline-flex items-center"
+                className="p-2 rounded hover-elevate text-[hsl(var(--vs-text-muted))] hover:text-[hsl(var(--vs-accent))] inline-flex items-center"
                 title="Call & meeting options"
                 data-testid="button-channel-video"
               >
@@ -461,7 +497,7 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers, me
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
-          <span className="w-px h-5 bg-[hsl(220_40%_22%)] mx-1" />
+          <span className="w-px h-5 bg-border mx-1" />
 
           {/* Desktop (≥sm): pin / jobs / members shown inline. On mobile they
               collapse into the overflow menu below so the channel title has
@@ -494,13 +530,13 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers, me
             <button
               type="button"
               onClick={() => setSearchOpen(true)}
-              className="ml-1 flex items-center gap-2 bg-[hsl(220_60%_9%)] border border-[hsl(220_40%_22%)] text-xs text-[hsl(0_0%_65%)] hover:text-white hover:border-vs-red transition-colors rounded-md px-2 py-1"
+              className="ml-1 flex items-center gap-2 bg-background border border-border text-xs text-[hsl(var(--vs-text-muted))] hover:text-[hsl(var(--vs-accent))] hover:border-[hsl(var(--vs-accent))] transition-colors rounded-md px-2 py-1"
               title="Search (⌘K)"
               data-testid="button-open-search"
             >
               <Search className="w-3.5 h-3.5" />
               <span className="hidden sm:inline">Search</span>
-              <kbd className="hidden sm:inline font-mono text-[10px] text-[hsl(0_0%_55%)] border border-[hsl(220_40%_22%)] rounded px-1">⌘K</kbd>
+              <kbd className="hidden sm:inline font-mono text-[10px] text-[hsl(var(--vs-text-subtle))] border border-border rounded px-1">⌘K</kbd>
             </button>
             {me.role === "admin" && (
               <HeaderIcon
@@ -520,7 +556,7 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers, me
               <DropdownMenuTrigger asChild>
                 <button
                   type="button"
-                  className="p-2 rounded hover-elevate text-[hsl(0_0%_70%)] hover:text-white"
+                  className="p-2 rounded hover-elevate text-[hsl(var(--vs-text-muted))] hover:text-[hsl(var(--vs-accent))]"
                   title="More"
                   data-testid="button-header-overflow"
                 >
@@ -552,7 +588,7 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers, me
                       onSelect={onClearChannel}
                       disabled={clearChannelMut.isPending}
                       data-testid="menu-clear-channel"
-                      className="text-[hsl(174_85%_72%)] focus:text-[hsl(174_85%_82%)]"
+                      className="text-[hsl(var(--vs-accent))] focus:text-[hsl(var(--vs-accent-hover))]"
                     >
                       <Trash2 className="w-4 h-4 mr-2" /> Clear all messages
                     </DropdownMenuItem>
@@ -571,9 +607,9 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers, me
       )}
 
       {pinned && (
-        <div ref={pinnedBannerRef} className="px-4 py-2 bg-[hsl(174_70%_55%/0.08)] border-b border-[hsl(174_70%_55%/0.25)] flex items-start gap-2 text-xs transition-shadow rounded-sm">
+        <div ref={pinnedBannerRef} className="px-4 py-2 bg-[hsl(var(--vs-accent)/0.08)] border-b border-[hsl(var(--vs-accent)/0.25)] flex items-start gap-2 text-xs transition-shadow rounded-sm">
           <Pin className="w-3.5 h-3.5 text-vs-red mt-0.5 shrink-0" />
-          <div className="text-[hsl(0_0%_82%)] leading-snug">
+          <div className="text-[hsl(var(--vs-text))] leading-snug">
             <span className="text-vs-red font-semibold">Pinned · {pinned.authorName}: </span>
             <span className="line-clamp-1">{pinned.content.replace(/\*\*/g, "").split("\n")[0]}</span>
           </div>
@@ -597,30 +633,26 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers, me
           <div className="py-10 flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-vs-blue" /></div>
         )}
         {!loading && messages.length === 0 && (
-          <div className="text-sm text-[hsl(0_0%_60%)] py-6">No messages yet. Say hello.</div>
+          <div className="text-sm text-[hsl(var(--vs-text-muted))] py-6">No messages yet. Say hello.</div>
         )}
         <AnimatePresence initial={false}>
-          {messages.map((msg, i) => {
-            const prev = messages[i - 1];
-            const grouped =
-              prev &&
-              prev.userId === msg.userId &&
-              !msg.isPinned &&
-              new Date(msg.createdAt).getTime() - new Date(prev.createdAt).getTime() < 5 * 60 * 1000;
-            return (
+          {renderItems.map((item) =>
+            item.type === "deleted-run" ? (
+              <DeletedRunRow key={item.key} count={item.count} />
+            ) : (
               <MessageRow
-                key={msg.id}
-                msg={msg}
-                grouped={!!grouped}
-                isMe={msg.userId === me.id}
+                key={item.msg.id}
+                msg={item.msg}
+                grouped={item.grouped}
+                isMe={item.msg.userId === me.id}
                 meId={me.id}
                 myRole={me.role}
-                onOpenThread={() => setThreadParent(msg)}
+                onOpenThread={() => setThreadParent(item.msg)}
                 onJoinMeeting={(kind) => setCallDialog(kind)}
                 onOpenNotes={() => setNotesOpen(true)}
               />
-            );
-          })}
+            ),
+          )}
         </AnimatePresence>
       </div>
 
@@ -636,15 +668,15 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers, me
         {pendingAtts.length > 0 && (
           <div className="mb-2 flex flex-wrap gap-2" data-testid="row-pending-attachments">
             {pendingAtts.map((a) => (
-              <div key={a.id} className="relative group bg-[hsl(220_50%_16%)] border border-[hsl(220_40%_25%)] rounded-lg px-2 py-1.5 flex items-center gap-2 max-w-[200px]">
+              <div key={a.id} className="relative group bg-secondary border border-border rounded-lg px-2 py-1.5 flex items-center gap-2 max-w-[200px]">
                 {a.thumbnailUrl ? (
                   <img src={a.thumbnailUrl} alt="" className="w-9 h-9 rounded object-cover" />
                 ) : (
-                  <div className="w-9 h-9 rounded bg-[hsl(174_70%_55%/0.2)] flex items-center justify-center text-vs-red text-[10px] font-mono">FILE</div>
+                  <div className="w-9 h-9 rounded bg-[hsl(var(--vs-accent)/0.2)] flex items-center justify-center text-vs-red text-[10px] font-mono">FILE</div>
                 )}
                 <div className="min-w-0">
-                  <div className="text-xs text-white truncate max-w-[120px]">{a.filename}</div>
-                  <div className="text-[10px] text-[hsl(0_0%_60%)] font-mono">{(a.sizeBytes / 1024).toFixed(0)} KB</div>
+                  <div className="text-xs text-[hsl(var(--vs-text))] truncate max-w-[120px]">{a.filename}</div>
+                  <div className="text-[10px] text-[hsl(var(--vs-text-muted))] font-mono">{(a.sizeBytes / 1024).toFixed(0)} KB</div>
                 </div>
                 <button
                   type="button"
@@ -666,8 +698,8 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers, me
         <div className="relative">
           {/* Mention popover */}
           {mentionMatch && mentionCandidates.length > 0 && (
-            <div className="absolute bottom-full left-0 mb-2 w-72 max-h-64 overflow-y-auto bg-[hsl(220_55%_14%)] border border-[hsl(220_40%_25%)] rounded-lg shadow-xl z-20" data-testid="popover-mention">
-              <div className="px-3 py-2 border-b border-[hsl(220_40%_22%)] text-[10px] uppercase tracking-wider font-mono text-[hsl(0_0%_55%)]">
+            <div className="absolute bottom-full left-0 mb-2 w-72 max-h-64 overflow-y-auto bg-secondary border border-border rounded-lg shadow-xl z-20" data-testid="popover-mention">
+              <div className="px-3 py-2 border-b border-border text-[10px] uppercase tracking-wider font-mono text-[hsl(var(--vs-text-subtle))]">
                 Mention {mentionMatch.query && `· "${mentionMatch.query}"`}
               </div>
               {mentionCandidates.map((c, i) => {
@@ -676,7 +708,7 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers, me
                   <button
                     key={c.kind === "user" ? `u${c.user.id}` : `s${c.key}`}
                     type="button"
-                    className={`w-full text-left px-3 py-2 flex items-center gap-2 ${active ? "bg-[hsl(220_45%_22%)]" : "hover:bg-[hsl(220_45%_18%)]"}`}
+                    className={`w-full text-left px-3 py-2 flex items-center gap-2 ${active ? "bg-accent" : "hover:bg-accent"}`}
                     onMouseEnter={() => setMentionSelectedIdx(i)}
                     onClick={() => c.kind === "special" ? insertMention(c.key) : insertMention(c.user.name.split(/\s+/)[0].toLowerCase())}
                   >
@@ -684,16 +716,16 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers, me
                       <>
                         <Avatar member={{ name: c.user.name, hue: c.user.hue }} size={24} />
                         <div className="min-w-0">
-                          <div className="text-sm text-white truncate">{c.user.name}</div>
-                          <div className="text-[10px] text-[hsl(0_0%_60%)] font-mono">{ROLE_LABEL[c.user.role]}</div>
+                          <div className="text-sm text-[hsl(var(--vs-text))] truncate">{c.user.name}</div>
+                          <div className="text-[10px] text-[hsl(var(--vs-text-muted))] font-mono">{ROLE_LABEL[c.user.role]}</div>
                         </div>
                       </>
                     ) : (
                       <>
                         <div className="w-6 h-6 rounded-full bg-[hsl(35_100%_60%/0.2)] border border-[hsl(35_100%_60%/0.4)] flex items-center justify-center text-[10px] font-mono text-[hsl(35_100%_70%)] font-bold">@</div>
                         <div className="min-w-0">
-                          <div className="text-sm text-white font-mono">{c.label}</div>
-                          <div className="text-[10px] text-[hsl(0_0%_60%)]">{c.desc}</div>
+                          <div className="text-sm text-[hsl(var(--vs-text))] font-mono">{c.label}</div>
+                          <div className="text-[10px] text-[hsl(var(--vs-text-muted))]">{c.desc}</div>
                         </div>
                       </>
                     )}
@@ -703,11 +735,11 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers, me
             </div>
           )}
 
-          <div className="flex items-end gap-2 bg-[hsl(220_50%_16%)] border border-[hsl(220_40%_25%)] rounded-xl px-3 py-2 focus-within:border-vs-red transition-colors">
+          <div className="flex items-end gap-2 bg-secondary border border-border rounded-xl px-3 py-2 focus-within:border-vs-red transition-colors">
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
-              className="text-[hsl(0_0%_65%)] hover:text-vs-red transition-colors p-1"
+              className="text-[hsl(var(--vs-text-muted))] hover:text-vs-red transition-colors p-1"
               title="Attach file"
               data-testid="button-attach"
               disabled={uploading || pendingAtts.length >= 4}
@@ -732,10 +764,10 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers, me
               onKeyDown={handleKey}
               placeholder={`Message #${channel.name}`}
               rows={1}
-              className="flex-1 bg-transparent text-sm text-white placeholder:text-[hsl(0_0%_50%)] resize-none outline-none max-h-32 py-1"
+              className="flex-1 bg-transparent text-sm text-[hsl(var(--vs-text))] placeholder:text-[hsl(var(--vs-text-subtle))] resize-none outline-none max-h-32 py-1"
               data-testid="textarea-composer"
             />
-            <div className="flex items-center gap-0.5 text-[hsl(0_0%_65%)]">
+            <div className="flex items-center gap-0.5 text-[hsl(var(--vs-text-muted))]">
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
@@ -750,7 +782,7 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers, me
                 type="button"
                 onClick={submit}
                 disabled={(!draft.trim() && pendingAtts.length === 0) || sendMutation.isPending}
-                className="ml-1 w-8 h-8 rounded-md bg-vs-red text-white flex items-center justify-center hover:bg-[hsl(174_75%_60%)] transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                className="ml-1 w-8 h-8 rounded-md bg-vs-red text-white flex items-center justify-center hover:bg-[hsl(var(--vs-red-bright))] transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                 title="Send (Enter)"
                 data-testid="button-send"
               >
@@ -759,8 +791,8 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers, me
             </div>
           </div>
         </div>
-        <div className="px-2 mt-1.5 text-[10px] text-[hsl(0_0%_50%)] flex items-center justify-between">
-          <span>Press <kbd className="font-mono text-[hsl(0_0%_70%)]">Enter</kbd> to send · <kbd className="font-mono text-[hsl(0_0%_70%)]">⌘K</kbd> to search</span>
+        <div className="px-2 mt-1.5 text-[10px] text-[hsl(var(--vs-text-subtle))] flex items-center justify-between">
+          <span>Press <kbd className="font-mono text-[hsl(var(--vs-text-muted))]">Enter</kbd> to send · <kbd className="font-mono text-[hsl(var(--vs-text-muted))]">⌘K</kbd> to search</span>
           <span>{channel.topic ? `Topic: ${channel.topic.slice(0, 60)}${channel.topic.length > 60 ? "…" : ""}` : ""}</span>
         </div>
       </div>
@@ -820,8 +852,8 @@ function HeaderIcon({
       data-testid={dataTestId}
       className={`w-8 h-8 flex items-center justify-center rounded-md transition-colors ${
         active
-          ? "bg-[hsl(220_45%_30%)] text-white"
-          : "hover:bg-[hsl(220_45%_30%)] hover:text-white"
+          ? "bg-[hsl(var(--vs-accent-soft))] text-[hsl(var(--vs-accent))]"
+          : "text-[hsl(var(--vs-text-muted))] hover:bg-[hsl(var(--vs-accent-soft))] hover:text-[hsl(var(--vs-accent))]"
       } ${disabled ? "opacity-40 cursor-not-allowed" : ""}`}
     >
       {children}
@@ -829,17 +861,31 @@ function HeaderIcon({
   );
 }
 
+// Collapsed divider for a run of consecutive deleted messages. Centered,
+// muted, small — no avatar/timestamp. Singular copy when count === 1.
+function DeletedRunRow({ count }: { count: number }) {
+  return (
+    <div
+      className="flex items-center justify-center py-1 text-[hsl(var(--vs-text-subtle))] text-xs italic"
+      data-testid="deleted-run"
+    >
+      <Trash2 className="w-3 h-3 mr-1.5 shrink-0" />
+      {count === 1 ? "Message deleted" : `${count} messages deleted`}
+    </div>
+  );
+}
+
 function ChannelIntro({ channel }: { channel: ApiChannel }) {
   return (
     <div className="py-6 mb-2">
-      <div className="w-14 h-14 rounded-2xl bg-[hsl(220_45%_27%)] border border-vs-red/30 flex items-center justify-center mb-3">
+      <div className="w-14 h-14 rounded-2xl bg-accent border border-vs-red/30 flex items-center justify-center mb-3">
         <Hash className="w-7 h-7 text-vs-red" />
       </div>
-      <h2 className="text-xl font-display text-white">Welcome to #{channel.name}</h2>
-      <p className="text-sm text-[hsl(0_0%_70%)] mt-1 max-w-xl">
+      <h2 className="text-xl font-display text-[hsl(var(--vs-text))]">Welcome to #{channel.name}</h2>
+      <p className="text-sm text-[hsl(var(--vs-text-muted))] mt-1 max-w-xl">
         {channel.topic ?? "This is the start of the channel."}
       </p>
-      <div className="mt-3 h-px bg-[hsl(220_40%_22%)]" />
+      <div className="mt-3 h-px bg-border" />
     </div>
   );
 }
@@ -884,7 +930,7 @@ function SystemMessageRow({ meta, content, createdAt, meId, myRole, onJoinMeetin
       initial={{ opacity: 0, y: 4 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
-      className="flex items-center justify-center gap-2 my-1 py-1 px-3 mx-12 border-l-2 border-[hsl(220_40%_22%)] text-[11px] text-[hsl(0_0%_55%)] italic text-center"
+      className="flex items-center justify-center gap-2 my-1 py-1 px-3 mx-12 border-l-2 border-border text-[11px] text-[hsl(var(--vs-text-subtle))] italic text-center"
       data-testid={`system-message-${wo.kind}`}
       title={fmtTime(createdAt)}
     >
@@ -895,7 +941,7 @@ function SystemMessageRow({ meta, content, createdAt, meId, myRole, onJoinMeetin
       <span className="truncate">
         {segments.map((seg, i) => {
           if (seg.startsWith("**") && seg.endsWith("**")) {
-            return <span key={i} className="font-mono not-italic text-[hsl(0_0%_75%)]">{seg.slice(2, -2)}</span>;
+            return <span key={i} className="font-mono not-italic text-[hsl(var(--vs-text-muted))]">{seg.slice(2, -2)}</span>;
           }
           return <span key={i}>{seg}</span>;
         })}
@@ -916,27 +962,27 @@ function MeetingSummaryCard({ meta, createdAt, onOpenNotes }: { meta: ApiMeeting
       initial={{ opacity: 0, y: 4 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
-      className="my-2 mx-12 rounded-lg border border-[hsl(199_100%_68%/0.3)] bg-[hsl(199_100%_68%/0.08)] overflow-hidden"
+      className="my-2 mx-12 rounded-lg border border-[hsl(var(--vs-info)/0.3)] bg-[hsl(var(--vs-info)/0.08)] overflow-hidden"
       data-testid="system-message-meeting_summary"
       title={fmtTime(createdAt)}
     >
-      <div className="px-3 py-2 flex items-center gap-2 border-b border-[hsl(199_100%_68%/0.2)]">
+      <div className="px-3 py-2 flex items-center gap-2 border-b border-[hsl(var(--vs-info)/0.2)]">
         <FileText className="w-4 h-4 text-vs-blue-light shrink-0" />
-        <span className="text-sm font-semibold text-white truncate">{meta.title || "Meeting notes"}</span>
-        <span className="ml-auto text-[10px] font-mono text-[hsl(0_0%_60%)] whitespace-nowrap shrink-0">
+        <span className="text-sm font-semibold text-[hsl(var(--vs-text))] truncate">{meta.title || "Meeting notes"}</span>
+        <span className="ml-auto text-[10px] font-mono text-[hsl(var(--vs-text-muted))] whitespace-nowrap shrink-0">
           {durationLabel} · {meta.attendeeCount ?? 0} attendee{(meta.attendeeCount ?? 0) === 1 ? "" : "s"}
         </span>
       </div>
       {meta.summaryPreview && (
-        <div className="px-3 py-2 text-xs text-[hsl(0_0%_75%)] whitespace-pre-wrap line-clamp-4">
+        <div className="px-3 py-2 text-xs text-[hsl(var(--vs-text-muted))] whitespace-pre-wrap line-clamp-4">
           {meta.summaryPreview}
         </div>
       )}
-      <div className="px-3 py-2 border-t border-[hsl(199_100%_68%/0.2)]">
+      <div className="px-3 py-2 border-t border-[hsl(var(--vs-info)/0.2)]">
         <button
           type="button"
           onClick={() => onOpenNotes?.()}
-          className="px-2.5 py-1 rounded-md text-xs bg-[hsl(220_50%_18%)] border border-[hsl(220_40%_25%)] hover:border-vs-blue hover:text-vs-blue-light text-[hsl(0_0%_80%)] flex items-center gap-1.5"
+          className="px-2.5 py-1 rounded-md text-xs bg-secondary border border-border hover:border-vs-blue hover:text-vs-blue-light text-[hsl(var(--vs-text))] flex items-center gap-1.5"
           data-testid="button-view-full-notes"
         >
           <FileText className="w-3 h-3" /> View full notes
@@ -952,29 +998,8 @@ function MessageRow({ msg, grouped, isMe, meId, myRole, onOpenThread, onJoinMeet
     return <SystemMessageRow meta={msg.meta} content={msg.content} createdAt={msg.createdAt} meId={meId} myRole={myRole} onJoinMeeting={onJoinMeeting} onOpenNotes={onOpenNotes} />;
   }
 
-  // Tombstoned message — author or admin deleted it. We still render the
-  // row so reply threading stays visually coherent, but content/avatar/
-  // reactions are stripped down to a muted placeholder. Hover/long-press
-  // actions are disabled here — nothing left to act on.
-  if (msg.deletedAt) {
-    return (
-      <div
-        className={[
-          "flex gap-3 px-2 py-1 rounded -mx-2",
-          grouped ? "" : "mt-4",
-        ].join(" ")}
-        data-testid={`message-${msg.id}-tombstone`}
-      >
-        <div className="w-10 shrink-0" />
-        <div className="min-w-0 flex-1 text-[12.5px] italic text-[hsl(0_0%_50%)] flex items-center gap-1.5">
-          <Trash2 className="w-3 h-3" />
-          Message deleted
-        </div>
-      </div>
-    );
-  }
 
-  const roleClass = ROLE_COLOR[msg.authorRole] ?? "text-white";
+  const roleClass = ROLE_COLOR[msg.authorRole] ?? "text-[hsl(var(--vs-text))]";
   const canDelete = isMe || myRole === "admin";
 
   // Author/admin delete. Confirms once via window.confirm to avoid an extra
@@ -1023,7 +1048,7 @@ function MessageRow({ msg, grouped, isMe, meId, myRole, onOpenThread, onJoinMeet
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
       className={[
-        "group relative flex gap-3 px-2 py-1 rounded -mx-2 hover:bg-[hsl(220_45%_18%/0.5)]",
+        "group relative flex gap-3 px-2 py-1 rounded -mx-2 hover:bg-accent/50",
         grouped ? "" : "mt-4",
       ].join(" ")}
       data-testid={`message-${msg.id}`}
@@ -1032,7 +1057,7 @@ function MessageRow({ msg, grouped, isMe, meId, myRole, onOpenThread, onJoinMeet
         {!grouped ? (
           <Avatar member={{ name: msg.authorName, hue: msg.authorHue, initials: msg.authorInitials }} size={40} />
         ) : (
-          <span className="opacity-0 group-hover:opacity-60 text-[10px] font-mono text-[hsl(0_0%_55%)] mt-1.5 block text-right pr-1">
+          <span className="opacity-0 group-hover:opacity-60 text-[10px] font-mono text-[hsl(var(--vs-text-subtle))] mt-1.5 block text-right pr-1">
             {fmtTime(msg.createdAt).split("at ")[1] ?? ""}
           </span>
         )}
@@ -1044,8 +1069,8 @@ function MessageRow({ msg, grouped, isMe, meId, myRole, onOpenThread, onJoinMeet
             <span className={`font-semibold text-sm ${roleClass}`}>{msg.authorName}</span>
             <RoleBadge role={msg.authorRole} />
             {isMe && <span className="text-[10px] font-mono text-vs-red uppercase tracking-wider">You</span>}
-            <span className="text-[10px] text-[hsl(0_0%_55%)]">{fmtTime(msg.createdAt)}</span>
-            {msg.editedAt && <span className="text-[10px] text-[hsl(0_0%_45%)] italic">(edited)</span>}
+            <span className="text-[10px] text-[hsl(var(--vs-text-subtle))]">{fmtTime(msg.createdAt)}</span>
+            {msg.editedAt && <span className="text-[10px] text-[hsl(var(--vs-text-subtle))] italic">(edited)</span>}
           </div>
         )}
         <MessageBody body={msg.content} mentions={msg.mentions} meId={meId} />
@@ -1055,7 +1080,7 @@ function MessageRow({ msg, grouped, isMe, meId, myRole, onOpenThread, onJoinMeet
             {msg.reactions.map((r) => (
               <span
                 key={r.emoji}
-                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md border text-[11px] font-mono bg-[hsl(220_45%_27%)] border-[hsl(220_40%_25%)] text-[hsl(0_0%_82%)]"
+                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md border text-[11px] font-mono bg-accent border-border text-[hsl(var(--vs-text))]"
               >
                 <span>{r.emoji}</span>
                 <span>{r.count}</span>
@@ -1067,12 +1092,12 @@ function MessageRow({ msg, grouped, isMe, meId, myRole, onOpenThread, onJoinMeet
           <button
             type="button"
             onClick={onOpenThread}
-            className="mt-1.5 inline-flex items-center gap-1.5 px-2 py-1 rounded-md border border-[hsl(220_40%_25%)] bg-[hsl(220_50%_16%)] hover:bg-[hsl(220_45%_22%)] hover:border-vs-red text-xs text-vs-blue-light font-semibold transition-colors"
+            className="mt-1.5 inline-flex items-center gap-1.5 px-2 py-1 rounded-md border border-border bg-secondary hover:bg-accent hover:border-vs-red text-xs text-vs-blue-light font-semibold transition-colors"
             data-testid={`button-open-thread-${msg.id}`}
           >
             <MessageSquare className="w-3 h-3" />
             {msg.replyCount} {msg.replyCount === 1 ? "reply" : "replies"}
-            {msg.lastReplyAt && <span className="font-normal text-[hsl(0_0%_60%)]">· last {new Date(msg.lastReplyAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>}
+            {msg.lastReplyAt && <span className="font-normal text-[hsl(var(--vs-text-muted))]">· last {new Date(msg.lastReplyAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>}
           </button>
         )}
       </div>
@@ -1080,13 +1105,13 @@ function MessageRow({ msg, grouped, isMe, meId, myRole, onOpenThread, onJoinMeet
       {/* Desktop hover action bar — quick access for mouse users. Hidden
           on touch (no hover state); touch users use the kebab below. */}
       <div
-        className="transition-opacity absolute top-0 right-10 hidden md:flex items-center gap-1 -translate-y-2 bg-[hsl(220_55%_14%)] border border-[hsl(220_40%_25%)] rounded-md px-1 py-0.5 shadow-md opacity-0 group-hover:opacity-100"
+        className="transition-opacity absolute top-0 right-10 hidden md:flex items-center gap-1 -translate-y-2 bg-secondary border border-border rounded-md px-1 py-0.5 shadow-md opacity-0 group-hover:opacity-100"
         onClick={(e) => e.stopPropagation()}
       >
         <button
           type="button"
           onClick={onOpenThread}
-          className="p-1 rounded hover:bg-[hsl(220_45%_22%)] text-[hsl(0_0%_70%)] hover:text-vs-red"
+          className="p-1 rounded hover:bg-accent text-[hsl(var(--vs-text-muted))] hover:text-vs-red"
           title="Reply in comms"
           data-testid={`button-reply-thread-${msg.id}`}
         >
@@ -1097,7 +1122,7 @@ function MessageRow({ msg, grouped, isMe, meId, myRole, onOpenThread, onJoinMeet
             type="button"
             onClick={onDelete}
             disabled={deleteMut.isPending}
-            className="p-1 rounded hover:bg-[hsl(220_45%_22%)] text-[hsl(0_0%_70%)] hover:text-vs-red disabled:opacity-40"
+            className="p-1 rounded hover:bg-accent text-[hsl(var(--vs-text-muted))] hover:text-vs-red disabled:opacity-40"
             title={isMe ? "Delete message" : "Delete message (admin)"}
             data-testid={`button-delete-message-${msg.id}`}
           >
@@ -1117,7 +1142,7 @@ function MessageRow({ msg, grouped, isMe, meId, myRole, onOpenThread, onJoinMeet
         <button
           type="button"
           onClick={() => setMenuOpen(v => !v)}
-          className="p-1.5 rounded-md text-[hsl(0_0%_55%)] hover:text-white hover:bg-[hsl(220_45%_22%)] md:opacity-40 md:group-hover:opacity-100 transition-opacity"
+          className="p-1.5 rounded-md text-[hsl(var(--vs-text-subtle))] hover:text-[hsl(var(--vs-accent))] hover:bg-[hsl(var(--vs-accent-soft))] md:opacity-40 md:group-hover:opacity-100 transition-opacity"
           title="Message actions"
           aria-label="Message actions"
           data-testid={`button-message-menu-${msg.id}`}
@@ -1126,14 +1151,14 @@ function MessageRow({ msg, grouped, isMe, meId, myRole, onOpenThread, onJoinMeet
         </button>
         {menuOpen && (
           <div
-            className="absolute top-full right-0 mt-1 min-w-[160px] rounded-md border border-[hsl(220_40%_25%)] bg-[hsl(220_55%_12%)] shadow-xl py-1"
+            className="absolute top-full right-0 mt-1 min-w-[160px] rounded-md border border-border bg-secondary shadow-xl py-1"
             role="menu"
             data-testid={`menu-message-${msg.id}`}
           >
             <button
               type="button"
               onClick={() => { setMenuOpen(false); onOpenThread(); }}
-              className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[hsl(0_0%_85%)] hover:bg-[hsl(220_45%_18%)] hover:text-white text-left"
+              className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[hsl(var(--vs-text))] hover:bg-[hsl(var(--vs-accent-soft))] hover:text-[hsl(var(--vs-accent))] text-left"
               data-testid={`menu-item-reply-${msg.id}`}
             >
               <Reply className="w-3.5 h-3.5" />
@@ -1144,7 +1169,7 @@ function MessageRow({ msg, grouped, isMe, meId, myRole, onOpenThread, onJoinMeet
                 type="button"
                 onClick={() => { setMenuOpen(false); onDelete(); }}
                 disabled={deleteMut.isPending}
-                className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[hsl(174_85%_72%)] hover:bg-[hsl(220_45%_18%)] hover:text-[hsl(174_85%_82%)] text-left disabled:opacity-40"
+                className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[hsl(var(--vs-accent))] hover:bg-accent hover:text-[hsl(var(--vs-accent-hover))] text-left disabled:opacity-40"
                 data-testid={`menu-item-delete-${msg.id}`}
               >
                 <Trash2 className="w-3.5 h-3.5" />
@@ -1160,8 +1185,8 @@ function MessageRow({ msg, grouped, isMe, meId, myRole, onOpenThread, onJoinMeet
 
 function RoleBadge({ role }: { role: UserRole }) {
   const color = {
-    admin:   "bg-[hsl(174_70%_55%/0.18)] text-[hsl(174_85%_72%)] border-[hsl(174_70%_55%/0.4)]",
-    manager: "bg-[hsl(199_100%_68%/0.15)] text-vs-blue-light border-[hsl(199_100%_68%/0.4)]",
+    admin:   "bg-[hsl(var(--vs-accent)/0.18)] text-[hsl(var(--vs-accent))] border-[hsl(var(--vs-accent)/0.4)]",
+    manager: "bg-[hsl(var(--vs-info)/0.15)] text-vs-blue-light border-[hsl(var(--vs-info)/0.4)]",
     user:    "bg-[hsl(145_60%_48%/0.15)] text-vs-green border-[hsl(145_60%_48%/0.4)]",
   }[role];
 
@@ -1178,9 +1203,9 @@ function MessageBody({ body, mentions, meId }: { body: string; mentions?: ApiMes
   const hasBroadcast = mentions?.some((m) => m.type === "here" || m.type === "everyone");
 
   return (
-    <div className="text-[13.5px] text-[hsl(0_0%_88%)] leading-relaxed mt-0.5 whitespace-pre-wrap break-words">
+    <div className="text-[13.5px] text-[hsl(var(--vs-text))] leading-relaxed mt-0.5 whitespace-pre-wrap break-words">
       {(myMention || hasBroadcast) && (
-        <div className={`-ml-2 pl-2 border-l-4 ${myMention ? "border-vs-red bg-[hsl(174_70%_55%/0.06)]" : "border-[hsl(35_100%_60%)] bg-[hsl(35_100%_60%/0.05)]"} -mr-2 pr-2 py-0.5 rounded-r-sm`}>
+        <div className={`-ml-2 pl-2 border-l-4 ${myMention ? "border-vs-red bg-[hsl(var(--vs-accent)/0.06)]" : "border-[hsl(35_100%_60%)] bg-[hsl(35_100%_60%/0.05)]"} -mr-2 pr-2 py-0.5 rounded-r-sm`}>
           {lines.map((line, i) => (
             <Line key={i} line={line} mentions={mentions} meId={meId} />
           ))}
@@ -1196,7 +1221,7 @@ function MessageBody({ body, mentions, meId }: { body: string; mentions?: ApiMes
 function Line({ line, mentions, meId }: { line: string; mentions?: ApiMessage["mentions"]; meId: number }) {
   if (line.startsWith("> ")) {
     return (
-      <div className="border-l-2 border-vs-red pl-2 my-1 text-[hsl(0_0%_75%)] italic">
+      <div className="border-l-2 border-vs-red pl-2 my-1 text-[hsl(var(--vs-text-muted))] italic">
         {renderInline(line.slice(2), mentions, meId)}
       </div>
     );
@@ -1208,7 +1233,7 @@ function renderInline(text: string, mentions: ApiMessage["mentions"] | undefined
   const parts = text.split(/(\*\*[^*]+\*\*|@[a-zA-Z0-9_.-]+|https?:\/\/[^\s]+)/g);
   return parts.map((p, i) => {
     if (p.startsWith("**") && p.endsWith("**")) {
-      return <strong key={i} className="font-bold text-white">{p.slice(2, -2)}</strong>;
+      return <strong key={i} className="font-bold text-[hsl(var(--vs-text))]">{p.slice(2, -2)}</strong>;
     }
     if (/^https?:\/\//.test(p)) {
       // Trailing punctuation shouldn't be swallowed into the href (e.g. a URL
@@ -1222,7 +1247,7 @@ function renderInline(text: string, mentions: ApiMessage["mentions"] | undefined
             href={href}
             target="_blank"
             rel="noopener noreferrer"
-            className="text-vs-blue-light underline underline-offset-2 hover:text-white break-all"
+            className="text-[hsl(var(--vs-accent))] underline underline-offset-2 hover:text-[hsl(var(--vs-accent-hover))] break-all"
             data-testid="message-link"
           >
             {href}
@@ -1244,10 +1269,10 @@ function renderInline(text: string, mentions: ApiMessage["mentions"] | undefined
       });
       const selfMention = !isBroadcast && mentions?.some((m) => m.type === "user" && m.mentionedUserId === meId);
       const className = selfMention
-        ? "bg-[hsl(174_70%_55%/0.25)] text-[hsl(174_85%_72%)] px-1 rounded font-semibold"
+        ? "bg-[hsl(var(--vs-accent)/0.25)] text-[hsl(var(--vs-accent))] px-1 rounded font-semibold"
         : isBroadcast
         ? "bg-[hsl(35_100%_60%/0.22)] text-[hsl(35_100%_72%)] px-1 rounded font-semibold"
-        : "bg-[hsl(199_100%_68%/0.22)] text-vs-blue-light px-1 rounded font-semibold";
+        : "bg-[hsl(var(--vs-info)/0.22)] text-vs-blue-light px-1 rounded font-semibold";
       return (
         <span key={i} className={className} data-testid={`mention-${handle}`}>
           {p}
@@ -1337,14 +1362,14 @@ function ScheduledCallCard({ meta, createdAt, meId, myRole, onJoin }: { meta: Ap
     r === "yes" ? "bg-emerald-500/15 text-emerald-300" :
     r === "no"  ? "bg-red-500/15 text-red-300" :
     r === "maybe" ? "bg-amber-500/15 text-amber-300" :
-    "bg-white/8 text-white/85";
+    "bg-[hsl(var(--vs-accent-soft))] text-[hsl(var(--vs-text-muted))]";
 
   return (
     <motion.div
       initial={{ opacity: 0, y: 6 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
-      className={`mx-2 md:mx-12 my-2 border rounded-lg p-3 ${cancelled ? "opacity-60 border-[hsl(220_40%_22%)]" : `border-${accent}/40 bg-${accent}/5`}`}
+      className={`mx-2 md:mx-12 my-2 border rounded-lg p-3 ${cancelled ? "opacity-60 border-border" : `border-${accent}/40 bg-${accent}/5`}`}
       data-testid={`scheduled-call-card-${meta.scheduledCallId}`}
     >
       <div className="flex items-start gap-3">
@@ -1358,11 +1383,11 @@ function ScheduledCallCard({ meta, createdAt, meId, myRole, onJoin }: { meta: Ap
         </button>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-[10px] font-mono uppercase tracking-wider text-[hsl(0_0%_55%)]">
+            <span className="text-[10px] font-mono uppercase tracking-wider text-[hsl(var(--vs-text-subtle))]">
               {cancelled ? "Cancelled" : started ? "Started" : meta.kind === "scheduled_call.updated" ? "Updated" : "Scheduled"}
             </span>
-            <CalendarIcon className="w-3 h-3 text-[hsl(0_0%_55%)]" />
-            <span className="text-[11px] text-[hsl(0_0%_75%)]">{whenLabel}</span>
+            <CalendarIcon className="w-3 h-3 text-[hsl(var(--vs-text-subtle))]" />
+            <span className="text-[11px] text-[hsl(var(--vs-text-muted))]">{whenLabel}</span>
             {canDelete && !cancelled && (
               <ActionPill
                 variant="danger"
@@ -1378,10 +1403,10 @@ function ScheduledCallCard({ meta, createdAt, meId, myRole, onJoin }: { meta: Ap
               </ActionPill>
             )}
           </div>
-          <div className="text-sm font-semibold text-white mt-0.5">{meta.callTitle}</div>
+          <div className="text-sm font-semibold text-[hsl(var(--vs-text))] mt-0.5">{meta.callTitle}</div>
           {!cancelled && (
             <div className="flex items-center gap-1.5 mt-2 flex-wrap">
-              <span className="text-[10px] uppercase tracking-wider text-[hsl(0_0%_55%)] font-mono">RSVP:</span>
+              <span className="text-[10px] uppercase tracking-wider text-[hsl(var(--vs-text-subtle))] font-mono">RSVP:</span>
               <ActionPill
                 variant="success"
                 onClick={() => rsvpMut.mutate("yes")}
@@ -1434,7 +1459,7 @@ function ScheduledCallCard({ meta, createdAt, meId, myRole, onJoin }: { meta: Ap
           ))}
         </div>
       )}
-      <div className="text-[10px] text-[hsl(0_0%_45%)] mt-2 text-right font-mono uppercase tracking-wider">
+      <div className="text-[10px] text-[hsl(var(--vs-text-subtle))] mt-2 text-right font-mono uppercase tracking-wider">
         {fmtTime(createdAt)}
       </div>
     </motion.div>

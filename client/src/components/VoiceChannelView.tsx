@@ -295,9 +295,9 @@ export function VoiceChannelView(props: Props) {
             </span>
           </div>
           <span className="w-px h-5 bg-[hsl(220_40%_22%)] hidden md:inline-block" />
-          <div className="flex items-center gap-2 px-2 py-1 rounded-md bg-[hsl(174_70%_55%/0.15)] border border-[hsl(174_70%_55%/0.35)] whitespace-nowrap" data-testid="indicator-live">
+          <div className="flex items-center gap-2 px-2 py-1 rounded-md bg-[hsl(var(--vs-accent)/0.15)] border border-[hsl(var(--vs-accent)/0.35)] whitespace-nowrap" data-testid="indicator-live">
             <span className="w-2 h-2 rounded-full bg-vs-red live-blink" />
-            <span className="text-[11px] font-mono font-bold text-[hsl(174_85%_72%)] tracking-wider">LIVE</span>
+            <span className="text-[11px] font-mono font-bold text-[hsl(var(--vs-accent))] tracking-wider">LIVE</span>
             <span className="text-[11px] font-mono text-white">{formatDuration(elapsed)}</span>
           </div>
           {activeRec && (
@@ -308,7 +308,7 @@ export function VoiceChannelView(props: Props) {
           )}
           {canRecord && (
             activeRec ? (
-              <button type="button" onClick={() => stopRec.mutate()} disabled={stopRec.isPending} className="px-2 py-1 rounded-md text-xs bg-vs-red/20 border border-vs-red/40 text-[hsl(174_85%_72%)] hover:bg-vs-red/30 flex items-center gap-1.5 whitespace-nowrap" title="Stop recording" data-testid="button-stop-recording">
+              <button type="button" onClick={() => stopRec.mutate()} disabled={stopRec.isPending} className="px-2 py-1 rounded-md text-xs bg-vs-red/20 border border-vs-red/40 text-[hsl(var(--vs-accent))] hover:bg-vs-red/30 flex items-center gap-1.5 whitespace-nowrap" title="Stop recording" data-testid="button-stop-recording">
                 <Square className="w-3 h-3 fill-current" /> Stop
               </button>
             ) : (
@@ -365,7 +365,7 @@ export function VoiceChannelView(props: Props) {
 
       {/* Preview banner */}
       {previewMode && (
-        <div className="px-4 py-2 bg-[hsl(199_100%_68%/0.12)] border-b border-[hsl(199_100%_68%/0.3)] flex items-center gap-2 text-xs" data-testid="banner-demo-mode">
+        <div className="px-4 py-2 bg-[hsl(var(--vs-info)/0.12)] border-b border-[hsl(var(--vs-info)/0.3)] flex items-center gap-2 text-xs" data-testid="banner-demo-mode">
           <Sparkles className="w-3.5 h-3.5 text-vs-blue shrink-0" />
           <div className="text-[hsl(0_0%_85%)]">
             <span className="text-vs-blue-light font-semibold">Demo mode · </span>
@@ -380,18 +380,18 @@ export function VoiceChannelView(props: Props) {
         </div>
       )}
       {(error || lk.error) && !previewMode && (
-        <div className="px-4 py-2 bg-[hsl(174_70%_55%/0.12)] border-b border-[hsl(174_70%_55%/0.4)] flex items-center gap-2 text-xs">
+        <div className="px-4 py-2 bg-[hsl(var(--vs-accent)/0.12)] border-b border-[hsl(var(--vs-accent)/0.4)] flex items-center gap-2 text-xs">
           <AlertTriangle className="w-3.5 h-3.5 text-vs-red" />
-          <span className="text-[hsl(174_85%_75%)]">{error ?? lk.error}</span>
+          <span className="text-[hsl(var(--vs-accent))]">{error ?? lk.error}</span>
         </div>
       )}
       {dialAbsentToast && (
         <div
-          className="px-4 py-2 bg-[hsl(199_100%_68%/0.12)] border-b border-[hsl(199_100%_68%/0.35)] flex items-center gap-2 text-xs"
+          className="px-4 py-2 bg-[hsl(var(--vs-info)/0.12)] border-b border-[hsl(var(--vs-info)/0.35)] flex items-center gap-2 text-xs"
           data-testid="banner-dial-absent"
         >
           <Phone className="w-3.5 h-3.5 text-vs-blue-light" />
-          <span className="text-[hsl(199_100%_82%)]">{dialAbsentToast}</span>
+          <span className="text-[hsl(var(--vs-info))]">{dialAbsentToast}</span>
         </div>
       )}
 
@@ -479,8 +479,8 @@ export function VoiceChannelView(props: Props) {
             // 16:9 surface filling 100% width of a phone (~720px tall on
             // a 9:19.5 viewport) eats the entire vertical budget and the
             // mic/cam/leave row disappears below the fold.
-            <div className="max-w-5xl mx-auto mt-4 rounded-lg overflow-hidden border border-[hsl(199_100%_68%/0.4)] bg-black">
-              <div className="px-4 py-2 bg-[hsl(199_100%_68%/0.1)] border-b border-[hsl(199_100%_68%/0.3)] flex items-center gap-3 text-sm">
+            <div className="max-w-5xl mx-auto mt-4 rounded-lg overflow-hidden border border-[hsl(var(--vs-info)/0.4)] bg-black">
+              <div className="px-4 py-2 bg-[hsl(var(--vs-info)/0.1)] border-b border-[hsl(var(--vs-info)/0.3)] flex items-center gap-3 text-sm">
                 <MonitorUp className="w-4 h-4 text-vs-blue" />
                 <span className="font-semibold text-vs-blue-light">
                   {realScreenSharer.id === me.id ? "You are " : `${realScreenSharer.name} is `}
@@ -491,7 +491,7 @@ export function VoiceChannelView(props: Props) {
               <ScreenShareVideo track={realScreenSharer.live?.screenTrack ?? null} />
             </div>
           ) : (myScreenSharing || screenSharerId) && (
-            <div className="max-w-5xl mx-auto mt-4 px-4 py-3 rounded-lg bg-[hsl(199_100%_68%/0.1)] border border-[hsl(199_100%_68%/0.3)] flex items-center gap-3">
+            <div className="max-w-5xl mx-auto mt-4 px-4 py-3 rounded-lg bg-[hsl(var(--vs-info)/0.1)] border border-[hsl(var(--vs-info)/0.3)] flex items-center gap-3">
               <MonitorUp className="w-5 h-5 text-vs-blue" />
               <div className="text-sm text-white">
                 <span className="font-semibold text-vs-blue-light">
@@ -506,7 +506,7 @@ export function VoiceChannelView(props: Props) {
             <PastRecordingsPanel recordings={recordingsQ.data ?? []} />
           )}
           {startRec.isError && (
-            <div className="max-w-5xl mx-auto mt-4 px-4 py-2 rounded-md bg-vs-red/10 border border-vs-red/30 text-xs text-[hsl(174_85%_75%)]" data-testid="banner-recording-error">
+            <div className="max-w-5xl mx-auto mt-4 px-4 py-2 rounded-md bg-vs-red/10 border border-vs-red/30 text-xs text-[hsl(var(--vs-accent))]" data-testid="banner-recording-error">
               Recording failed to start. Ensure LiveKit credentials and S3 storage are configured.
             </div>
           )}
@@ -592,7 +592,7 @@ export function VoiceChannelView(props: Props) {
           {lk.status === "connecting" || lk.status === "reconnecting" ? (
             <><Loader2 className="w-3 h-3 animate-spin text-vs-amber" /><span className="text-vs-amber uppercase tracking-wider">{lk.status === "reconnecting" ? "Reconnecting" : "Connecting to call"}…</span><span className="text-[hsl(0_0%_55%)]">mic & video unlock when ready</span></>
           ) : lk.status === "failed" ? (
-            <><AlertTriangle className="w-3 h-3 text-[hsl(174_85%_72%)]" /><span className="text-[hsl(174_85%_72%)] uppercase tracking-wider">Call failed</span><span className="text-[hsl(0_0%_55%)]">{lk.error ?? "Tap Leave and rejoin"}</span></>
+            <><AlertTriangle className="w-3 h-3 text-[hsl(var(--vs-accent))]" /><span className="text-[hsl(var(--vs-accent))] uppercase tracking-wider">Call failed</span><span className="text-[hsl(0_0%_55%)]">{lk.error ?? "Tap Leave and rejoin"}</span></>
           ) : (
             <><Loader2 className="w-3 h-3 animate-spin text-[hsl(0_0%_55%)]" /><span className="text-[hsl(0_0%_55%)] uppercase tracking-wider">Waiting for media…</span></>
           )}
@@ -695,7 +695,7 @@ export function VoiceChannelView(props: Props) {
           }}
           title="Leave call"
           data-testid="button-call-leave"
-          className="h-11 px-5 rounded-full bg-vs-red hover:bg-[hsl(174_75%_60%)] text-white flex items-center gap-2 transition-colors shadow-lg shadow-red-900/30"
+          className="h-11 px-5 rounded-full bg-vs-red hover:bg-[hsl(var(--vs-red-bright))] text-white flex items-center gap-2 transition-colors shadow-lg shadow-red-900/30"
         >
           <PhoneOff className="w-4 h-4" />
           <span className="text-sm font-semibold">Leave</span>
@@ -842,7 +842,7 @@ function InviteModal({
                   key={u.id}
                   type="button"
                   onClick={() => togglePick(u.id)}
-                  className={`w-full flex items-center gap-3 px-3 py-2 rounded-md text-left hover:bg-[hsl(220_45%_18%)] ${checked ? "bg-[hsl(199_100%_68%/0.12)] ring-1 ring-[hsl(199_100%_68%/0.4)]" : ""}`}
+                  className={`w-full flex items-center gap-3 px-3 py-2 rounded-md text-left hover:bg-[hsl(220_45%_18%)] ${checked ? "bg-[hsl(var(--vs-info)/0.12)] ring-1 ring-[hsl(var(--vs-info)/0.4)]" : ""}`}
                   data-testid={`button-invite-pick-${u.id}`}
                 >
                   <Avatar member={u} size={28} />
@@ -888,7 +888,7 @@ function InviteModal({
           {phoneNumbers.length > 0 && (
             <div className="mt-2 flex flex-wrap gap-1.5">
               {phoneNumbers.map(p => (
-                <span key={p} className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-[hsl(199_100%_68%/0.15)] border border-[hsl(199_100%_68%/0.35)] text-vs-blue-light text-[11px] font-mono">
+                <span key={p} className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-[hsl(var(--vs-info)/0.15)] border border-[hsl(var(--vs-info)/0.35)] text-vs-blue-light text-[11px] font-mono">
                   {p}
                   <button type="button" onClick={() => setPhoneNumbers(prev => prev.filter(x => x !== p))} className="hover:text-white" title="Remove">
                     <X className="w-3 h-3" />
@@ -918,7 +918,7 @@ function InviteModal({
           </div>
         </div>
         {inviteMutation.isError && (
-          <div className="px-5 pb-3 text-[11px] text-[hsl(174_85%_72%)]" data-testid="text-invite-error">
+          <div className="px-5 pb-3 text-[11px] text-[hsl(var(--vs-accent))]" data-testid="text-invite-error">
             Invite failed — check server logs or try again.
           </div>
         )}
@@ -1129,7 +1129,7 @@ function CallButton({
             ? "bg-[hsl(220_45%_27%)] hover:bg-[hsl(220_45%_32%)] text-[hsl(0_0%_85%)]"
             : on
               ? "bg-[hsl(220_45%_27%)] hover:bg-[hsl(220_45%_32%)] text-white"
-              : "bg-[hsl(174_70%_55%/0.2)] hover:bg-[hsl(174_70%_55%/0.3)] text-[hsl(174_85%_72%)] ring-1 ring-[hsl(174_70%_55%/0.4)]",
+              : "bg-[hsl(var(--vs-accent)/0.2)] hover:bg-[hsl(var(--vs-accent)/0.3)] text-[hsl(var(--vs-accent))] ring-1 ring-[hsl(var(--vs-accent)/0.4)]",
         className ?? "",
       ].join(" ")}
     >
@@ -1152,7 +1152,7 @@ function CallSidebar({
 
       <div className="flex-1 overflow-y-auto px-2 py-2 space-y-0.5">
         {screenSharerId && (
-          <div className="px-2 py-1.5 mb-2 rounded-md bg-[hsl(199_100%_68%/0.1)] border border-[hsl(199_100%_68%/0.3)]">
+          <div className="px-2 py-1.5 mb-2 rounded-md bg-[hsl(var(--vs-info)/0.1)] border border-[hsl(var(--vs-info)/0.3)]">
             <div className="text-[9px] uppercase tracking-wider text-vs-blue-light font-bold">Sharing screen</div>
             <div className="text-xs text-white mt-0.5">{fullCallList.find(m => m.id === screenSharerId)?.name}</div>
           </div>
@@ -1221,7 +1221,7 @@ function PastRecordingsPanel({ recordings }: { recordings: ApiRecording[] }) {
                 <td className="px-4 py-2 text-[hsl(0_0%_75%)] font-mono text-xs">{fmtDur(r.durationSeconds)}</td>
                 <td className="px-4 py-2 text-[hsl(0_0%_75%)] font-mono text-xs">{fmtBytes(r.sizeBytes)}</td>
                 <td className="px-4 py-2">
-                  <span className={`text-[10px] uppercase font-mono px-2 py-0.5 rounded border ${r.status === "completed" ? "bg-vs-green/15 text-vs-green border-vs-green/30" : r.status === "failed" ? "bg-vs-red/15 text-[hsl(174_85%_72%)] border-vs-red/30" : "bg-vs-blue/15 text-vs-blue-light border-vs-blue/30"}`}>
+                  <span className={`text-[10px] uppercase font-mono px-2 py-0.5 rounded border ${r.status === "completed" ? "bg-vs-green/15 text-vs-green border-vs-green/30" : r.status === "failed" ? "bg-vs-red/15 text-[hsl(var(--vs-accent))] border-vs-red/30" : "bg-vs-blue/15 text-vs-blue-light border-vs-blue/30"}`}>
                     {r.status}
                   </span>
                 </td>

@@ -2,11 +2,12 @@
 @tailwind components;
 @tailwind utilities;
 
-/* BULLDOG CHAT — refreshed palette
-   Teal + off-white, light mode is default and primary; dark is opt-in.
-   The legacy --vs-* variable NAMES are preserved (lots of code references
-   them) but their VALUES are remapped onto the teal palette so any
-   not-yet-swept hard-coded usage degrades gracefully into the new look. */
+/* BULLDOG CHAT — Vector brand palette
+   White surfaces, Vector navy text, Vector deep-blue accent. Light mode is
+   default and primary; dark is opt-in. The legacy --vs-* variable NAMES are
+   preserved (lots of code references them) but their VALUES are remapped onto
+   the Vector blue palette so any not-yet-swept hard-coded usage degrades
+   gracefully into the new look. */
 
 :root {
   /* Light is now the primary theme. */
@@ -15,40 +16,40 @@
   --opaque-button-border-intensity: -8;
   --elevate-1: rgba(0, 0, 0, 0.04);
   --elevate-2: rgba(0, 0, 0, 0.08);
-  --background: 60 20% 98%;          /* warm off-white */
-  --foreground: 215 28% 17%;
-  --border: 215 16% 88%;
+  --background: 0 0% 100%;            /* pure white */
+  --foreground: 232 50% 20%;         /* Vector navy #191E4A */
+  --border: 215 20% 88%;
   --card: 0 0% 100%;
-  --card-foreground: 215 28% 17%;
-  --card-border: 215 16% 88%;
-  --sidebar: 60 14% 96%;
-  --sidebar-foreground: 215 28% 17%;
-  --sidebar-border: 215 16% 88%;
-  --sidebar-primary: 174 76% 26%;    /* teal CTA */
+  --card-foreground: 232 50% 20%;
+  --card-border: 215 20% 88%;
+  --sidebar: 210 20% 98%;            /* very subtle cool gray */
+  --sidebar-foreground: 232 50% 20%;
+  --sidebar-border: 215 20% 88%;
+  --sidebar-primary: 207 63% 36%;    /* Vector deep blue #226294 */
   --sidebar-primary-foreground: 0 0% 100%;
-  --sidebar-accent: 174 30% 92%;
-  --sidebar-accent-foreground: 174 76% 20%;
-  --sidebar-ring: 174 76% 26%;
+  --sidebar-accent: 207 60% 95%;
+  --sidebar-accent-foreground: 207 63% 30%;
+  --sidebar-ring: 207 63% 36%;
   --popover: 0 0% 100%;
-  --popover-foreground: 215 28% 17%;
-  --popover-border: 215 16% 88%;
-  --primary: 174 76% 26%;            /* teal */
+  --popover-foreground: 232 50% 20%;
+  --popover-border: 215 20% 88%;
+  --primary: 207 63% 36%;            /* Vector deep blue */
   --primary-foreground: 0 0% 100%;
-  --secondary: 60 14% 94%;
-  --secondary-foreground: 215 28% 17%;
-  --muted: 60 14% 94%;
-  --muted-foreground: 215 14% 42%;
-  --accent: 174 30% 92%;
-  --accent-foreground: 174 76% 20%;
-  --destructive: 0 72% 47%;
+  --secondary: 210 20% 96%;
+  --secondary-foreground: 232 50% 20%;
+  --muted: 210 20% 96%;
+  --muted-foreground: 222 20% 40%;
+  --accent: 207 60% 95%;
+  --accent-foreground: 207 63% 30%;
+  --destructive: 2 70% 55%;          /* Vector red #DD403D */
   --destructive-foreground: 0 0% 98%;
-  --input: 215 16% 84%;
-  --ring: 174 76% 26%;
-  --chart-1: 174 76% 26%;
-  --chart-2: 199 89% 48%;
-  --chart-3: 142 71% 45%;
-  --chart-4: 38 92% 50%;
-  --chart-5: 28 35% 58%;
+  --input: 215 20% 84%;
+  --ring: 207 63% 36%;
+  --chart-1: 207 63% 36%;
+  --chart-2: 218 100% 68%;
+  --chart-3: 150 60% 38%;
+  --chart-4: 40 65% 49%;
+  --chart-5: 222 20% 40%;
   --font-sans: "Inter", -apple-system, BlinkMacSystemFont, sans-serif;
   --font-display: "DM Sans", "Inter", sans-serif;
   --font-serif: Georgia, serif;
@@ -63,23 +64,34 @@
   --tracking-normal: 0em;
   --spacing: 0.25rem;
 
-  /* Legacy Vector brand vars — names kept, values remapped to teal so
-     unswept hard-coded usages still read on-brand. */
-  --vs-navy: 174 76% 20%;          /* was navy → deep teal */
-  --vs-navy-deep: 174 76% 14%;
-  --vs-navy-panel: 174 30% 92%;
-  --vs-navy-soft: 174 24% 88%;
-  --vs-red: 174 76% 26%;           /* was red → teal (primary accent) */
-  --vs-red-bright: 174 70% 34%;
-  --vs-blue: 199 89% 48%;          /* secondary accent → sky */
-  --vs-blue-deep: 199 89% 36%;
-  --vs-blue-light: 199 84% 58%;
-  --vs-tan: 28 35% 58%;
-  --vs-text: 215 28% 17%;
-  --vs-text-muted: 215 14% 42%;
-  --vs-text-dim: 215 12% 55%;
-  --vs-green: 142 71% 40%;          /* status only */
-  --vs-amber: 38 92% 50%;           /* status idle */
+  /* Vector brand vars — names kept, values remapped to the Vector blue
+     palette so unswept hard-coded usages still read on-brand. The dominant
+     accent token in the app is --vs-red (PR #10 history); it now carries
+     Vector deep blue rather than a literal red. Literal red lives in
+     --destructive / --vs-danger. */
+  --vs-navy: 232 50% 20%;          /* Vector navy #191E4A */
+  --vs-navy-deep: 232 55% 14%;
+  --vs-navy-panel: 207 60% 95%;
+  --vs-navy-soft: 210 20% 96%;
+  --vs-red: 2 70% 55%;             /* Vector red #DD403D — destructive states */
+  --vs-red-bright: 2 70% 48%;      /* darker red for hover */
+  --vs-accent: 207 63% 36%;        /* Vector deep blue #226294 */
+  --vs-accent-hover: 207 63% 30%;
+  --vs-accent-soft: 207 60% 95%;
+  --vs-accent-foreground: 0 0% 100%;
+  --vs-info: 218 100% 68%;         /* #5E97FF mid blue */
+  --vs-blue: 218 100% 68%;         /* secondary accent → mid blue #5E97FF */
+  --vs-blue-deep: 207 63% 36%;
+  --vs-blue-light: 218 100% 68%;
+  --vs-tan: 40 65% 49%;            /* gold #C99A2E — badges/highlights only */
+  --vs-text: 232 50% 20%;
+  --vs-text-muted: 222 20% 40%;
+  --vs-text-dim: 222 15% 55%;
+  --vs-text-subtle: 222 15% 55%;   /* alias of --vs-text-dim */
+  --vs-danger: 2 70% 55%;          /* Vector red #DD403D */
+  --vs-gold: 40 65% 49%;           /* gold #C99A2E */
+  --vs-green: 150 60% 38%;          /* status only */
+  --vs-amber: 40 65% 49%;           /* status idle → gold */
 
   --sidebar-primary-border: hsl(var(--sidebar-primary));
   --sidebar-accent-border: hsl(var(--sidebar-accent));
@@ -97,45 +109,45 @@
   --elevate-1: rgba(255, 255, 255, 0.04);
   --elevate-2: rgba(255, 255, 255, 0.08);
 
-  /* Surfaces — near-black slate */
-  --background: 220 16% 7%;
-  --foreground: 0 0% 96%;
-  --border: 220 12% 22%;
-  --card: 220 14% 11%;
-  --card-foreground: 0 0% 96%;
-  --card-border: 220 12% 22%;
+  /* Surfaces — Vector navy slate */
+  --background: 232 60% 8%;
+  --foreground: 0 0% 98%;
+  --border: 232 30% 24%;
+  --card: 232 50% 12%;
+  --card-foreground: 0 0% 98%;
+  --card-border: 232 30% 24%;
 
-  --sidebar: 220 14% 10%;
+  --sidebar: 232 50% 12%;
   --sidebar-foreground: 0 0% 92%;
-  --sidebar-border: 220 14% 16%;
-  --sidebar-primary: 173 65% 42%;    /* brighter teal on dark */
-  --sidebar-primary-foreground: 220 16% 7%;
-  --sidebar-accent: 220 14% 16%;
-  --sidebar-accent-foreground: 0 0% 96%;
-  --sidebar-ring: 173 65% 42%;
+  --sidebar-border: 232 30% 24%;
+  --sidebar-primary: 218 100% 68%;    /* brighter blue on dark */
+  --sidebar-primary-foreground: 232 60% 8%;
+  --sidebar-accent: 232 45% 16%;
+  --sidebar-accent-foreground: 0 0% 98%;
+  --sidebar-ring: 218 100% 68%;
 
-  --popover: 220 14% 11%;
-  --popover-foreground: 0 0% 96%;
-  --popover-border: 220 12% 22%;
+  --popover: 232 50% 12%;
+  --popover-foreground: 0 0% 98%;
+  --popover-border: 232 30% 24%;
 
-  --primary: 173 65% 42%;            /* teal */
-  --primary-foreground: 220 16% 7%;
-  --secondary: 220 14% 16%;
-  --secondary-foreground: 0 0% 96%;
-  --muted: 220 14% 16%;
-  --muted-foreground: 0 0% 70%;
-  --accent: 220 14% 18%;
-  --accent-foreground: 173 65% 60%;
-  --destructive: 0 72% 51%;
+  --primary: 218 100% 68%;            /* Vector blue */
+  --primary-foreground: 232 60% 8%;
+  --secondary: 232 45% 16%;
+  --secondary-foreground: 0 0% 98%;
+  --muted: 232 45% 16%;
+  --muted-foreground: 220 15% 70%;
+  --accent: 232 45% 18%;
+  --accent-foreground: 218 100% 75%;
+  --destructive: 2 70% 55%;
   --destructive-foreground: 0 0% 100%;
-  --input: 220 12% 24%;
-  --ring: 173 65% 42%;
+  --input: 232 30% 26%;
+  --ring: 218 100% 68%;
 
-  --chart-1: 173 65% 42%;
-  --chart-2: 199 89% 58%;
-  --chart-3: 142 71% 50%;
-  --chart-4: 38 92% 56%;
-  --chart-5: 28 35% 62%;
+  --chart-1: 218 100% 68%;
+  --chart-2: 207 63% 56%;
+  --chart-3: 150 60% 50%;
+  --chart-4: 40 65% 56%;
+  --chart-5: 220 15% 70%;
 
   --shadow-sm: 0 1px 2px hsl(0 0% 0% / 0.3);
   --shadow: 0 2px 6px hsl(0 0% 0% / 0.4);
@@ -144,21 +156,30 @@
   --shadow-xl: 0 20px 40px hsl(0 0% 0% / 0.7);
   --shadow-2xl: 0 30px 60px hsl(0 0% 0% / 0.8);
 
-  /* Legacy --vs-* remapped for dark. */
-  --vs-navy: 173 65% 32%;
-  --vs-navy-deep: 173 65% 22%;
-  --vs-navy-panel: 220 14% 16%;
-  --vs-navy-soft: 220 14% 20%;
-  --vs-red: 173 65% 42%;
-  --vs-red-bright: 173 60% 52%;
-  --vs-blue: 199 89% 58%;
-  --vs-blue-deep: 199 89% 44%;
-  --vs-blue-light: 199 84% 66%;
-  --vs-text: 0 0% 96%;
-  --vs-text-muted: 0 0% 75%;
-  --vs-text-dim: 0 0% 58%;
-  --vs-green: 142 71% 50%;
-  --vs-amber: 38 92% 56%;
+  /* Vector --vs-* remapped for dark. */
+  --vs-navy: 232 45% 20%;
+  --vs-navy-deep: 232 50% 14%;
+  --vs-navy-panel: 232 45% 16%;
+  --vs-navy-soft: 232 40% 20%;
+  --vs-red: 2 70% 58%;             /* Vector red — destructive states (dark) */
+  --vs-red-bright: 2 70% 50%;
+  --vs-accent: 218 100% 68%;
+  --vs-accent-hover: 218 100% 60%;
+  --vs-accent-soft: 232 45% 18%;
+  --vs-accent-foreground: 232 60% 8%;
+  --vs-info: 218 100% 72%;
+  --vs-blue: 218 100% 72%;
+  --vs-blue-deep: 207 63% 56%;
+  --vs-blue-light: 218 100% 78%;
+  --vs-tan: 40 65% 56%;
+  --vs-text: 0 0% 98%;
+  --vs-text-muted: 220 15% 70%;
+  --vs-text-dim: 220 12% 58%;
+  --vs-text-subtle: 220 12% 58%;
+  --vs-danger: 2 70% 58%;
+  --vs-gold: 40 65% 56%;
+  --vs-green: 150 60% 50%;
+  --vs-amber: 40 65% 56%;
 
   --sidebar-primary-border: hsl(var(--sidebar-primary));
   --sidebar-accent-border: hsl(var(--sidebar-accent));
@@ -214,16 +235,23 @@
   .vs-navy-soft { background-color: hsl(var(--vs-navy-soft)); }
   .text-vs-red { color: hsl(var(--vs-red)); }
   .text-vs-red-bright { color: hsl(var(--vs-red-bright)); }
+  .text-vs-accent { color: hsl(var(--vs-accent)); }
+  .bg-vs-accent { background-color: hsl(var(--vs-accent)); }
+  .border-vs-accent { border-color: hsl(var(--vs-accent)); }
   .text-vs-blue { color: hsl(var(--vs-blue)); }
   .text-vs-blue-deep { color: hsl(var(--vs-blue-deep)); }
   .text-vs-blue-light { color: hsl(var(--vs-blue-light)); }
   .text-vs-tan { color: hsl(var(--vs-tan)); }
+  .text-vs-gold { color: hsl(var(--vs-gold)); }
+  .text-vs-danger { color: hsl(var(--vs-danger)); }
   .text-vs-green { color: hsl(var(--vs-green)); }
   .text-vs-amber { color: hsl(var(--vs-amber)); }
   .bg-vs-red { background-color: hsl(var(--vs-red)); }
   .bg-vs-blue { background-color: hsl(var(--vs-blue)); }
   .bg-vs-blue-deep { background-color: hsl(var(--vs-blue-deep)); }
   .bg-vs-tan { background-color: hsl(var(--vs-tan)); }
+  .bg-vs-gold { background-color: hsl(var(--vs-gold)); }
+  .bg-vs-danger { background-color: hsl(var(--vs-danger)); }
   .bg-vs-green { background-color: hsl(var(--vs-green)); }
   .ring-vs-red { --tw-ring-color: hsl(var(--vs-red)); }
   .ring-vs-blue { --tw-ring-color: hsl(var(--vs-blue)); }

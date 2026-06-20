@@ -245,7 +245,7 @@ export function MeetingClerkButton({ channelId, canControl, roomName, compact }:
           type="button"
           onClick={() => stopMutation.mutate()}
           disabled={stopMutation.isPending}
-          className={`${baseClass} bg-vs-red/20 border border-vs-red/40 text-[hsl(174_85%_72%)] hover:bg-vs-red/30`}
+          className={`${baseClass} bg-vs-red/20 border border-vs-red/40 text-[hsl(var(--vs-accent))] hover:bg-vs-red/30`}
           title="Stop AI clerk"
           data-testid="button-stop-clerk"
         >
@@ -291,7 +291,7 @@ export function MeetingClerkButton({ channelId, canControl, roomName, compact }:
           type="button"
           onClick={() => stopMutation.mutate()}
           disabled={stopMutation.isPending}
-          className="px-2 py-1 rounded-md text-xs bg-vs-red/20 border border-vs-red/40 text-[hsl(174_85%_72%)] hover:bg-vs-red/30 flex items-center gap-1.5 whitespace-nowrap"
+          className="px-2 py-1 rounded-md text-xs bg-vs-red/20 border border-vs-red/40 text-[hsl(var(--vs-accent))] hover:bg-vs-red/30 flex items-center gap-1.5 whitespace-nowrap"
           title="Stop AI clerk"
           data-testid="button-stop-clerk"
         >
@@ -320,7 +320,7 @@ export function MeetingClerkButton({ channelId, canControl, roomName, compact }:
       ) : null}
       {error && (
         <div
-          className="flex items-center gap-1 text-[10px] text-[hsl(174_85%_75%)] max-w-[180px] truncate"
+          className="flex items-center gap-1 text-[10px] text-[hsl(var(--vs-accent))] max-w-[180px] truncate"
           title={error}
         >
           <AlertTriangle className="w-3 h-3" />
@@ -356,7 +356,7 @@ export function MeetingClerkBanner({ channelId }: { channelId: number }) {
     <div
       className={`px-4 py-2 border-b flex items-center gap-2 text-xs ${
         isLive
-          ? "bg-[hsl(199_100%_68%/0.12)] border-[hsl(199_100%_68%/0.3)]"
+          ? "bg-[hsl(var(--vs-info)/0.12)] border-[hsl(var(--vs-info)/0.3)]"
           : "bg-[hsl(220_50%_18%)] border-[hsl(220_40%_25%)]"
       }`}
       data-testid="banner-clerk-active"

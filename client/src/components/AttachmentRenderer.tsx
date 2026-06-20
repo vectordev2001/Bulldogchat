@@ -61,7 +61,7 @@ export function AttachmentList({ atts }: { atts: ApiAttachment[] }) {
               className="flex items-center gap-3 px-3 py-2 rounded-lg bg-[hsl(220_50%_16%)] border border-[hsl(220_40%_22%)] hover:border-vs-red transition-colors group"
               data-testid={`attachment-file-${a.id}`}
             >
-              <div className="w-9 h-9 rounded-md bg-[hsl(174_70%_55%/0.18)] border border-[hsl(174_70%_55%/0.4)] flex items-center justify-center shrink-0">
+              <div className="w-9 h-9 rounded-md bg-[hsl(var(--vs-accent)/0.18)] border border-[hsl(var(--vs-accent)/0.4)] flex items-center justify-center shrink-0">
                 <FileText className="w-4 h-4 text-vs-red" />
               </div>
               <div className="min-w-0 flex-1">

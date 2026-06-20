@@ -23,22 +23,22 @@ interface Props {
 // legacy `status` values (idle/dnd) are kept as aliases so older rows still
 // render correctly until v11/v12 backfills land everywhere.
 export const PRESENCE_COLOR: Record<string, string> = {
-  online: "hsl(145 60% 48%)",   // green
-  away: "hsl(45 100% 55%)",     // yellow
-  busy: "hsl(174 70% 55%)",       // red
+  online: "hsl(150 60% 38%)",   // green
+  away: "hsl(40 65% 49%)",     // gold
+  busy: "hsl(2 70% 55%)",       // red
   offline: "hsl(220 10% 45%)",  // grey
   // legacy aliases
-  idle: "hsl(45 100% 55%)",
-  dnd: "hsl(174 70% 55%)",
+  idle: "hsl(40 65% 49%)",
+  dnd: "hsl(2 70% 55%)",
 };
 const STATUS_COLOR = PRESENCE_COLOR;
 
 const RING_COLOR: Record<string, string> = {
   none: "transparent",
-  red: "hsl(174 70% 55%)",
-  blue: "hsl(199 100% 68%)",
-  green: "hsl(145 60% 48%)",
-  amber: "hsl(35 100% 60%)",
+  red: "hsl(2 70% 55%)",
+  blue: "hsl(218 100% 68%)",
+  green: "hsl(150 60% 38%)",
+  amber: "hsl(40 65% 49%)",
 };
 
 function initialsFor(m: AvatarMember): string {

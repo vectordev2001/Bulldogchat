@@ -118,7 +118,7 @@ export function ThreadPanel({ parentMessage, channelId, me, onClose }: Props) {
                 type="button"
                 onClick={submit}
                 disabled={!draft.trim() || sendReply.isPending}
-                className="w-8 h-8 rounded-md bg-vs-red text-white flex items-center justify-center hover:bg-[hsl(174_75%_60%)] transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                className="w-8 h-8 rounded-md bg-vs-red text-white flex items-center justify-center hover:bg-[hsl(var(--vs-red-bright))] transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                 title="Send (Enter)"
                 data-testid="button-thread-send"
               >

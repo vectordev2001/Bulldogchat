@@ -67,7 +67,7 @@ export default function AcceptInvite() {
       )}
 
       {infoError && (
-        <div className="text-sm rounded-md bg-[hsl(174_70%_55%/0.12)] border border-[hsl(174_70%_55%/0.4)] text-[hsl(174_85%_72%)] px-4 py-3" data-testid="text-info-error">
+        <div className="text-sm rounded-md bg-[hsl(var(--vs-accent)/0.12)] border border-[hsl(var(--vs-accent)/0.4)] text-[hsl(var(--vs-accent))] px-4 py-3" data-testid="text-info-error">
           {infoError}
         </div>
       )}
@@ -82,13 +82,13 @@ export default function AcceptInvite() {
           </Field>
 
           {error && (
-            <div className="text-[12.5px] rounded-md bg-[hsl(174_70%_55%/0.12)] border border-[hsl(174_70%_55%/0.4)] text-[hsl(174_85%_72%)] px-3 py-2" data-testid="text-error">{error}</div>
+            <div className="text-[12.5px] rounded-md bg-[hsl(var(--vs-accent)/0.12)] border border-[hsl(var(--vs-accent)/0.4)] text-[hsl(var(--vs-accent))] px-3 py-2" data-testid="text-error">{error}</div>
           )}
 
           <button
             type="submit"
             disabled={submitting}
-            className="w-full h-11 rounded-lg bg-vs-red hover:bg-[hsl(174_75%_60%)] text-white font-semibold flex items-center justify-center gap-2 transition-colors disabled:opacity-50"
+            className="w-full h-11 rounded-lg bg-vs-red hover:bg-[hsl(var(--vs-red-bright))] text-white font-semibold flex items-center justify-center gap-2 transition-colors disabled:opacity-50"
             data-testid="button-submit-invite"
           >
             {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <>Accept invite <ArrowRight className="w-4 h-4" /></>}
