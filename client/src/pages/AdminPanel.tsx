@@ -25,22 +25,22 @@ export default function AdminPanel() {
   }
   if (user.role !== "admin") {
     return (
-      <div className="min-h-screen flex flex-col items-center justify-center bg-[hsl(232_60%_9%)] text-white gap-4 p-6 text-center">
+      <div className="min-h-screen flex flex-col items-center justify-center bg-[hsl(220_60%_9%)] text-white gap-4 p-6 text-center">
         <VectorLogo size={48} className="text-vs-red" monochrome />
         <h1 className="text-xl font-display">Admin access required</h1>
         <p className="text-sm text-white/60 max-w-md">You don't have permission to view the admin panel.</p>
-        <button onClick={() => setLocation("/")} className="px-4 py-2 bg-vs-red rounded-md hover:bg-[hsl(2_75%_60%)] text-sm font-semibold">Back to chat</button>
+        <button onClick={() => setLocation("/")} className="px-4 py-2 bg-vs-red rounded-md hover:bg-[hsl(174_75%_60%)] text-sm font-semibold">Back to chat</button>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen flex flex-col bg-[hsl(232_60%_9%)] text-white">
-      <header className="h-14 px-4 flex items-center gap-3 border-b border-[hsl(232_40%_22%)] bg-[hsl(232_60%_12%)] shrink-0">
+    <div className="min-h-screen flex flex-col bg-[hsl(220_60%_9%)] text-white">
+      <header className="h-14 px-4 flex items-center gap-3 border-b border-[hsl(220_40%_22%)] bg-[hsl(220_60%_12%)] shrink-0">
         <button
           type="button"
           onClick={() => setLocation("/")}
-          className="p-2 rounded hover:bg-[hsl(232_45%_22%)] text-[hsl(0_0%_75%)] hover:text-white"
+          className="p-2 rounded hover:bg-[hsl(220_45%_22%)] text-[hsl(0_0%_75%)] hover:text-white"
           title="Back to chat"
           data-testid="button-back-to-chat"
         >
@@ -52,7 +52,7 @@ export default function AdminPanel() {
       </header>
 
       <div className="flex-1 flex min-h-0">
-        <nav className="w-56 shrink-0 border-r border-[hsl(232_40%_22%)] bg-[hsl(232_55%_11%)] py-3 px-2 space-y-1" data-testid="nav-admin-tabs">
+        <nav className="w-56 shrink-0 border-r border-[hsl(220_40%_22%)] bg-[hsl(220_55%_11%)] py-3 px-2 space-y-1" data-testid="nav-admin-tabs">
           <NavBtn icon={<UsersIcon className="w-4 h-4" />} label="Users" active={tab === "users"} onClick={() => setTab("users")} />
           <NavBtn icon={<FolderKanban className="w-4 h-4" />} label="Projects" active={tab === "projects"} onClick={() => setTab("projects")} />
           <NavBtn icon={<Mail className="w-4 h-4" />} label="Invites" active={tab === "invites"} onClick={() => setTab("invites")} />
@@ -76,7 +76,7 @@ function NavBtn({ icon, label, active, onClick }: { icon: React.ReactNode; label
       onClick={onClick}
       className={[
         "w-full text-left flex items-center gap-2 px-3 py-2 rounded-md text-sm transition-colors",
-        active ? "bg-vs-red/15 text-vs-red border border-vs-red/30" : "text-[hsl(0_0%_75%)] hover:bg-[hsl(232_45%_22%)] hover:text-white border border-transparent",
+        active ? "bg-vs-red/15 text-vs-red border border-vs-red/30" : "text-[hsl(0_0%_75%)] hover:bg-[hsl(220_45%_22%)] hover:text-white border border-transparent",
       ].join(" ")}
       data-testid={`tab-${label.toLowerCase()}`}
     >
@@ -117,9 +117,9 @@ function UsersTab() {
   return (
     <div>
       <h1 className="text-xl font-display mb-4">Team Members <span className="text-sm text-[hsl(0_0%_55%)] font-sans">· {users.length}</span></h1>
-      <div className="rounded-lg border border-[hsl(232_40%_22%)] overflow-hidden">
+      <div className="rounded-lg border border-[hsl(220_40%_22%)] overflow-hidden">
         <table className="w-full text-sm">
-          <thead className="bg-[hsl(232_55%_14%)] text-[10px] uppercase tracking-wider text-[hsl(0_0%_60%)]">
+          <thead className="bg-[hsl(220_55%_14%)] text-[10px] uppercase tracking-wider text-[hsl(0_0%_60%)]">
             <tr>
               <th className="text-left px-4 py-2">Member</th>
               <th className="text-left px-4 py-2">Role</th>
@@ -129,7 +129,7 @@ function UsersTab() {
           </thead>
           <tbody>
             {users.map((u) => (
-              <tr key={u.id} className="border-t border-[hsl(232_40%_22%)] hover:bg-[hsl(232_45%_15%)]" data-testid={`user-row-${u.id}`}>
+              <tr key={u.id} className="border-t border-[hsl(220_40%_22%)] hover:bg-[hsl(220_45%_15%)]" data-testid={`user-row-${u.id}`}>
                 <td className="px-4 py-3">
                   <div className="flex items-center gap-3">
                     <Avatar member={{ name: u.name, hue: u.hue }} size={32} />
@@ -141,7 +141,7 @@ function UsersTab() {
                 </td>
                 <td className="px-4 py-3">
                   <select
-                    className="bg-[hsl(232_55%_14%)] border border-[hsl(232_40%_22%)] text-xs rounded px-2 py-1 text-white"
+                    className="bg-[hsl(220_55%_14%)] border border-[hsl(220_40%_22%)] text-xs rounded px-2 py-1 text-white"
                     value={u.role}
                     onChange={(e) => patchUser.mutate({ id: u.id, patch: { role: e.target.value } })}
                     data-testid={`select-role-${u.id}`}
@@ -150,7 +150,7 @@ function UsersTab() {
                   </select>
                 </td>
                 <td className="px-4 py-3">
-                  <span className={`text-[10px] uppercase font-mono tracking-wider px-2 py-0.5 rounded border ${u.status === "online" ? "bg-vs-green/15 text-vs-green border-vs-green/30" : "bg-[hsl(232_45%_22%)] text-[hsl(0_0%_70%)] border-[hsl(232_40%_30%)]"}`}>
+                  <span className={`text-[10px] uppercase font-mono tracking-wider px-2 py-0.5 rounded border ${u.status === "online" ? "bg-vs-green/15 text-vs-green border-vs-green/30" : "bg-[hsl(220_45%_22%)] text-[hsl(0_0%_70%)] border-[hsl(220_40%_30%)]"}`}>
                     {u.status}
                   </span>
                 </td>
@@ -179,7 +179,7 @@ function UsersTab() {
           <div className="text-xs uppercase font-mono tracking-wider text-[hsl(35_100%_72%)] mb-1">Temporary password issued for user #{tempPw.id}</div>
           <div className="flex items-center gap-2">
             <code className="px-3 py-1.5 bg-black/40 rounded font-mono text-vs-amber text-base flex-1">{tempPw.pw}</code>
-            <button type="button" onClick={() => { navigator.clipboard.writeText(tempPw.pw); }} className="px-3 py-1.5 bg-[hsl(232_45%_22%)] hover:bg-[hsl(232_45%_28%)] rounded text-sm">Copy</button>
+            <button type="button" onClick={() => { navigator.clipboard.writeText(tempPw.pw); }} className="px-3 py-1.5 bg-[hsl(220_45%_22%)] hover:bg-[hsl(220_45%_28%)] rounded text-sm">Copy</button>
             <button type="button" onClick={() => setTempPw(null)} className="px-3 py-1.5 text-[hsl(0_0%_60%)] hover:text-white text-sm">Dismiss</button>
           </div>
         </div>
@@ -206,7 +206,7 @@ function ProjectsTab() {
       <h1 className="text-xl font-display mb-4">Projects <span className="text-sm text-[hsl(0_0%_55%)] font-sans">· {projects.length}</span></h1>
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
         {projects.map((p) => (
-          <div key={p.id} className="p-4 rounded-lg bg-[hsl(232_50%_14%)] border border-[hsl(232_40%_22%)]" data-testid={`project-card-${p.id}`}>
+          <div key={p.id} className="p-4 rounded-lg bg-[hsl(220_50%_14%)] border border-[hsl(220_40%_22%)]" data-testid={`project-card-${p.id}`}>
             <div className="flex items-center gap-3 mb-3">
               <div
                 className="w-11 h-11 rounded-lg font-display flex items-center justify-center text-white text-sm"
@@ -260,10 +260,10 @@ function InvitesTab() {
   return (
     <div>
       <h1 className="text-xl font-display mb-4">Invites</h1>
-      <div className="mb-4 p-4 rounded-lg bg-[hsl(232_50%_14%)] border border-[hsl(232_40%_22%)] flex items-center gap-3">
+      <div className="mb-4 p-4 rounded-lg bg-[hsl(220_50%_14%)] border border-[hsl(220_40%_22%)] flex items-center gap-3">
         <span className="text-sm text-[hsl(0_0%_75%)]">Generate invite for role:</span>
         <select
-          className="bg-[hsl(232_55%_18%)] border border-[hsl(232_40%_22%)] text-sm rounded px-2 py-1.5 text-white"
+          className="bg-[hsl(220_55%_18%)] border border-[hsl(220_40%_22%)] text-sm rounded px-2 py-1.5 text-white"
           value={role}
           onChange={(e) => setRole(e.target.value as UserRole)}
           data-testid="select-invite-role"
@@ -274,16 +274,16 @@ function InvitesTab() {
           type="button"
           onClick={() => createInvite.mutate()}
           disabled={createInvite.isPending}
-          className="px-3 py-1.5 bg-vs-red text-white rounded text-sm font-semibold flex items-center gap-1.5 hover:bg-[hsl(2_75%_60%)] disabled:opacity-50"
+          className="px-3 py-1.5 bg-vs-red text-white rounded text-sm font-semibold flex items-center gap-1.5 hover:bg-[hsl(174_75%_60%)] disabled:opacity-50"
           data-testid="button-create-invite"
         >
           <Plus className="w-3.5 h-3.5" /> Create
         </button>
       </div>
 
-      <div className="rounded-lg border border-[hsl(232_40%_22%)] overflow-hidden">
+      <div className="rounded-lg border border-[hsl(220_40%_22%)] overflow-hidden">
         <table className="w-full text-sm">
-          <thead className="bg-[hsl(232_55%_14%)] text-[10px] uppercase tracking-wider text-[hsl(0_0%_60%)]">
+          <thead className="bg-[hsl(220_55%_14%)] text-[10px] uppercase tracking-wider text-[hsl(0_0%_60%)]">
             <tr>
               <th className="text-left px-4 py-2">URL</th>
               <th className="text-left px-4 py-2">Role</th>
@@ -296,7 +296,7 @@ function InvitesTab() {
               <tr><td colSpan={4} className="px-4 py-6 text-center text-[hsl(0_0%_55%)] text-sm">No invites yet</td></tr>
             )}
             {invites.map((i) => (
-              <tr key={i.id} className="border-t border-[hsl(232_40%_22%)] hover:bg-[hsl(232_45%_15%)]" data-testid={`invite-row-${i.id}`}>
+              <tr key={i.id} className="border-t border-[hsl(220_40%_22%)] hover:bg-[hsl(220_45%_15%)]" data-testid={`invite-row-${i.id}`}>
                 <td className="px-4 py-3 max-w-md">
                   <code className="text-xs font-mono text-vs-blue-light truncate block">{i.url}</code>
                 </td>
@@ -346,13 +346,13 @@ function SettingsTab() {
   return (
     <div className="max-w-xl">
       <h1 className="text-xl font-display mb-4">Organization Settings</h1>
-      <div className="p-5 rounded-lg bg-[hsl(232_50%_14%)] border border-[hsl(232_40%_22%)] space-y-4">
+      <div className="p-5 rounded-lg bg-[hsl(220_50%_14%)] border border-[hsl(220_40%_22%)] space-y-4">
         <Field label="Organization name">
           <input
             type="text"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            className="w-full bg-[hsl(232_55%_18%)] border border-[hsl(232_40%_22%)] rounded px-3 py-2 text-white text-sm focus:border-vs-red outline-none"
+            className="w-full bg-[hsl(220_55%_18%)] border border-[hsl(220_40%_22%)] rounded px-3 py-2 text-white text-sm focus:border-vs-red outline-none"
             data-testid="input-org-name"
           />
         </Field>
@@ -360,7 +360,7 @@ function SettingsTab() {
           <select
             value={plan}
             onChange={(e) => setPlan(e.target.value)}
-            className="w-full bg-[hsl(232_55%_18%)] border border-[hsl(232_40%_22%)] rounded px-3 py-2 text-white text-sm"
+            className="w-full bg-[hsl(220_55%_18%)] border border-[hsl(220_40%_22%)] rounded px-3 py-2 text-white text-sm"
             data-testid="select-org-plan"
           >
             <option value="starter">Starter</option>
@@ -369,11 +369,11 @@ function SettingsTab() {
           </select>
         </Field>
         <Field label="Slug">
-          <input type="text" value={org?.slug ?? ""} disabled className="w-full bg-[hsl(232_55%_14%)] border border-[hsl(232_40%_22%)] rounded px-3 py-2 text-[hsl(0_0%_60%)] text-sm font-mono" />
+          <input type="text" value={org?.slug ?? ""} disabled className="w-full bg-[hsl(220_55%_14%)] border border-[hsl(220_40%_22%)] rounded px-3 py-2 text-[hsl(0_0%_60%)] text-sm font-mono" />
         </Field>
         <div className="flex justify-end gap-2 pt-2">
           {saved && <span className="text-vs-green text-xs flex items-center gap-1"><Check className="w-3.5 h-3.5" /> Saved</span>}
-          <button type="button" onClick={() => patch.mutate()} disabled={patch.isPending} className="px-4 py-2 bg-vs-red text-white rounded text-sm font-semibold disabled:opacity-50 hover:bg-[hsl(2_75%_60%)]" data-testid="button-save-org">
+          <button type="button" onClick={() => patch.mutate()} disabled={patch.isPending} className="px-4 py-2 bg-vs-red text-white rounded text-sm font-semibold disabled:opacity-50 hover:bg-[hsl(174_75%_60%)]" data-testid="button-save-org">
             {patch.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : "Save"}
           </button>
         </div>
@@ -400,7 +400,7 @@ function IconBtn({ children, onClick, title, testid, variant }: { children: Reac
       data-testid={testid}
       className={[
         "w-7 h-7 rounded flex items-center justify-center transition-colors",
-        variant === "danger" ? "text-[hsl(2_85%_72%)] hover:bg-vs-red/15" : "text-[hsl(0_0%_70%)] hover:bg-[hsl(232_45%_22%)] hover:text-white",
+        variant === "danger" ? "text-[hsl(174_85%_72%)] hover:bg-vs-red/15" : "text-[hsl(0_0%_70%)] hover:bg-[hsl(220_45%_22%)] hover:text-white",
       ].join(" ")}
     >
       {children}

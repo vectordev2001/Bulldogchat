@@ -44,8 +44,8 @@ export function CallTile({
   return (
     <div
       className={[
-        "relative w-full h-full rounded-2xl overflow-hidden border-2 transition-colors bg-[hsl(232_55%_11%)]",
-        speaking ? "border-vs-blue shadow-xl" : "border-[hsl(232_40%_25%)]",
+        "relative w-full h-full rounded-2xl overflow-hidden border-2 transition-colors bg-[hsl(220_55%_11%)]",
+        speaking ? "border-vs-blue shadow-xl" : "border-[hsl(220_40%_25%)]",
       ].join(" ")}
       data-testid={`call-tile-${isMe ? "me" : "them"}`}
     >
@@ -77,7 +77,7 @@ export function CallTile({
           <span
             className={[
               "w-7 h-7 rounded-full flex items-center justify-center shrink-0",
-              isMuted ? "bg-vs-red text-white" : speaking ? "bg-vs-blue text-[hsl(232_60%_9%)]" : "bg-[hsl(232_45%_27%)] text-[hsl(0_0%_85%)]",
+              isMuted ? "bg-vs-red text-white" : speaking ? "bg-vs-blue text-[hsl(220_60%_9%)]" : "bg-[hsl(220_45%_27%)] text-[hsl(0_0%_85%)]",
             ].join(" ")}
           >
             {isMuted ? <MicOff className="w-3.5 h-3.5" /> : <Mic className="w-3.5 h-3.5" />}

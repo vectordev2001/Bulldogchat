@@ -97,10 +97,10 @@ export function MeetingNotesHistory({ channelId, open, onClose }: Props) {
       data-testid="dialog-meeting-notes-history"
     >
       <div
-        className="mt-12 w-full max-w-2xl rounded-xl border border-[hsl(232_40%_25%)] bg-[hsl(232_45%_10%)] shadow-2xl"
+        className="mt-12 w-full max-w-2xl rounded-xl border border-[hsl(220_40%_25%)] bg-[hsl(220_45%_10%)] shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
-        <header className="flex items-center justify-between px-5 py-3 border-b border-[hsl(232_40%_25%)]">
+        <header className="flex items-center justify-between px-5 py-3 border-b border-[hsl(220_40%_25%)]">
           <div className="flex items-center gap-2">
             <FileText className="w-4 h-4 text-vs-blue-light" />
             <h2 className="text-sm font-semibold text-[hsl(0_0%_92%)]">Meeting notes</h2>
@@ -124,7 +124,7 @@ export function MeetingNotesHistory({ channelId, open, onClose }: Props) {
             const expanded = expandedId === row.id;
             const statusColor =
               row.status === "uploaded" ? "text-[hsl(140_60%_70%)] border-[hsl(140_60%_40%)]"
-              : row.status === "failed" ? "text-[hsl(2_85%_72%)] border-[hsl(2_70%_45%)]"
+              : row.status === "failed" ? "text-[hsl(174_85%_72%)] border-[hsl(174_70%_45%)]"
               : "text-[hsl(40_85%_75%)] border-[hsl(40_85%_40%)]";
             const statusIcon =
               row.status === "uploaded" ? <CheckCircle2 className="w-3 h-3" />
@@ -133,14 +133,14 @@ export function MeetingNotesHistory({ channelId, open, onClose }: Props) {
             return (
               <div
                 key={row.id}
-                className="border-b border-[hsl(232_40%_18%)] last:border-b-0"
+                className="border-b border-[hsl(220_40%_18%)] last:border-b-0"
                 data-testid={`note-row-${row.id}`}
               >
                 <div className="flex items-start group">
                   <button
                     type="button"
                     onClick={() => setExpandedId(expanded ? null : row.id)}
-                    className="flex-1 text-left px-5 py-3 hover:bg-[hsl(232_50%_14%)]"
+                    className="flex-1 text-left px-5 py-3 hover:bg-[hsl(220_50%_14%)]"
                   >
                     <div className="flex items-start gap-2">
                       {expanded ? <ChevronDown className="w-3.5 h-3.5 mt-0.5 text-[hsl(0_0%_55%)]" /> : <ChevronRight className="w-3.5 h-3.5 mt-0.5 text-[hsl(0_0%_55%)]" />}
@@ -202,13 +202,13 @@ export function MeetingNotesHistory({ channelId, open, onClose }: Props) {
                     {row.synologyRemotePath && (
                       <div>
                         <div className="text-[10px] uppercase tracking-wider text-[hsl(0_0%_55%)] mb-0.5">Synology path</div>
-                        <code className="text-[11px] text-[hsl(0_0%_85%)] break-all bg-[hsl(232_40%_8%)] px-1.5 py-0.5 rounded">
+                        <code className="text-[11px] text-[hsl(0_0%_85%)] break-all bg-[hsl(220_40%_8%)] px-1.5 py-0.5 rounded">
                           {row.synologyRemotePath}
                         </code>
                       </div>
                     )}
                     {row.status === "failed" && (row.errorMessage || row.synologyReason) && (
-                      <div className="text-[hsl(2_85%_75%)]">
+                      <div className="text-[hsl(174_85%_75%)]">
                         <div className="text-[10px] uppercase tracking-wider mb-0.5">Error</div>
                         <div className="text-[11px]">{row.errorMessage || row.synologyReason}</div>
                       </div>
@@ -228,7 +228,7 @@ export function MeetingNotesHistory({ channelId, open, onClose }: Props) {
                     {row.summaryMarkdown && (
                       <div>
                         <div className="text-[10px] uppercase tracking-wider text-[hsl(0_0%_55%)] mb-0.5">Notes</div>
-                        <pre className="whitespace-pre-wrap text-[11px] text-[hsl(0_0%_88%)] bg-[hsl(232_40%_8%)] p-3 rounded border border-[hsl(232_40%_18%)] max-h-[40vh] overflow-y-auto">
+                        <pre className="whitespace-pre-wrap text-[11px] text-[hsl(0_0%_88%)] bg-[hsl(220_40%_8%)] p-3 rounded border border-[hsl(220_40%_18%)] max-h-[40vh] overflow-y-auto">
 {row.summaryMarkdown}
                         </pre>
                       </div>

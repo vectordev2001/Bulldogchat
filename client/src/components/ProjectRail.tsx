@@ -49,7 +49,7 @@ export function ProjectRail({ projects, activeId, onSelect, unreadByProjectId, s
     >
       <button
         type="button"
-        className="w-12 h-12 rounded-2xl flex items-center justify-center hover:rounded-xl transition-all bg-[hsl(232_45%_27%)] hover:bg-vs-red group relative"
+        className="w-12 h-12 rounded-2xl flex items-center justify-center hover:rounded-xl transition-all bg-[hsl(220_45%_27%)] hover:bg-vs-red group relative"
         onClick={() => projects[0] && onSelect(projects[0].id)}
         title="Bulldog Chat"
         data-testid="button-home"
@@ -58,7 +58,7 @@ export function ProjectRail({ projects, activeId, onSelect, unreadByProjectId, s
         <ConnectionDot status={sseStatus} />
       </button>
 
-      <div className="h-[2px] w-8 bg-[hsl(232_40%_25%)] rounded-full my-1" />
+      <div className="h-[2px] w-8 bg-[hsl(220_40%_25%)] rounded-full my-1" />
 
       <div className="flex flex-col gap-1.5 overflow-y-auto flex-1 w-full items-center px-1">
         {projects.map((p) => (
@@ -72,13 +72,13 @@ export function ProjectRail({ projects, activeId, onSelect, unreadByProjectId, s
         ))}
       </div>
 
-      <div className="h-[2px] w-8 bg-[hsl(232_40%_25%)] rounded-full my-1" />
+      <div className="h-[2px] w-8 bg-[hsl(220_40%_25%)] rounded-full my-1" />
 
       {isAdmin && (
         <button
           type="button"
           onClick={() => setInviteOpen(true)}
-          className="w-12 h-12 rounded-2xl flex items-center justify-center bg-[hsl(232_45%_27%)] hover:rounded-xl hover:bg-vs-blue transition-all text-vs-blue hover:text-[hsl(232_60%_9%)]"
+          className="w-12 h-12 rounded-2xl flex items-center justify-center bg-[hsl(220_45%_27%)] hover:rounded-xl hover:bg-vs-blue transition-all text-vs-blue hover:text-[hsl(220_60%_9%)]"
           title="Invite a teammate"
           data-testid="button-invite"
         >
@@ -90,7 +90,7 @@ export function ProjectRail({ projects, activeId, onSelect, unreadByProjectId, s
         <DropdownMenuTrigger asChild>
           <button
             type="button"
-            className="relative w-12 h-12 rounded-2xl flex items-center justify-center hover:bg-[hsl(232_45%_27%)] transition-all text-[hsl(0_0%_70%)]"
+            className="relative w-12 h-12 rounded-2xl flex items-center justify-center hover:bg-[hsl(220_45%_27%)] transition-all text-[hsl(0_0%_70%)]"
             title={`Status: ${PRESENCE_LABEL[presence]} — click to change`}
             data-testid="button-app-settings"
             aria-label={`Status: ${PRESENCE_LABEL[presence]}`}
@@ -99,18 +99,18 @@ export function ProjectRail({ projects, activeId, onSelect, unreadByProjectId, s
             {/* Presence dot — colored per Phase 1.9 state. Replaces the old
                 static green dot the user reported as inert. */}
             <span
-              className="absolute top-1 right-1 w-3 h-3 rounded-full ring-2 ring-[hsl(232_60%_9%)]"
+              className="absolute top-1 right-1 w-3 h-3 rounded-full ring-2 ring-[hsl(220_60%_9%)]"
               style={{ background: PRESENCE_COLOR[presence] ?? PRESENCE_COLOR.online }}
               data-testid="status-presence-dot"
             />
           </button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent side="right" align="end" className="w-60 vs-navy-panel border-[hsl(232_40%_25%)] text-white">
+        <DropdownMenuContent side="right" align="end" className="w-60 vs-navy-panel border-[hsl(220_40%_25%)] text-white">
           <DropdownMenuLabel className="text-[hsl(0_0%_70%)]">
             <div className="font-semibold text-white truncate">{user?.name}</div>
             <div className="text-[10px] font-mono uppercase tracking-wider text-vs-blue-light">{user?.role}</div>
           </DropdownMenuLabel>
-          <DropdownMenuSeparator className="bg-[hsl(232_40%_25%)]" />
+          <DropdownMenuSeparator className="bg-[hsl(220_40%_25%)]" />
           <DropdownMenuLabel className="text-[10px] font-mono uppercase tracking-wider text-[hsl(0_0%_55%)] pt-2 pb-1">
             Status
           </DropdownMenuLabel>
@@ -122,7 +122,7 @@ export function ProjectRail({ projects, activeId, onSelect, unreadByProjectId, s
               <DropdownMenuItem
                 key={opt.value}
                 onClick={() => setManualPresence(opt.value)}
-                className="text-sm cursor-pointer focus:bg-[hsl(232_45%_30%)] focus:text-white flex items-center gap-2"
+                className="text-sm cursor-pointer focus:bg-[hsl(220_45%_30%)] focus:text-white flex items-center gap-2"
                 data-testid={`menu-presence-${opt.value}`}
               >
                 <Circle
@@ -142,11 +142,11 @@ export function ProjectRail({ projects, activeId, onSelect, unreadByProjectId, s
               Currently away (auto)
             </div>
           )}
-          <DropdownMenuSeparator className="bg-[hsl(232_40%_25%)]" />
-          <DropdownMenuItem className="text-sm cursor-pointer focus:bg-[hsl(232_45%_30%)] focus:text-white" data-testid="menu-profile">
+          <DropdownMenuSeparator className="bg-[hsl(220_40%_25%)]" />
+          <DropdownMenuItem className="text-sm cursor-pointer focus:bg-[hsl(220_45%_30%)] focus:text-white" data-testid="menu-profile">
             Profile
           </DropdownMenuItem>
-          <DropdownMenuItem onClick={() => logout()} className="text-sm cursor-pointer focus:bg-[hsl(232_45%_30%)] focus:text-white text-vs-red" data-testid="menu-logout">
+          <DropdownMenuItem onClick={() => logout()} className="text-sm cursor-pointer focus:bg-[hsl(220_45%_30%)] focus:text-white text-vs-red" data-testid="menu-logout">
             <LogOut className="w-3.5 h-3.5 mr-2" /> Sign out
           </DropdownMenuItem>
         </DropdownMenuContent>
@@ -176,7 +176,7 @@ function ConnectionDot({ status }: { status: "connecting" | "open" | "closed" })
   return (
     <span
       title={title}
-      className={`absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full ring-2 ring-[hsl(232_60%_9%)] ${color}`}
+      className={`absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full ring-2 ring-[hsl(220_60%_9%)] ${color}`}
       data-testid="status-connection"
     />
   );
@@ -211,7 +211,7 @@ function ProjectPill({
       style={{
         background: active
           ? `linear-gradient(135deg, ${c1} 0%, ${c2} 100%)`
-          : "hsl(232 45% 27%)",
+          : "hsl(220 45% 27%)",
       }}
     >
       <span
@@ -223,14 +223,14 @@ function ProjectPill({
       <span
         className={[
           "font-display text-[11px] tracking-tight",
-          active ? "text-[hsl(232_60%_9%)]" : "text-[hsl(0_0%_92%)]",
+          active ? "text-[hsl(220_60%_9%)]" : "text-[hsl(0_0%_92%)]",
         ].join(" ")}
       >
         {project.short}
       </span>
 
       {unread > 0 && !active && (
-        <span className="absolute -bottom-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-vs-red text-white text-[10px] font-bold flex items-center justify-center ring-2 ring-[hsl(232_60%_9%)]">
+        <span className="absolute -bottom-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-vs-red text-white text-[10px] font-bold flex items-center justify-center ring-2 ring-[hsl(220_60%_9%)]">
           {unread > 99 ? "99+" : unread}
         </span>
       )}

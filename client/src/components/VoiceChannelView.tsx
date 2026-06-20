@@ -266,7 +266,7 @@ export function VoiceChannelView(props: Props) {
 
   if (previewMode === null) {
     return (
-      <section className="flex-1 flex items-center justify-center bg-[hsl(232_65%_8%)] text-white">
+      <section className="flex-1 flex items-center justify-center bg-[hsl(220_65%_8%)] text-white">
         <div className="text-center">
           <Loader2 className="w-6 h-6 animate-spin mx-auto text-vs-blue" />
           <div className="mt-2 text-xs font-mono uppercase tracking-[0.16em] text-[hsl(0_0%_60%)]">Connecting to {channel.name}…</div>
@@ -280,9 +280,9 @@ export function VoiceChannelView(props: Props) {
   const lkFailed = livekitInfo && lk.status === "failed";
 
   return (
-    <section className="flex-1 flex flex-col min-w-0 min-h-0 bg-[hsl(232_65%_8%)] relative">
+    <section className="flex-1 flex flex-col min-w-0 min-h-0 bg-[hsl(220_65%_8%)] relative">
       {/* Header */}
-      <header className="h-14 px-4 max-md:pl-14 flex items-center gap-3 border-b border-[hsl(232_40%_22%)] shrink-0 bg-[hsl(232_60%_12%)]/60 backdrop-blur-sm">
+      <header className="h-14 px-4 max-md:pl-14 flex items-center gap-3 border-b border-[hsl(220_40%_22%)] shrink-0 bg-[hsl(220_60%_12%)]/60 backdrop-blur-sm">
         <Volume2 className="w-5 h-5 text-vs-red shrink-0" />
         <div className="font-display text-white text-base truncate" data-testid="text-voice-channel-name">{channel.name}</div>
         <span className="text-xs text-[hsl(0_0%_65%)] hidden sm:inline whitespace-nowrap">· {callParticipants.length} on the line</span>
@@ -294,10 +294,10 @@ export function VoiceChannelView(props: Props) {
               {lkConnecting ? "Connecting…" : lkFailed ? "Failed" : "Stable · 42ms"}
             </span>
           </div>
-          <span className="w-px h-5 bg-[hsl(232_40%_22%)] hidden md:inline-block" />
-          <div className="flex items-center gap-2 px-2 py-1 rounded-md bg-[hsl(2_70%_55%/0.15)] border border-[hsl(2_70%_55%/0.35)] whitespace-nowrap" data-testid="indicator-live">
+          <span className="w-px h-5 bg-[hsl(220_40%_22%)] hidden md:inline-block" />
+          <div className="flex items-center gap-2 px-2 py-1 rounded-md bg-[hsl(174_70%_55%/0.15)] border border-[hsl(174_70%_55%/0.35)] whitespace-nowrap" data-testid="indicator-live">
             <span className="w-2 h-2 rounded-full bg-vs-red live-blink" />
-            <span className="text-[11px] font-mono font-bold text-[hsl(2_85%_72%)] tracking-wider">LIVE</span>
+            <span className="text-[11px] font-mono font-bold text-[hsl(174_85%_72%)] tracking-wider">LIVE</span>
             <span className="text-[11px] font-mono text-white">{formatDuration(elapsed)}</span>
           </div>
           {activeRec && (
@@ -308,11 +308,11 @@ export function VoiceChannelView(props: Props) {
           )}
           {canRecord && (
             activeRec ? (
-              <button type="button" onClick={() => stopRec.mutate()} disabled={stopRec.isPending} className="px-2 py-1 rounded-md text-xs bg-vs-red/20 border border-vs-red/40 text-[hsl(2_85%_72%)] hover:bg-vs-red/30 flex items-center gap-1.5 whitespace-nowrap" title="Stop recording" data-testid="button-stop-recording">
+              <button type="button" onClick={() => stopRec.mutate()} disabled={stopRec.isPending} className="px-2 py-1 rounded-md text-xs bg-vs-red/20 border border-vs-red/40 text-[hsl(174_85%_72%)] hover:bg-vs-red/30 flex items-center gap-1.5 whitespace-nowrap" title="Stop recording" data-testid="button-stop-recording">
                 <Square className="w-3 h-3 fill-current" /> Stop
               </button>
             ) : (
-              <button type="button" onClick={() => startRec.mutate()} disabled={startRec.isPending} className="px-2 py-1 rounded-md text-xs bg-[hsl(232_50%_18%)] border border-[hsl(232_40%_25%)] hover:border-vs-red hover:text-vs-red text-[hsl(0_0%_80%)] flex items-center gap-1.5 whitespace-nowrap" title="Start recording (admin/foreman)" data-testid="button-start-recording">
+              <button type="button" onClick={() => startRec.mutate()} disabled={startRec.isPending} className="px-2 py-1 rounded-md text-xs bg-[hsl(220_50%_18%)] border border-[hsl(220_40%_25%)] hover:border-vs-red hover:text-vs-red text-[hsl(0_0%_80%)] flex items-center gap-1.5 whitespace-nowrap" title="Start recording (admin/foreman)" data-testid="button-start-recording">
                 <Circle className="w-3 h-3" /> Record
               </button>
             )
@@ -325,13 +325,13 @@ export function VoiceChannelView(props: Props) {
           <button
             type="button"
             onClick={() => setShowNotesHistory(true)}
-            className="px-2 py-1 rounded-md text-xs bg-[hsl(232_50%_18%)] border border-[hsl(232_40%_25%)] hover:border-vs-blue hover:text-vs-blue-light text-[hsl(0_0%_80%)] flex items-center gap-1.5 whitespace-nowrap"
+            className="px-2 py-1 rounded-md text-xs bg-[hsl(220_50%_18%)] border border-[hsl(220_40%_25%)] hover:border-vs-blue hover:text-vs-blue-light text-[hsl(0_0%_80%)] flex items-center gap-1.5 whitespace-nowrap"
             title="Past meeting notes"
             data-testid="button-meeting-notes-history"
           >
             <FileText className="w-3 h-3" /> Notes
           </button>
-          <button type="button" onClick={() => setShowPast((v) => !v)} className="px-2 py-1 rounded-md text-xs bg-[hsl(232_50%_18%)] border border-[hsl(232_40%_25%)] hover:border-vs-blue hover:text-vs-blue-light text-[hsl(0_0%_80%)] flex items-center gap-1.5 whitespace-nowrap" title="Past recordings" data-testid="button-past-recordings">
+          <button type="button" onClick={() => setShowPast((v) => !v)} className="px-2 py-1 rounded-md text-xs bg-[hsl(220_50%_18%)] border border-[hsl(220_40%_25%)] hover:border-vs-blue hover:text-vs-blue-light text-[hsl(0_0%_80%)] flex items-center gap-1.5 whitespace-nowrap" title="Past recordings" data-testid="button-past-recordings">
             <History className="w-3 h-3" /> Past
           </button>
           {/* Phase 1.9.3 — contract-panel toggle. Only rendered when a
@@ -342,8 +342,8 @@ export function VoiceChannelView(props: Props) {
               onClick={() => setShowContractPanel(v => !v)}
               className={`px-2 py-1 rounded-md text-xs border flex items-center gap-1.5 whitespace-nowrap ${
                 showContractPanel
-                  ? "bg-[hsl(232_60%_22%)] border-[hsl(232_70%_45%)] text-vs-blue-light"
-                  : "bg-[hsl(232_50%_18%)] border-[hsl(232_40%_25%)] hover:border-vs-blue hover:text-vs-blue-light text-[hsl(0_0%_80%)]"
+                  ? "bg-[hsl(220_60%_22%)] border-[hsl(220_70%_45%)] text-vs-blue-light"
+                  : "bg-[hsl(220_50%_18%)] border-[hsl(220_40%_25%)] hover:border-vs-blue hover:text-vs-blue-light text-[hsl(0_0%_80%)]"
               }`}
               title={showContractPanel ? "Hide contract" : "Show contract"}
               data-testid="button-toggle-contract-panel"
@@ -365,7 +365,7 @@ export function VoiceChannelView(props: Props) {
 
       {/* Preview banner */}
       {previewMode && (
-        <div className="px-4 py-2 bg-[hsl(218_100%_68%/0.12)] border-b border-[hsl(218_100%_68%/0.3)] flex items-center gap-2 text-xs" data-testid="banner-demo-mode">
+        <div className="px-4 py-2 bg-[hsl(199_100%_68%/0.12)] border-b border-[hsl(199_100%_68%/0.3)] flex items-center gap-2 text-xs" data-testid="banner-demo-mode">
           <Sparkles className="w-3.5 h-3.5 text-vs-blue shrink-0" />
           <div className="text-[hsl(0_0%_85%)]">
             <span className="text-vs-blue-light font-semibold">Demo mode · </span>
@@ -380,18 +380,18 @@ export function VoiceChannelView(props: Props) {
         </div>
       )}
       {(error || lk.error) && !previewMode && (
-        <div className="px-4 py-2 bg-[hsl(2_70%_55%/0.12)] border-b border-[hsl(2_70%_55%/0.4)] flex items-center gap-2 text-xs">
+        <div className="px-4 py-2 bg-[hsl(174_70%_55%/0.12)] border-b border-[hsl(174_70%_55%/0.4)] flex items-center gap-2 text-xs">
           <AlertTriangle className="w-3.5 h-3.5 text-vs-red" />
-          <span className="text-[hsl(2_85%_75%)]">{error ?? lk.error}</span>
+          <span className="text-[hsl(174_85%_75%)]">{error ?? lk.error}</span>
         </div>
       )}
       {dialAbsentToast && (
         <div
-          className="px-4 py-2 bg-[hsl(218_100%_68%/0.12)] border-b border-[hsl(218_100%_68%/0.35)] flex items-center gap-2 text-xs"
+          className="px-4 py-2 bg-[hsl(199_100%_68%/0.12)] border-b border-[hsl(199_100%_68%/0.35)] flex items-center gap-2 text-xs"
           data-testid="banner-dial-absent"
         >
           <Phone className="w-3.5 h-3.5 text-vs-blue-light" />
-          <span className="text-[hsl(218_100%_82%)]">{dialAbsentToast}</span>
+          <span className="text-[hsl(199_100%_82%)]">{dialAbsentToast}</span>
         </div>
       )}
 
@@ -479,8 +479,8 @@ export function VoiceChannelView(props: Props) {
             // 16:9 surface filling 100% width of a phone (~720px tall on
             // a 9:19.5 viewport) eats the entire vertical budget and the
             // mic/cam/leave row disappears below the fold.
-            <div className="max-w-5xl mx-auto mt-4 rounded-lg overflow-hidden border border-[hsl(218_100%_68%/0.4)] bg-black">
-              <div className="px-4 py-2 bg-[hsl(218_100%_68%/0.1)] border-b border-[hsl(218_100%_68%/0.3)] flex items-center gap-3 text-sm">
+            <div className="max-w-5xl mx-auto mt-4 rounded-lg overflow-hidden border border-[hsl(199_100%_68%/0.4)] bg-black">
+              <div className="px-4 py-2 bg-[hsl(199_100%_68%/0.1)] border-b border-[hsl(199_100%_68%/0.3)] flex items-center gap-3 text-sm">
                 <MonitorUp className="w-4 h-4 text-vs-blue" />
                 <span className="font-semibold text-vs-blue-light">
                   {realScreenSharer.id === me.id ? "You are " : `${realScreenSharer.name} is `}
@@ -491,7 +491,7 @@ export function VoiceChannelView(props: Props) {
               <ScreenShareVideo track={realScreenSharer.live?.screenTrack ?? null} />
             </div>
           ) : (myScreenSharing || screenSharerId) && (
-            <div className="max-w-5xl mx-auto mt-4 px-4 py-3 rounded-lg bg-[hsl(218_100%_68%/0.1)] border border-[hsl(218_100%_68%/0.3)] flex items-center gap-3">
+            <div className="max-w-5xl mx-auto mt-4 px-4 py-3 rounded-lg bg-[hsl(199_100%_68%/0.1)] border border-[hsl(199_100%_68%/0.3)] flex items-center gap-3">
               <MonitorUp className="w-5 h-5 text-vs-blue" />
               <div className="text-sm text-white">
                 <span className="font-semibold text-vs-blue-light">
@@ -506,7 +506,7 @@ export function VoiceChannelView(props: Props) {
             <PastRecordingsPanel recordings={recordingsQ.data ?? []} />
           )}
           {startRec.isError && (
-            <div className="max-w-5xl mx-auto mt-4 px-4 py-2 rounded-md bg-vs-red/10 border border-vs-red/30 text-xs text-[hsl(2_85%_75%)]" data-testid="banner-recording-error">
+            <div className="max-w-5xl mx-auto mt-4 px-4 py-2 rounded-md bg-vs-red/10 border border-vs-red/30 text-xs text-[hsl(174_85%_75%)]" data-testid="banner-recording-error">
               Recording failed to start. Ensure LiveKit credentials and S3 storage are configured.
             </div>
           )}
@@ -529,10 +529,10 @@ export function VoiceChannelView(props: Props) {
             file yet). */}
         {channel.linkedContract && showContractPanel && (
           <aside
-            className="hidden md:flex w-[min(28rem,38vw)] shrink-0 flex-col border-l border-[hsl(232_40%_22%)] bg-[hsl(232_60%_10%)]"
+            className="hidden md:flex w-[min(28rem,38vw)] shrink-0 flex-col border-l border-[hsl(220_40%_22%)] bg-[hsl(220_60%_10%)]"
             data-testid="contract-side-panel"
           >
-            <div className="flex items-center gap-2 px-3 py-2 border-b border-[hsl(232_40%_22%)] shrink-0">
+            <div className="flex items-center gap-2 px-3 py-2 border-b border-[hsl(220_40%_22%)] shrink-0">
               <FileText className="h-4 w-4 text-vs-blue-light shrink-0" />
               <div className="min-w-0 flex-1">
                 <div className="text-sm text-white truncate" data-testid="contract-panel-title">{channel.linkedContract.title}</div>
@@ -544,7 +544,7 @@ export function VoiceChannelView(props: Props) {
                 href={channel.linkedContract.appUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-vs-blue-light hover:bg-[hsl(232_40%_22%)]"
+                className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-vs-blue-light hover:bg-[hsl(220_40%_22%)]"
                 data-testid="contract-panel-open"
                 title="Open in Bulldog Contracts"
               >
@@ -588,11 +588,11 @@ export function VoiceChannelView(props: Props) {
           surface the wait state on the buttons + an inline strip so the
           user can see what's happening. */}
       {!!livekitInfo && lk.status !== "connected" && (
-        <div className="shrink-0 px-4 py-1.5 bg-[hsl(232_55%_14%)] border-t border-[hsl(232_40%_22%)] flex items-center justify-center gap-2 text-[11px] font-mono" data-testid="banner-call-waiting">
+        <div className="shrink-0 px-4 py-1.5 bg-[hsl(220_55%_14%)] border-t border-[hsl(220_40%_22%)] flex items-center justify-center gap-2 text-[11px] font-mono" data-testid="banner-call-waiting">
           {lk.status === "connecting" || lk.status === "reconnecting" ? (
             <><Loader2 className="w-3 h-3 animate-spin text-vs-amber" /><span className="text-vs-amber uppercase tracking-wider">{lk.status === "reconnecting" ? "Reconnecting" : "Connecting to call"}…</span><span className="text-[hsl(0_0%_55%)]">mic & video unlock when ready</span></>
           ) : lk.status === "failed" ? (
-            <><AlertTriangle className="w-3 h-3 text-[hsl(2_85%_72%)]" /><span className="text-[hsl(2_85%_72%)] uppercase tracking-wider">Call failed</span><span className="text-[hsl(0_0%_55%)]">{lk.error ?? "Tap Leave and rejoin"}</span></>
+            <><AlertTriangle className="w-3 h-3 text-[hsl(174_85%_72%)]" /><span className="text-[hsl(174_85%_72%)] uppercase tracking-wider">Call failed</span><span className="text-[hsl(0_0%_55%)]">{lk.error ?? "Tap Leave and rejoin"}</span></>
           ) : (
             <><Loader2 className="w-3 h-3 animate-spin text-[hsl(0_0%_55%)]" /><span className="text-[hsl(0_0%_55%)] uppercase tracking-wider">Waiting for media…</span></>
           )}
@@ -612,7 +612,7 @@ export function VoiceChannelView(props: Props) {
           forced iOS to scale the page out. We tighten padding/gap on
           mobile and hide disabled placeholder buttons (More / Settings)
           so the essentials fit at native scale. */}
-      <div className="fixed sm:sticky left-0 right-0 bottom-0 z-40 shrink-0 px-2 sm:px-6 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] border-t border-[hsl(232_40%_22%)] bg-[hsl(232_55%_11%)] flex items-center justify-center gap-1 sm:gap-2 flex-wrap" data-testid="bar-call-controls">
+      <div className="fixed sm:sticky left-0 right-0 bottom-0 z-40 shrink-0 px-2 sm:px-6 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] border-t border-[hsl(220_40%_22%)] bg-[hsl(220_55%_11%)] flex items-center justify-center gap-1 sm:gap-2 flex-wrap" data-testid="bar-call-controls">
         <CallButton
           on={!myMicMuted}
           // iOS Safari mic gesture path: same pattern as camera. The
@@ -665,7 +665,7 @@ export function VoiceChannelView(props: Props) {
           onClick={() => setShowInvite(true)}
           title="Invite to call"
           data-testid="button-call-invite"
-          className="h-11 px-2 sm:px-3 rounded-full bg-[hsl(232_50%_18%)] hover:bg-[hsl(232_50%_24%)] text-white flex items-center gap-1.5 transition-colors"
+          className="h-11 px-2 sm:px-3 rounded-full bg-[hsl(220_50%_18%)] hover:bg-[hsl(220_50%_24%)] text-white flex items-center gap-1.5 transition-colors"
         >
           <UserPlus className="w-4 h-4" />
           <span className="text-xs font-semibold hidden sm:inline">Invite</span>
@@ -695,7 +695,7 @@ export function VoiceChannelView(props: Props) {
           }}
           title="Leave call"
           data-testid="button-call-leave"
-          className="h-11 px-5 rounded-full bg-vs-red hover:bg-[hsl(2_75%_60%)] text-white flex items-center gap-2 transition-colors shadow-lg shadow-red-900/30"
+          className="h-11 px-5 rounded-full bg-vs-red hover:bg-[hsl(174_75%_60%)] text-white flex items-center gap-2 transition-colors shadow-lg shadow-red-900/30"
         >
           <PhoneOff className="w-4 h-4" />
           <span className="text-sm font-semibold">Leave</span>
@@ -800,21 +800,21 @@ function InviteModal({
       data-testid="modal-invite-overlay"
     >
       <div
-        className="w-full max-w-lg max-h-[80vh] flex flex-col bg-[hsl(232_55%_13%)] border border-[hsl(232_40%_22%)] rounded-xl shadow-2xl overflow-hidden"
+        className="w-full max-w-lg max-h-[80vh] flex flex-col bg-[hsl(220_55%_13%)] border border-[hsl(220_40%_22%)] rounded-xl shadow-2xl overflow-hidden"
         onClick={(e) => e.stopPropagation()}
         data-testid="modal-invite"
       >
-        <div className="px-5 py-4 border-b border-[hsl(232_40%_22%)] flex items-center justify-between">
+        <div className="px-5 py-4 border-b border-[hsl(220_40%_22%)] flex items-center justify-between">
           <div>
             <div className="text-base font-display text-white">Invite to {channelName}</div>
             <div className="text-[11px] font-mono uppercase tracking-wider text-[hsl(0_0%_55%)]">Push to online users · Phone-bridge for offline</div>
           </div>
-          <button type="button" onClick={onClose} className="w-8 h-8 rounded-md hover:bg-[hsl(232_45%_22%)] flex items-center justify-center text-[hsl(0_0%_70%)]" title="Close" data-testid="button-invite-close">
+          <button type="button" onClick={onClose} className="w-8 h-8 rounded-md hover:bg-[hsl(220_45%_22%)] flex items-center justify-center text-[hsl(0_0%_70%)]" title="Close" data-testid="button-invite-close">
             <X className="w-4 h-4" />
           </button>
         </div>
 
-        <div className="px-5 py-3 border-b border-[hsl(232_40%_22%)] bg-[hsl(232_55%_11%)]">
+        <div className="px-5 py-3 border-b border-[hsl(220_40%_22%)] bg-[hsl(220_55%_11%)]">
           <div className="relative">
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[hsl(0_0%_55%)]" />
             <input
@@ -822,7 +822,7 @@ function InviteModal({
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Search by name or email"
-              className="w-full h-9 pl-8 pr-3 rounded-md bg-[hsl(232_50%_18%)] border border-[hsl(232_40%_25%)] text-white text-sm placeholder:text-[hsl(0_0%_45%)] focus:outline-none focus:border-vs-blue"
+              className="w-full h-9 pl-8 pr-3 rounded-md bg-[hsl(220_50%_18%)] border border-[hsl(220_40%_25%)] text-white text-sm placeholder:text-[hsl(0_0%_45%)] focus:outline-none focus:border-vs-blue"
               data-testid="input-invite-search"
             />
           </div>
@@ -842,7 +842,7 @@ function InviteModal({
                   key={u.id}
                   type="button"
                   onClick={() => togglePick(u.id)}
-                  className={`w-full flex items-center gap-3 px-3 py-2 rounded-md text-left hover:bg-[hsl(232_45%_18%)] ${checked ? "bg-[hsl(218_100%_68%/0.12)] ring-1 ring-[hsl(218_100%_68%/0.4)]" : ""}`}
+                  className={`w-full flex items-center gap-3 px-3 py-2 rounded-md text-left hover:bg-[hsl(220_45%_18%)] ${checked ? "bg-[hsl(199_100%_68%/0.12)] ring-1 ring-[hsl(199_100%_68%/0.4)]" : ""}`}
                   data-testid={`button-invite-pick-${u.id}`}
                 >
                   <Avatar member={u} size={28} />
@@ -860,7 +860,7 @@ function InviteModal({
                       )}
                     </div>
                   </div>
-                  <span className={`w-5 h-5 rounded border flex items-center justify-center ${checked ? "bg-vs-blue border-vs-blue" : "border-[hsl(232_40%_30%)]"}`}>
+                  <span className={`w-5 h-5 rounded border flex items-center justify-center ${checked ? "bg-vs-blue border-vs-blue" : "border-[hsl(220_40%_30%)]"}`}>
                     {checked && <span className="text-[10px] text-white font-bold">✓</span>}
                   </span>
                 </button>
@@ -869,7 +869,7 @@ function InviteModal({
           )}
         </div>
 
-        <div className="px-5 py-3 border-t border-[hsl(232_40%_22%)] bg-[hsl(232_55%_11%)]">
+        <div className="px-5 py-3 border-t border-[hsl(220_40%_22%)] bg-[hsl(220_55%_11%)]">
           <div className="text-[11px] font-mono uppercase tracking-wider text-[hsl(0_0%_55%)] mb-1.5">Or dial a phone number</div>
           <div className="flex items-center gap-2">
             <input
@@ -878,17 +878,17 @@ function InviteModal({
               onChange={(e) => setPhoneInput(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addPhone(); } }}
               placeholder="+1 555 123 4567"
-              className="flex-1 h-9 px-3 rounded-md bg-[hsl(232_50%_18%)] border border-[hsl(232_40%_25%)] text-white text-sm placeholder:text-[hsl(0_0%_45%)] focus:outline-none focus:border-vs-blue"
+              className="flex-1 h-9 px-3 rounded-md bg-[hsl(220_50%_18%)] border border-[hsl(220_40%_25%)] text-white text-sm placeholder:text-[hsl(0_0%_45%)] focus:outline-none focus:border-vs-blue"
               data-testid="input-invite-phone"
             />
-            <button type="button" onClick={addPhone} className="h-9 px-3 rounded-md bg-[hsl(232_50%_18%)] hover:bg-[hsl(232_50%_24%)] text-white text-xs font-semibold" data-testid="button-invite-phone-add">
+            <button type="button" onClick={addPhone} className="h-9 px-3 rounded-md bg-[hsl(220_50%_18%)] hover:bg-[hsl(220_50%_24%)] text-white text-xs font-semibold" data-testid="button-invite-phone-add">
               Add
             </button>
           </div>
           {phoneNumbers.length > 0 && (
             <div className="mt-2 flex flex-wrap gap-1.5">
               {phoneNumbers.map(p => (
-                <span key={p} className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-[hsl(218_100%_68%/0.15)] border border-[hsl(218_100%_68%/0.35)] text-vs-blue-light text-[11px] font-mono">
+                <span key={p} className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-[hsl(199_100%_68%/0.15)] border border-[hsl(199_100%_68%/0.35)] text-vs-blue-light text-[11px] font-mono">
                   {p}
                   <button type="button" onClick={() => setPhoneNumbers(prev => prev.filter(x => x !== p))} className="hover:text-white" title="Remove">
                     <X className="w-3 h-3" />
@@ -899,12 +899,12 @@ function InviteModal({
           )}
         </div>
 
-        <div className="px-5 py-3 border-t border-[hsl(232_40%_22%)] flex items-center justify-between bg-[hsl(232_55%_13%)]">
+        <div className="px-5 py-3 border-t border-[hsl(220_40%_22%)] flex items-center justify-between bg-[hsl(220_55%_13%)]">
           <div className="text-xs text-[hsl(0_0%_70%)]">
             {totalSelected === 0 ? "Nothing selected" : `${totalSelected} to invite`}
           </div>
           <div className="flex items-center gap-2">
-            <button type="button" onClick={onClose} className="h-9 px-4 rounded-md bg-[hsl(232_45%_18%)] hover:bg-[hsl(232_45%_24%)] text-white text-sm" data-testid="button-invite-cancel">Cancel</button>
+            <button type="button" onClick={onClose} className="h-9 px-4 rounded-md bg-[hsl(220_45%_18%)] hover:bg-[hsl(220_45%_24%)] text-white text-sm" data-testid="button-invite-cancel">Cancel</button>
             <button
               type="button"
               onClick={() => inviteMutation.mutate()}
@@ -918,7 +918,7 @@ function InviteModal({
           </div>
         </div>
         {inviteMutation.isError && (
-          <div className="px-5 pb-3 text-[11px] text-[hsl(2_85%_72%)]" data-testid="text-invite-error">
+          <div className="px-5 pb-3 text-[11px] text-[hsl(174_85%_72%)]" data-testid="text-invite-error">
             Invite failed — check server logs or try again.
           </div>
         )}
@@ -963,7 +963,7 @@ function ScreenShareVideo({ track }: { track: Track | null }) {
     return attachTrack(track, ref.current);
   }, [track]);
   if (!track) {
-    return <div className="w-full max-h-[45vh] sm:max-h-[480px] aspect-video bg-[hsl(232_55%_11%)] flex items-center justify-center text-xs text-[hsl(0_0%_55%)]">Waiting for screen…</div>;
+    return <div className="w-full max-h-[45vh] sm:max-h-[480px] aspect-video bg-[hsl(220_55%_11%)] flex items-center justify-center text-xs text-[hsl(0_0%_55%)]">Waiting for screen…</div>;
   }
   return <video ref={ref} autoPlay playsInline muted className="w-full max-h-[45vh] sm:max-h-[480px] object-contain bg-black" />;
 }
@@ -1016,12 +1016,12 @@ function ParticipantTile({
       transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
       className={[
         "relative aspect-video rounded-xl overflow-hidden border-2 transition-colors",
-        speaking ? "border-vs-blue shadow-lg" : "border-[hsl(232_40%_25%)]",
+        speaking ? "border-vs-blue shadow-lg" : "border-[hsl(220_40%_25%)]",
       ].join(" ")}
       style={{
         background: hasVideo && !liveVideoTrack
           ? `linear-gradient(135deg, hsl(${member.hue} 60% 22%) 0%, hsl(${(member.hue + 40) % 360} 50% 12%) 100%)`
-          : "hsl(232 55% 11%)",
+          : "hsl(220 55% 11%)",
       }}
       data-testid={`tile-${member.id}`}
     >
@@ -1045,7 +1045,7 @@ function ParticipantTile({
             className="relative w-24 h-24 rounded-full flex items-center justify-center font-display text-3xl"
             style={{
               background: `linear-gradient(135deg, hsl(${member.hue} 80% 65%), hsl(${(member.hue + 25) % 360} 70% 35%))`,
-              color: "hsl(232 60% 9%)",
+              color: "hsl(220 60% 9%)",
               boxShadow: "0 8px 30px hsl(0 0% 0% / 0.4)",
             }}
           >
@@ -1071,15 +1071,15 @@ function ParticipantTile({
         <div className="flex items-center gap-1.5 shrink-0">
           {isHandRaised && (
             <span className="w-6 h-6 rounded-full bg-[hsl(35_100%_60%)] flex items-center justify-center" title="Hand raised">
-              <Hand className="w-3.5 h-3.5 text-[hsl(232_60%_9%)]" />
+              <Hand className="w-3.5 h-3.5 text-[hsl(220_60%_9%)]" />
             </span>
           )}
           <span
             className={[
               "w-6 h-6 rounded-full flex items-center justify-center",
               muted ? "bg-vs-red text-white"
-                : speaking ? "bg-vs-blue text-[hsl(232_60%_9%)]"
-                : "bg-[hsl(232_45%_27%)] text-[hsl(0_0%_85%)]",
+                : speaking ? "bg-vs-blue text-[hsl(220_60%_9%)]"
+                : "bg-[hsl(220_45%_27%)] text-[hsl(0_0%_85%)]",
             ].join(" ")}
             title={muted ? "Muted" : speaking ? "Speaking" : "Live mic"}
           >
@@ -1089,7 +1089,7 @@ function ParticipantTile({
       </div>
 
       <div className="absolute top-2 left-2">
-        <span className="text-[9px] font-mono uppercase tracking-wider px-1.5 py-0.5 rounded-sm backdrop-blur-sm bg-[hsl(232_60%_9%/0.7)] text-white">
+        <span className="text-[9px] font-mono uppercase tracking-wider px-1.5 py-0.5 rounded-sm backdrop-blur-sm bg-[hsl(220_60%_9%/0.7)] text-white">
           {ROLE_LABEL[member.role]}
         </span>
       </div>
@@ -1124,12 +1124,12 @@ function CallButton({
       className={[
         "w-11 h-11 rounded-full flex items-center justify-center transition-all",
         disabled
-          ? "bg-[hsl(232_45%_18%)] text-[hsl(0_0%_45%)] cursor-not-allowed opacity-60"
+          ? "bg-[hsl(220_45%_18%)] text-[hsl(0_0%_45%)] cursor-not-allowed opacity-60"
           : neutral
-            ? "bg-[hsl(232_45%_27%)] hover:bg-[hsl(232_45%_32%)] text-[hsl(0_0%_85%)]"
+            ? "bg-[hsl(220_45%_27%)] hover:bg-[hsl(220_45%_32%)] text-[hsl(0_0%_85%)]"
             : on
-              ? "bg-[hsl(232_45%_27%)] hover:bg-[hsl(232_45%_32%)] text-white"
-              : "bg-[hsl(2_70%_55%/0.2)] hover:bg-[hsl(2_70%_55%/0.3)] text-[hsl(2_85%_72%)] ring-1 ring-[hsl(2_70%_55%/0.4)]",
+              ? "bg-[hsl(220_45%_27%)] hover:bg-[hsl(220_45%_32%)] text-white"
+              : "bg-[hsl(174_70%_55%/0.2)] hover:bg-[hsl(174_70%_55%/0.3)] text-[hsl(174_85%_72%)] ring-1 ring-[hsl(174_70%_55%/0.4)]",
         className ?? "",
       ].join(" ")}
     >
@@ -1152,13 +1152,13 @@ function CallSidebar({
 
       <div className="flex-1 overflow-y-auto px-2 py-2 space-y-0.5">
         {screenSharerId && (
-          <div className="px-2 py-1.5 mb-2 rounded-md bg-[hsl(218_100%_68%/0.1)] border border-[hsl(218_100%_68%/0.3)]">
+          <div className="px-2 py-1.5 mb-2 rounded-md bg-[hsl(199_100%_68%/0.1)] border border-[hsl(199_100%_68%/0.3)]">
             <div className="text-[9px] uppercase tracking-wider text-vs-blue-light font-bold">Sharing screen</div>
             <div className="text-xs text-white mt-0.5">{fullCallList.find(m => m.id === screenSharerId)?.name}</div>
           </div>
         )}
         {fullCallList.map((m) => (
-          <div key={m.id} className="flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-[hsl(232_45%_27%)] transition-colors">
+          <div key={m.id} className="flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-[hsl(220_45%_27%)] transition-colors">
             <Avatar member={{ name: m.name, hue: m.hue }} size={28} />
             <div className="min-w-0 flex-1">
               <div className="text-xs font-semibold text-white truncate">{m.name}</div>
@@ -1195,8 +1195,8 @@ function fmtDur(secs: number | null): string {
 function PastRecordingsPanel({ recordings }: { recordings: ApiRecording[] }) {
   const completed = recordings.filter(r => r.status === "completed" || r.status === "finalizing" || r.status === "failed").sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime());
   return (
-    <div className="max-w-5xl mx-auto mt-4 rounded-lg bg-[hsl(232_50%_14%)] border border-[hsl(232_40%_22%)] overflow-hidden" data-testid="panel-past-recordings">
-      <div className="px-4 py-2 border-b border-[hsl(232_40%_22%)] bg-[hsl(232_55%_11%)] flex items-center gap-2">
+    <div className="max-w-5xl mx-auto mt-4 rounded-lg bg-[hsl(220_50%_14%)] border border-[hsl(220_40%_22%)] overflow-hidden" data-testid="panel-past-recordings">
+      <div className="px-4 py-2 border-b border-[hsl(220_40%_22%)] bg-[hsl(220_55%_11%)] flex items-center gap-2">
         <History className="w-4 h-4 text-vs-blue-light" />
         <div className="text-sm font-display text-white">Past Recordings</div>
         <span className="text-[11px] text-[hsl(0_0%_55%)] font-mono ml-auto">{completed.length} files</span>
@@ -1216,12 +1216,12 @@ function PastRecordingsPanel({ recordings }: { recordings: ApiRecording[] }) {
           </thead>
           <tbody>
             {completed.map(r => (
-              <tr key={r.id} className="border-t border-[hsl(232_40%_22%)]" data-testid={`recording-row-${r.id}`}>
+              <tr key={r.id} className="border-t border-[hsl(220_40%_22%)]" data-testid={`recording-row-${r.id}`}>
                 <td className="px-4 py-2 text-white text-xs font-mono">{new Date(r.startedAt).toLocaleString()}</td>
                 <td className="px-4 py-2 text-[hsl(0_0%_75%)] font-mono text-xs">{fmtDur(r.durationSeconds)}</td>
                 <td className="px-4 py-2 text-[hsl(0_0%_75%)] font-mono text-xs">{fmtBytes(r.sizeBytes)}</td>
                 <td className="px-4 py-2">
-                  <span className={`text-[10px] uppercase font-mono px-2 py-0.5 rounded border ${r.status === "completed" ? "bg-vs-green/15 text-vs-green border-vs-green/30" : r.status === "failed" ? "bg-vs-red/15 text-[hsl(2_85%_72%)] border-vs-red/30" : "bg-vs-blue/15 text-vs-blue-light border-vs-blue/30"}`}>
+                  <span className={`text-[10px] uppercase font-mono px-2 py-0.5 rounded border ${r.status === "completed" ? "bg-vs-green/15 text-vs-green border-vs-green/30" : r.status === "failed" ? "bg-vs-red/15 text-[hsl(174_85%_72%)] border-vs-red/30" : "bg-vs-blue/15 text-vs-blue-light border-vs-blue/30"}`}>
                     {r.status}
                   </span>
                 </td>

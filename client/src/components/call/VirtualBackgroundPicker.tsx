@@ -127,7 +127,7 @@ export function VirtualBackgroundPicker({
         onClick={() => pick(sel)}
         className={[
           "relative w-full aspect-video rounded-lg overflow-hidden border-2 flex items-center justify-center text-[10px] font-mono uppercase tracking-wider",
-          activeSel ? "border-vs-blue" : "border-[hsl(232_40%_25%)] hover:border-[hsl(232_40%_40%)]",
+          activeSel ? "border-vs-blue" : "border-[hsl(220_40%_25%)] hover:border-[hsl(220_40%_40%)]",
         ].join(" ")}
         data-testid={`bg-option-${id}`}
         title={label}
@@ -140,7 +140,7 @@ export function VirtualBackgroundPicker({
 
   return (
     <div
-      className="absolute bottom-20 left-1/2 -translate-x-1/2 z-[120] w-[340px] max-h-[70vh] overflow-y-auto rounded-xl bg-[hsl(232_55%_13%)] border border-[hsl(232_40%_25%)] shadow-2xl p-3"
+      className="absolute bottom-20 left-1/2 -translate-x-1/2 z-[120] w-[340px] max-h-[70vh] overflow-y-auto rounded-xl bg-[hsl(220_55%_13%)] border border-[hsl(220_40%_25%)] shadow-2xl p-3"
       onClick={(e) => e.stopPropagation()}
       data-testid="popover-virtual-background"
     >
@@ -159,7 +159,7 @@ export function VirtualBackgroundPicker({
           onClick={() => fileRef.current?.click()}
           className={[
             "w-full aspect-video rounded-lg border-2 border-dashed flex flex-col items-center justify-center gap-1 text-[10px] font-mono",
-            current.id === "custom" ? "border-vs-blue text-vs-blue-light" : "border-[hsl(232_40%_25%)] text-[hsl(0_0%_60%)] hover:border-[hsl(232_40%_40%)]",
+            current.id === "custom" ? "border-vs-blue text-vs-blue-light" : "border-[hsl(220_40%_25%)] text-[hsl(0_0%_60%)] hover:border-[hsl(220_40%_40%)]",
           ].join(" ")}
           data-testid="bg-option-upload"
         >

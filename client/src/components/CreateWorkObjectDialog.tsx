@@ -171,7 +171,7 @@ export function CreateWorkObjectDialog({ open, onClose, channelId, projectId, me
                   onClick={() => setKind(value)}
                   className={`flex items-start gap-2 rounded-md border p-3 text-left transition ${
                     kind === value
-                      ? "border-[hsl(232_70%_60%)] bg-[hsl(232_30%_15%)]"
+                      ? "border-[hsl(220_70%_60%)] bg-[hsl(220_30%_15%)]"
                       : "border-[hsl(0_0%_18%)] bg-[hsl(0_0%_8%)] hover:border-[hsl(0_0%_30%)]"
                   }`}
                   data-testid={`kind-${value}`}
@@ -324,7 +324,7 @@ export function CreateWorkObjectDialog({ open, onClose, channelId, projectId, me
             <button
               type="submit"
               disabled={createMutation.isPending}
-              className="flex items-center gap-2 rounded-md bg-[hsl(232_70%_55%)] px-3 py-2 text-sm font-medium text-white hover:bg-[hsl(232_70%_60%)] disabled:opacity-60"
+              className="flex items-center gap-2 rounded-md bg-[hsl(220_70%_55%)] px-3 py-2 text-sm font-medium text-white hover:bg-[hsl(220_70%_60%)] disabled:opacity-60"
               data-testid="button-create"
             >
               {createMutation.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}

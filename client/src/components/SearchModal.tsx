@@ -82,14 +82,14 @@ export function SearchModal({ open, onClose, onJump, channelId }: Props) {
           data-testid="modal-search"
         >
           <motion.div
-            className="w-full max-w-2xl bg-[hsl(232_55%_14%)] border border-[hsl(232_40%_25%)] rounded-2xl shadow-2xl overflow-hidden"
+            className="w-full max-w-2xl bg-[hsl(220_55%_14%)] border border-[hsl(220_40%_25%)] rounded-2xl shadow-2xl overflow-hidden"
             initial={{ y: -20, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
             exit={{ y: -10, opacity: 0 }}
             transition={{ duration: 0.15 }}
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="px-4 py-3 flex items-center gap-3 border-b border-[hsl(232_40%_22%)]">
+            <div className="px-4 py-3 flex items-center gap-3 border-b border-[hsl(220_40%_22%)]">
               <Search className="w-5 h-5 text-vs-red shrink-0" />
               <input
                 ref={inputRef}
@@ -126,7 +126,7 @@ export function SearchModal({ open, onClose, onJump, channelId }: Props) {
                 <button
                   key={r.id}
                   type="button"
-                  className="w-full text-left px-4 py-3 hover:bg-[hsl(232_45%_22%)] transition-colors border-b border-[hsl(232_40%_22%)]/50 last:border-b-0"
+                  className="w-full text-left px-4 py-3 hover:bg-[hsl(220_45%_22%)] transition-colors border-b border-[hsl(220_40%_22%)]/50 last:border-b-0"
                   onClick={() => {
                     onJump(r.channelId, r.id);
                     onClose();
@@ -146,7 +146,7 @@ export function SearchModal({ open, onClose, onJump, channelId }: Props) {
               ))}
             </div>
 
-            <div className="px-4 py-2 border-t border-[hsl(232_40%_22%)] flex items-center justify-between text-[11px] text-[hsl(0_0%_55%)] bg-[hsl(232_60%_11%)]">
+            <div className="px-4 py-2 border-t border-[hsl(220_40%_22%)] flex items-center justify-between text-[11px] text-[hsl(0_0%_55%)] bg-[hsl(220_60%_11%)]">
               <span><kbd className="font-mono text-[hsl(0_0%_75%)]">↵</kbd> jump · <kbd className="font-mono text-[hsl(0_0%_75%)]">Esc</kbd> close</span>
               <span className="text-vs-red">SQLite FTS5</span>
             </div>

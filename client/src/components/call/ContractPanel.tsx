@@ -80,7 +80,7 @@ export function ContractPanel({
 
   return (
     <div
-      className="relative shrink-0 h-full flex flex-col bg-[hsl(232_55%_11%)] border-l border-[hsl(232_40%_22%)]"
+      className="relative shrink-0 h-full flex flex-col bg-[hsl(220_55%_11%)] border-l border-[hsl(220_40%_22%)]"
       style={{ width }}
       data-testid="panel-contract"
     >
@@ -91,7 +91,7 @@ export function ContractPanel({
         title="Drag to resize"
         data-testid="contract-panel-resize"
       />
-      <div className="h-12 px-3 flex items-center gap-2 border-b border-[hsl(232_40%_22%)] shrink-0">
+      <div className="h-12 px-3 flex items-center gap-2 border-b border-[hsl(220_40%_22%)] shrink-0">
         <FileText className="w-4 h-4 text-vs-blue-light shrink-0" />
         <span className="text-sm font-display text-white truncate flex-1">{title}</span>
         <button
@@ -116,7 +116,7 @@ export function ContractPanel({
             data-testid="contract-pdf-frame"
           />
         ) : error ? (
-          <div className="flex flex-col items-center justify-center h-full gap-3 text-[hsl(232_30%_35%)] p-4 text-center text-sm">
+          <div className="flex flex-col items-center justify-center h-full gap-3 text-[hsl(220_30%_35%)] p-4 text-center text-sm">
             <AlertTriangle className="w-6 h-6 text-vs-red" />
             <span>Couldn't load contract PDF ({error}).</span>
             <a
@@ -130,7 +130,7 @@ export function ContractPanel({
             </a>
           </div>
         ) : (
-          <div className="flex items-center justify-center h-full text-[hsl(232_30%_40%)]">
+          <div className="flex items-center justify-center h-full text-[hsl(220_30%_40%)]">
             <Loader2 className="w-6 h-6 animate-spin" />
           </div>
         )}

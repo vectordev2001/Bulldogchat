@@ -273,7 +273,7 @@ export default function Home() {
   if (!user) return null;
   if (projectsQ.isLoading || membersQ.isLoading) {
     return (
-      <div className="min-h-screen flex flex-col items-center justify-center bg-[hsl(232_60%_9%)] text-white gap-4">
+      <div className="min-h-screen flex flex-col items-center justify-center bg-[hsl(220_60%_9%)] text-white gap-4">
         <VectorLogo size={56} className="text-vs-blue" monochrome />
         <Loader2 className="w-5 h-5 animate-spin text-vs-blue" />
         <p className="text-sm text-white/60">Loading Bulldog Chat…</p>
@@ -283,7 +283,7 @@ export default function Home() {
 
   if (projectsQ.error) {
     return (
-      <div className="min-h-screen flex flex-col items-center justify-center bg-[hsl(232_60%_9%)] text-white gap-3 p-6 text-center">
+      <div className="min-h-screen flex flex-col items-center justify-center bg-[hsl(220_60%_9%)] text-white gap-3 p-6 text-center">
         <VectorLogo size={48} className="text-vs-blue" monochrome />
         <h1 className="text-lg font-display">Could not load projects</h1>
         <p className="text-sm text-white/60 max-w-md">{(projectsQ.error as Error).message}</p>
@@ -298,7 +298,7 @@ export default function Home() {
   // Empty state — no projects
   if (projects.length === 0) {
     return (
-      <div className="min-h-screen flex bg-[hsl(232_60%_9%)] text-white">
+      <div className="min-h-screen flex bg-[hsl(220_60%_9%)] text-white">
         <ProjectRail
           projects={[]}
           activeId={null}
@@ -327,7 +327,7 @@ export default function Home() {
     // (composer toolbar, call controls) visible.
     // overflow-hidden forces every scrolling region (message list, sidebar)
     // to be the *inner* `flex-1 overflow-y-auto` panel.
-    <div className="h-full flex bg-[hsl(232_60%_9%)] text-white relative overflow-hidden">
+    <div className="h-full flex bg-[hsl(220_60%_9%)] text-white relative overflow-hidden">
       {/* Mobile sidebar overlay */}
       <AnimatePresence>
         {mobileNavOpen && (
@@ -427,7 +427,7 @@ export default function Home() {
           shrink-0 bottom call-controls bar below the fold. */}
       <main className="flex-1 min-w-0 min-h-0 flex flex-col">
         {/* Mobile top bar */}
-        <div className="md:hidden h-12 shrink-0 flex items-center justify-between px-3 bg-[hsl(232_55%_14%)] border-b border-black/40 sticky top-0 z-30">
+        <div className="md:hidden h-12 shrink-0 flex items-center justify-between px-3 bg-[hsl(220_55%_14%)] border-b border-black/40 sticky top-0 z-30">
           <button
             type="button"
             className="p-2 rounded hover-elevate"

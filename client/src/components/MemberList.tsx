@@ -8,7 +8,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 
 const ROLE_ORDER: UserRole[] = ["admin", "manager", "user"];
 const ROLE_TINT: Record<UserRole, string> = {
-  admin:   "text-[hsl(2_85%_72%)]",
+  admin:   "text-[hsl(174_85%_72%)]",
   manager: "text-vs-blue-light",
   user:    "text-vs-green",
 };
@@ -241,7 +241,7 @@ function MemberRow({
         disabled={isMe || busy}
         className={[
           "w-full group flex items-center gap-2 px-2 py-1.5 rounded-md text-left",
-          "hover:bg-[hsl(232_45%_27%)] transition-colors",
+          "hover:bg-[hsl(220_45%_27%)] transition-colors",
           isMe ? "cursor-default" : busy ? "cursor-not-allowed opacity-60" : "cursor-pointer",
           dimmed ? "opacity-50" : "",
         ].join(" ")}
@@ -316,11 +316,11 @@ function CallTargetDialog({
       data-testid="dialog-call-target"
     >
       <div
-        className="w-full md:w-[420px] md:max-w-[92vw] bg-[hsl(232_55%_13%)] border border-[hsl(232_40%_25%)] md:rounded-2xl rounded-t-2xl shadow-2xl overflow-hidden"
+        className="w-full md:w-[420px] md:max-w-[92vw] bg-[hsl(220_55%_13%)] border border-[hsl(220_40%_25%)] md:rounded-2xl rounded-t-2xl shadow-2xl overflow-hidden"
         style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="px-4 py-3 border-b border-[hsl(232_40%_22%)] flex items-center justify-between">
+        <div className="px-4 py-3 border-b border-[hsl(220_40%_22%)] flex items-center justify-between">
           <div className="min-w-0">
             <div className="text-sm font-display text-white truncate">Call {memberName}</div>
             <div className="text-[10px] text-[hsl(0_0%_60%)] font-mono uppercase tracking-wider">
@@ -343,7 +343,7 @@ function CallTargetDialog({
           <button
             type="button"
             onClick={onCallAppVoice}
-            className="flex items-center gap-3 px-3 py-3 rounded-xl bg-[hsl(232_50%_18%)] hover:bg-[hsl(232_50%_22%)] border border-[hsl(232_40%_25%)] transition-colors text-left"
+            className="flex items-center gap-3 px-3 py-3 rounded-xl bg-[hsl(220_50%_18%)] hover:bg-[hsl(220_50%_22%)] border border-[hsl(220_40%_25%)] transition-colors text-left"
             data-testid="button-call-target-app-voice"
           >
             <div className="w-10 h-10 rounded-full bg-vs-green/15 border border-vs-green/40 flex items-center justify-center shrink-0">
@@ -359,7 +359,7 @@ function CallTargetDialog({
           <button
             type="button"
             onClick={onCallAppVideo}
-            className="flex items-center gap-3 px-3 py-3 rounded-xl bg-[hsl(232_50%_18%)] hover:bg-[hsl(232_50%_22%)] border border-[hsl(232_40%_25%)] transition-colors text-left"
+            className="flex items-center gap-3 px-3 py-3 rounded-xl bg-[hsl(220_50%_18%)] hover:bg-[hsl(220_50%_22%)] border border-[hsl(220_40%_25%)] transition-colors text-left"
             data-testid="button-call-target-app-video"
           >
             <div className="w-10 h-10 rounded-full bg-vs-blue-light/15 border border-vs-blue-light/40 flex items-center justify-center shrink-0">
@@ -376,7 +376,7 @@ function CallTargetDialog({
             type="button"
             onClick={onCallCell}
             disabled={!memberPhone}
-            className="flex items-center gap-3 px-3 py-3 rounded-xl bg-[hsl(232_50%_18%)] hover:bg-[hsl(232_50%_22%)] border border-[hsl(232_40%_25%)] transition-colors text-left disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-[hsl(232_50%_18%)]"
+            className="flex items-center gap-3 px-3 py-3 rounded-xl bg-[hsl(220_50%_18%)] hover:bg-[hsl(220_50%_22%)] border border-[hsl(220_40%_25%)] transition-colors text-left disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-[hsl(220_50%_18%)]"
             data-testid="button-call-target-cell"
           >
             <div className="w-10 h-10 rounded-full bg-vs-red/15 border border-vs-red/40 flex items-center justify-center shrink-0">
@@ -398,7 +398,7 @@ function CallTargetDialog({
             type="button"
             onClick={onTextVideoLink}
             disabled={!memberPhone}
-            className="flex items-center gap-3 px-3 py-3 rounded-xl bg-[hsl(232_50%_18%)] hover:bg-[hsl(232_50%_22%)] border border-[hsl(232_40%_25%)] transition-colors text-left disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-[hsl(232_50%_18%)]"
+            className="flex items-center gap-3 px-3 py-3 rounded-xl bg-[hsl(220_50%_18%)] hover:bg-[hsl(220_50%_22%)] border border-[hsl(220_40%_25%)] transition-colors text-left disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-[hsl(220_50%_18%)]"
             data-testid="button-call-target-text-link"
           >
             <div className="w-10 h-10 rounded-full bg-vs-blue-light/15 border border-vs-blue-light/40 flex items-center justify-center shrink-0">
@@ -506,7 +506,7 @@ function AddMembersDialog({
         </div>
 
         <div className="px-3 pt-3">
-          <div className="flex items-center gap-2 bg-[hsl(232_60%_9%)] border border-[hsl(232_40%_22%)] rounded-md px-2 py-1.5">
+          <div className="flex items-center gap-2 bg-[hsl(220_60%_9%)] border border-[hsl(220_40%_22%)] rounded-md px-2 py-1.5">
             <Search className="w-3.5 h-3.5 text-[hsl(0_0%_55%)]" />
             <input
               type="text"
@@ -535,7 +535,7 @@ function AddMembersDialog({
                     onClick={() => toggle(m.id)}
                     className={[
                       "w-full flex items-center gap-2 px-2 py-2 rounded-md text-left transition-colors",
-                      isSel ? "bg-vs-red/20 ring-1 ring-vs-red" : "hover:bg-[hsl(232_45%_27%)]",
+                      isSel ? "bg-vs-red/20 ring-1 ring-vs-red" : "hover:bg-[hsl(220_45%_27%)]",
                     ].join(" ")}
                     data-testid={`button-add-candidate-${m.id}`}
                   >
@@ -558,7 +558,7 @@ function AddMembersDialog({
                     <div
                       className={[
                         "w-5 h-5 rounded-md border flex items-center justify-center shrink-0",
-                        isSel ? "bg-vs-red border-vs-red" : "border-[hsl(232_40%_30%)]",
+                        isSel ? "bg-vs-red border-vs-red" : "border-[hsl(220_40%_30%)]",
                       ].join(" ")}
                       aria-hidden
                     >

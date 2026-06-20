@@ -50,7 +50,7 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex flex-col items-center justify-center bg-[hsl(232_60%_9%)] text-white gap-4">
+      <div className="min-h-screen flex flex-col items-center justify-center bg-[hsl(220_60%_9%)] text-white gap-4">
         <VectorLogo size={56} className="text-vs-blue" monochrome />
         <Loader2 className="w-5 h-5 animate-spin text-vs-blue" />
       </div>

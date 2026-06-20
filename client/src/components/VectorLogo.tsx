@@ -9,8 +9,8 @@ interface Props {
 }
 
 export function VectorLogo({ size = 40, className = "", stars = true, monochrome = false }: Props) {
-  const navy = monochrome ? "currentColor" : "hsl(232 50% 20%)";
-  const red = monochrome ? "currentColor" : "hsl(2 70% 55%)";
+  const navy = monochrome ? "currentColor" : "hsl(220 50% 20%)";
+  const red = monochrome ? "currentColor" : "hsl(174 70% 55%)";
   return (
     <svg
       width={size}

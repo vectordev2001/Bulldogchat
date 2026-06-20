@@ -40,7 +40,7 @@ export function ContractBanner({ channel, contract, me }: Props) {
 
   return (
     <div
-      className="flex items-center gap-2 border-b border-[hsl(232_40%_22%)] bg-[hsl(232_50%_15%)] px-4 py-1.5 text-xs shrink-0"
+      className="flex items-center gap-2 border-b border-[hsl(220_40%_22%)] bg-[hsl(220_50%_15%)] px-4 py-1.5 text-xs shrink-0"
       data-testid="contract-banner"
     >
       <FileText className="h-3.5 w-3.5 text-vs-blue-light shrink-0" />
@@ -49,7 +49,7 @@ export function ContractBanner({ channel, contract, me }: Props) {
           {contract.title}
         </span>
         {contract.ref && (
-          <span className="rounded bg-[hsl(232_40%_25%)] px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-[hsl(0_0%_75%)]">
+          <span className="rounded bg-[hsl(220_40%_25%)] px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-[hsl(0_0%_75%)]">
             {contract.ref}
           </span>
         )}
