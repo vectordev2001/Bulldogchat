@@ -1,5 +1,6 @@
-import { Hash, Pin, Plus, Smile, Paperclip, Send, Users, Search, Loader2, MessageSquare, X, Reply, Phone, Video, ClipboardList, MapPin, FileText, AlertTriangle, Link2, Unlink, Lock, Unlock, UserCog, PenLine, CheckCircle2, Trash2, Calendar as CalendarIcon, Mic, Ban, Check, HelpCircle, MoreHorizontal, ChevronDown, Headphones } from "lucide-react";
+import { Hash, Pin, Plus, Smile, Paperclip, Send, Users, Search, Loader2, MessageSquare, X, Reply, Phone, Video, ClipboardList, MapPin, FileText, AlertTriangle, Link2, Unlink, Lock, Unlock, UserCog, PenLine, CheckCircle2, Trash2, Calendar as CalendarIcon, Mic, Ban, Check, HelpCircle, MoreHorizontal, ChevronDown, Headphones, Sparkles } from "lucide-react";
 import { ChannelCallDialog } from "@/components/ChannelCallDialog";
+import { CreateMeetingDialog } from "@/components/CreateMeetingDialog";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -74,6 +75,7 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers, me
   const [mentionMatch, setMentionMatch] = useState<MentionMatch | null>(null);
   const [mentionSelectedIdx, setMentionSelectedIdx] = useState(0);
   const [callDialog, setCallDialog] = useState<null | "voice" | "video">(null);
+  const [createMeetingOpen, setCreateMeetingOpen] = useState(false);
   const [notesOpen, setNotesOpen] = useState(false);
   const { active: activeCall, outgoing: outgoingCall, startGroupCall } = useCalls();
   const callBusy = !!activeCall || !!outgoingCall;
@@ -446,6 +448,12 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers, me
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem
+                onSelect={() => setCreateMeetingOpen(true)}
+                data-testid="menu-new-meeting"
+              >
+                <Sparkles className="w-4 h-4 mr-2" /> New meeting (shareable link)…
+              </DropdownMenuItem>
+              <DropdownMenuItem
                 onSelect={() => onSlashSchedule?.(`Meeting in #${channel.name}`)}
                 data-testid="menu-schedule-meeting"
               >
@@ -776,6 +784,12 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers, me
         open={!!callDialog}
         initialKind={callDialog || "voice"}
         onClose={() => setCallDialog(null)}
+      />
+      <CreateMeetingDialog
+        channel={channel}
+        meId={me.id}
+        open={createMeetingOpen}
+        onClose={() => setCreateMeetingOpen(false)}
       />
       <MeetingNotesHistory channelId={channel.id} open={notesOpen} onClose={() => setNotesOpen(false)} />
     </section>
