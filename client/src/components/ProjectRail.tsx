@@ -105,13 +105,13 @@ export function ProjectRail({ projects, activeId, onSelect, unreadByProjectId, s
             />
           </button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent side="right" align="end" className="w-60 vs-navy-panel border-[hsl(220_40%_25%)] text-white">
-          <DropdownMenuLabel className="text-[hsl(0_0%_70%)]">
-            <div className="font-semibold text-white truncate">{user?.name}</div>
-            <div className="text-[10px] font-mono uppercase tracking-wider text-vs-blue-light">{user?.role}</div>
+        <DropdownMenuContent side="right" align="end" className="w-60 bg-popover border-popover-border text-popover-foreground">
+          <DropdownMenuLabel className="text-[hsl(var(--vs-text-muted))]">
+            <div className="font-semibold text-[hsl(var(--vs-text))] truncate">{user?.name}</div>
+            <div className="text-[10px] font-mono uppercase tracking-wider text-vs-accent">{user?.role}</div>
           </DropdownMenuLabel>
-          <DropdownMenuSeparator className="bg-[hsl(220_40%_25%)]" />
-          <DropdownMenuLabel className="text-[10px] font-mono uppercase tracking-wider text-[hsl(0_0%_55%)] pt-2 pb-1">
+          <DropdownMenuSeparator className="bg-border" />
+          <DropdownMenuLabel className="text-[10px] font-mono uppercase tracking-wider text-[hsl(var(--vs-text-subtle))] pt-2 pb-1">
             Status
           </DropdownMenuLabel>
           {PRESENCE_OPTIONS.map((opt) => {
@@ -122,7 +122,7 @@ export function ProjectRail({ projects, activeId, onSelect, unreadByProjectId, s
               <DropdownMenuItem
                 key={opt.value}
                 onClick={() => setManualPresence(opt.value)}
-                className="text-sm cursor-pointer focus:bg-[hsl(220_45%_30%)] focus:text-white flex items-center gap-2"
+                className="text-sm cursor-pointer focus:bg-accent focus:text-accent-foreground flex items-center gap-2"
                 data-testid={`menu-presence-${opt.value}`}
               >
                 <Circle
@@ -131,9 +131,9 @@ export function ProjectRail({ projects, activeId, onSelect, unreadByProjectId, s
                 />
                 <div className="flex-1 min-w-0">
                   <div className="truncate">{opt.label}</div>
-                  <div className="text-[10px] text-[hsl(0_0%_60%)] truncate">{opt.hint}</div>
+                  <div className="text-[10px] text-[hsl(var(--vs-text-subtle))] truncate">{opt.hint}</div>
                 </div>
-                {selected && <Check className="w-3.5 h-3.5 text-vs-blue-light shrink-0" />}
+                {selected && <Check className="w-3.5 h-3.5 text-vs-accent shrink-0" />}
               </DropdownMenuItem>
             );
           })}
@@ -142,11 +142,11 @@ export function ProjectRail({ projects, activeId, onSelect, unreadByProjectId, s
               Currently away (auto)
             </div>
           )}
-          <DropdownMenuSeparator className="bg-[hsl(220_40%_25%)]" />
-          <DropdownMenuItem className="text-sm cursor-pointer focus:bg-[hsl(220_45%_30%)] focus:text-white" data-testid="menu-profile">
+          <DropdownMenuSeparator className="bg-border" />
+          <DropdownMenuItem className="text-sm cursor-pointer focus:bg-accent focus:text-accent-foreground" data-testid="menu-profile">
             Profile
           </DropdownMenuItem>
-          <DropdownMenuItem onClick={() => logout()} className="text-sm cursor-pointer focus:bg-[hsl(220_45%_30%)] focus:text-white text-vs-red" data-testid="menu-logout">
+          <DropdownMenuItem onClick={() => logout()} className="text-sm cursor-pointer focus:bg-accent focus:text-accent-foreground text-vs-danger" data-testid="menu-logout">
             <LogOut className="w-3.5 h-3.5 mr-2" /> Sign out
           </DropdownMenuItem>
         </DropdownMenuContent>

@@ -70,7 +70,7 @@ const ENTRIES: AppEntry[] = [
     key: "ops",
     label: "Ops",
     sub: "Field operations",
-    accent: "bg-gradient-to-br from-emerald-600 to-teal-500",
+    accent: "bg-gradient-to-br from-emerald-600 to-cyan-600",
     icon: (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
         <circle cx="12" cy="12" r="10" />

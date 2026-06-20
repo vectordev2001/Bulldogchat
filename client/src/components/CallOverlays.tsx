@@ -94,7 +94,7 @@ function IncomingCallModal() {
           <button
             type="button"
             onClick={() => { void declineIncoming(); }}
-            className="h-14 w-14 rounded-full bg-vs-red hover:bg-[hsl(174_75%_60%)] text-white flex items-center justify-center shadow-lg transition-colors"
+            className="h-14 w-14 rounded-full bg-vs-red hover:bg-[hsl(var(--vs-accent-hover))] text-white flex items-center justify-center shadow-lg transition-colors"
             title="Decline"
             data-testid="button-decline-call"
           >
@@ -137,7 +137,7 @@ function OutgoingCallModal() {
         <button
           type="button"
           onClick={() => { void cancelOutgoing(); }}
-          className="h-12 px-6 rounded-full bg-vs-red hover:bg-[hsl(174_75%_60%)] text-white flex items-center gap-2 mx-auto shadow-lg transition-colors"
+          className="h-12 px-6 rounded-full bg-vs-red hover:bg-[hsl(var(--vs-accent-hover))] text-white flex items-center gap-2 mx-auto shadow-lg transition-colors"
           data-testid="button-cancel-call"
         >
           <PhoneOff className="w-4 h-4" />
@@ -506,7 +506,7 @@ function ActiveCallOverlay() {
         <button
           type="button"
           onClick={endCallWithClerkStop}
-          className="ml-1 sm:ml-2 shrink-0 flex flex-col items-center gap-0.5 px-2 sm:px-3 py-1.5 rounded-md bg-vs-red hover:bg-[hsl(174_75%_60%)] text-white transition-colors min-w-[44px]"
+          className="ml-1 sm:ml-2 shrink-0 flex flex-col items-center gap-0.5 px-2 sm:px-3 py-1.5 rounded-md bg-vs-red hover:bg-[hsl(var(--vs-accent-hover))] text-white transition-colors min-w-[44px]"
           data-testid="button-end-call"
           title="Leave call"
         >
@@ -519,7 +519,7 @@ function ActiveCallOverlay() {
           opened the link from Messages/Mail/Slack/etc, which blocks the
           camera. Dismissable but persistent until tapped. */}
       {isInAppBrowser && !inAppDismissed && (
-        <div className="shrink-0 px-4 py-3 bg-[hsl(174_70%_55%/0.32)] border-b border-[hsl(174_70%_55%/0.6)] text-xs text-[hsl(174_90%_92%)] flex items-start gap-2">
+        <div className="shrink-0 px-4 py-3 bg-[hsl(var(--vs-accent)/0.32)] border-b border-[hsl(var(--vs-accent)/0.6)] text-xs text-[hsl(var(--vs-accent))] flex items-start gap-2">
           <VideoOff className="w-4 h-4 shrink-0 mt-0.5" />
           <div className="flex-1 min-w-0">
             <div className="font-semibold text-sm">Camera blocked in this browser</div>
@@ -530,7 +530,7 @@ function ActiveCallOverlay() {
               <button
                 type="button"
                 onClick={() => openInIosApp(window.location.href)}
-                className="w-full px-3 py-2 rounded-md bg-vs-blue hover:bg-[hsl(199_90%_60%)] text-white text-sm font-medium transition-colors"
+                className="w-full px-3 py-2 rounded-md bg-vs-blue hover:bg-[hsl(var(--vs-accent-hover))] text-white text-sm font-medium transition-colors"
                 data-testid="button-open-in-ios-app"
               >
                 Open in Bulldog app
@@ -543,7 +543,7 @@ function ActiveCallOverlay() {
                     setTimeout(() => setEscapeLinkCopied(false), 2000);
                   }).catch(() => {});
                 }}
-                className="w-full px-3 py-2 rounded-md border border-[hsl(174_70%_55%/0.6)] hover:bg-black/20 text-[hsl(174_90%_92%)] text-sm font-medium transition-colors"
+                className="w-full px-3 py-2 rounded-md border border-[hsl(var(--vs-accent)/0.6)] hover:bg-black/20 text-[hsl(var(--vs-accent))] text-sm font-medium transition-colors"
                 data-testid="button-copy-meeting-link"
               >
                 {escapeLinkCopied ? "Copied!" : "Copy link"}
@@ -588,7 +588,7 @@ function ActiveCallOverlay() {
 
       {/* Error banner */}
       {lk.error && (
-        <div className="px-4 py-2 bg-[hsl(174_70%_55%/0.15)] border-b border-[hsl(174_70%_55%/0.4)] text-xs text-[hsl(174_85%_75%)] text-center">
+        <div className="px-4 py-2 bg-[hsl(var(--vs-accent)/0.15)] border-b border-[hsl(var(--vs-accent)/0.4)] text-xs text-[hsl(var(--vs-accent))] text-center">
           {lk.error}
         </div>
       )}
@@ -921,7 +921,7 @@ function InCallAddDialog({ onClose }: { onClose: () => void }) {
           {phoneNumbers.length > 0 && (
             <div className="flex flex-wrap gap-1.5">
               {phoneNumbers.map((p) => (
-                <span key={p} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-vs-red/15 border border-vs-red/40 text-[hsl(174_85%_75%)]">
+                <span key={p} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-vs-red/15 border border-vs-red/40 text-[hsl(var(--vs-accent))]">
                   {p}
                   <button type="button" onClick={() => setPhoneNumbers((arr) => arr.filter((x) => x !== p))} className="hover:text-white" aria-label={`Remove ${p}`}>
                     <X className="w-3 h-3" />
@@ -971,7 +971,7 @@ function InCallAddDialog({ onClose }: { onClose: () => void }) {
           </div>
         )}
         {error && (
-          <div className="shrink-0 px-3 py-2 bg-[hsl(174_70%_55%/0.15)] border-t border-[hsl(174_70%_55%/0.4)] text-xs text-[hsl(174_85%_75%)]">{error}</div>
+          <div className="shrink-0 px-3 py-2 bg-[hsl(var(--vs-accent)/0.15)] border-t border-[hsl(var(--vs-accent)/0.4)] text-xs text-[hsl(var(--vs-accent))]">{error}</div>
         )}
 
         <div className="shrink-0 px-3 py-3 border-t border-[hsl(220_40%_22%)] bg-[hsl(220_55%_13%)] flex items-center justify-between gap-2">
@@ -986,7 +986,7 @@ function InCallAddDialog({ onClose }: { onClose: () => void }) {
               type="button"
               onClick={submit}
               disabled={submitting || totalTargets === 0}
-              className="px-4 py-1.5 rounded-md bg-vs-red hover:bg-[hsl(174_75%_60%)] text-white text-sm font-semibold disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
+              className="px-4 py-1.5 rounded-md bg-vs-red hover:bg-[hsl(var(--vs-accent-hover))] text-white text-sm font-semibold disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
               data-testid="button-in-call-add-submit"
             >
               {submitting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
@@ -1031,7 +1031,7 @@ function CtrlBtn({
         disabled ? "opacity-40 cursor-not-allowed" : "",
         on
           ? "bg-[hsl(220_45%_27%)] hover:bg-[hsl(220_45%_32%)] text-white"
-          : "bg-[hsl(174_70%_55%/0.25)] hover:bg-[hsl(174_70%_55%/0.35)] text-[hsl(174_85%_72%)] ring-1 ring-[hsl(174_70%_55%/0.4)]",
+          : "bg-[hsl(var(--vs-accent)/0.25)] hover:bg-[hsl(var(--vs-accent)/0.35)] text-[hsl(var(--vs-accent))] ring-1 ring-[hsl(var(--vs-accent)/0.4)]",
       ].join(" ")}
     >
       {on ? onIcon : offIcon}

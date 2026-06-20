@@ -66,7 +66,7 @@ export default function Login() {
         </Field>
 
         {error && (
-          <div className="text-[12.5px] rounded-md bg-[hsl(174_70%_55%/0.12)] border border-[hsl(174_70%_55%/0.4)] text-[hsl(174_85%_72%)] px-3 py-2" data-testid="text-error">
+          <div className="text-[12.5px] rounded-md bg-[hsl(var(--vs-accent)/0.12)] border border-[hsl(var(--vs-accent)/0.4)] text-[hsl(var(--vs-accent))] px-3 py-2" data-testid="text-error">
             {error}
           </div>
         )}
@@ -74,7 +74,7 @@ export default function Login() {
         <button
           type="submit"
           disabled={loading || !email || !password}
-          className="w-full h-11 rounded-lg bg-vs-red hover:bg-[hsl(174_75%_60%)] text-white font-semibold flex items-center justify-center gap-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          className="w-full h-11 rounded-lg bg-vs-red hover:bg-[hsl(var(--vs-accent-hover))] text-white font-semibold flex items-center justify-center gap-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           data-testid="button-submit-login"
         >
           {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <>Sign in <ArrowRight className="w-4 h-4" /></>}

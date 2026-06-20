@@ -8,7 +8,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 
 const ROLE_ORDER: UserRole[] = ["admin", "manager", "user"];
 const ROLE_TINT: Record<UserRole, string> = {
-  admin:   "text-[hsl(174_85%_72%)]",
+  admin:   "text-[hsl(var(--vs-accent))]",
   manager: "text-vs-blue-light",
   user:    "text-vs-green",
 };

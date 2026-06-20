@@ -124,7 +124,7 @@ export function MeetingNotesHistory({ channelId, open, onClose }: Props) {
             const expanded = expandedId === row.id;
             const statusColor =
               row.status === "uploaded" ? "text-[hsl(140_60%_70%)] border-[hsl(140_60%_40%)]"
-              : row.status === "failed" ? "text-[hsl(174_85%_72%)] border-[hsl(174_70%_45%)]"
+              : row.status === "failed" ? "text-[hsl(var(--vs-accent))] border-[hsl(var(--vs-accent)/0.4)]"
               : "text-[hsl(40_85%_75%)] border-[hsl(40_85%_40%)]";
             const statusIcon =
               row.status === "uploaded" ? <CheckCircle2 className="w-3 h-3" />
@@ -208,7 +208,7 @@ export function MeetingNotesHistory({ channelId, open, onClose }: Props) {
                       </div>
                     )}
                     {row.status === "failed" && (row.errorMessage || row.synologyReason) && (
-                      <div className="text-[hsl(174_85%_75%)]">
+                      <div className="text-[hsl(var(--vs-accent))]">
                         <div className="text-[10px] uppercase tracking-wider mb-0.5">Error</div>
                         <div className="text-[11px]">{row.errorMessage || row.synologyReason}</div>
                       </div>

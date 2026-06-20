@@ -70,7 +70,7 @@ const KIND_META: Record<WorkObjectKind, { label: string; icon: typeof MapPin; to
   job_site:        { label: "Job Site",     icon: MapPin,         tone: "text-vs-green" },
   work_project:    { label: "Project",      icon: Briefcase,      tone: "text-vs-blue-light" },
   change_order:    { label: "Change Order", icon: FileEdit,       tone: "text-[hsl(35_100%_70%)]" },
-  safety_incident: { label: "Safety",       icon: AlertTriangle,  tone: "text-[hsl(174_85%_72%)]" },
+  safety_incident: { label: "Safety",       icon: AlertTriangle,  tone: "text-[hsl(var(--vs-accent))]" },
 };
 
 const STATUS_TONE: Record<string, string> = {

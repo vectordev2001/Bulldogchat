@@ -273,20 +273,20 @@ export default function Home() {
   if (!user) return null;
   if (projectsQ.isLoading || membersQ.isLoading) {
     return (
-      <div className="min-h-screen flex flex-col items-center justify-center bg-[hsl(220_60%_9%)] text-white gap-4">
-        <VectorLogo size={56} className="text-vs-blue" monochrome />
-        <Loader2 className="w-5 h-5 animate-spin text-vs-blue" />
-        <p className="text-sm text-white/60">Loading Bulldog Chat…</p>
+      <div className="min-h-screen flex flex-col items-center justify-center bg-background text-foreground gap-4">
+        <VectorLogo size={56} className="text-vs-accent" monochrome />
+        <Loader2 className="w-5 h-5 animate-spin text-vs-accent" />
+        <p className="text-sm text-[hsl(var(--vs-text-muted))]">Loading Bulldog Chat…</p>
       </div>
     );
   }
 
   if (projectsQ.error) {
     return (
-      <div className="min-h-screen flex flex-col items-center justify-center bg-[hsl(220_60%_9%)] text-white gap-3 p-6 text-center">
-        <VectorLogo size={48} className="text-vs-blue" monochrome />
+      <div className="min-h-screen flex flex-col items-center justify-center bg-background text-foreground gap-3 p-6 text-center">
+        <VectorLogo size={48} className="text-vs-accent" monochrome />
         <h1 className="text-lg font-display">Could not load projects</h1>
-        <p className="text-sm text-white/60 max-w-md">{(projectsQ.error as Error).message}</p>
+        <p className="text-sm text-[hsl(var(--vs-text-muted))] max-w-md">{(projectsQ.error as Error).message}</p>
       </div>
     );
   }
@@ -298,7 +298,7 @@ export default function Home() {
   // Empty state — no projects
   if (projects.length === 0) {
     return (
-      <div className="min-h-screen flex bg-[hsl(220_60%_9%)] text-white">
+      <div className="min-h-screen flex bg-background text-foreground">
         <ProjectRail
           projects={[]}
           activeId={null}
@@ -306,9 +306,9 @@ export default function Home() {
           sseStatus={sseStatus}
         />
         <main className="flex-1 flex flex-col items-center justify-center gap-4 p-8 text-center">
-          <VectorLogo size={64} className="text-vs-blue" monochrome />
+          <VectorLogo size={64} className="text-vs-accent" monochrome />
           <h1 className="text-xl font-display">No projects yet</h1>
-          <p className="text-sm text-white/60 max-w-md">
+          <p className="text-sm text-[hsl(var(--vs-text-muted))] max-w-md">
             Admins can create a project to get the team talking. Once a project exists, channels and
             messages show up here.
           </p>
@@ -327,7 +327,7 @@ export default function Home() {
     // (composer toolbar, call controls) visible.
     // overflow-hidden forces every scrolling region (message list, sidebar)
     // to be the *inner* `flex-1 overflow-y-auto` panel.
-    <div className="h-full flex bg-[hsl(220_60%_9%)] text-white relative overflow-hidden">
+    <div className="h-full flex bg-background text-foreground relative overflow-hidden">
       {/* Mobile sidebar overlay */}
       <AnimatePresence>
         {mobileNavOpen && (
@@ -427,7 +427,7 @@ export default function Home() {
           shrink-0 bottom call-controls bar below the fold. */}
       <main className="flex-1 min-w-0 min-h-0 flex flex-col">
         {/* Mobile top bar */}
-        <div className="md:hidden h-12 shrink-0 flex items-center justify-between px-3 bg-[hsl(220_55%_14%)] border-b border-black/40 sticky top-0 z-30">
+        <div className="md:hidden h-12 shrink-0 flex items-center justify-between px-3 bg-secondary text-[hsl(var(--vs-text))] border-b border-border sticky top-0 z-30">
           <button
             type="button"
             className="p-2 rounded hover-elevate"
@@ -438,15 +438,15 @@ export default function Home() {
             {mobileNavOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
           </button>
           <div className="flex items-center gap-2">
-            <VectorLogo size={22} className="text-white" monochrome />
+            <VectorLogo size={22} />
             <span className="text-sm font-display tracking-wide">Bulldog Chat</span>
           </div>
           {/* Suite chrome, top-right: bell left of the AppSwitcher. Kept in the
               mobile bar so the bell stays reachable on phones (<md), where the
               desktop header is hidden. */}
           <div className="flex items-center gap-1">
-            <NotificationsButton variant="rail" />
-            <AppSwitcher currentApp="chat" dark placement="bottom-end" />
+            <NotificationsButton variant="header" />
+            <AppSwitcher currentApp="chat" placement="bottom-end" />
           </div>
         </div>
 
@@ -491,8 +491,8 @@ export default function Home() {
           </div>
         ) : channelsQ.data && channelsQ.data.length === 0 ? (
           <div className="flex-1 flex flex-col items-center justify-center text-center px-6 gap-2">
-            <div className="text-sm text-white/70">No channels in this project yet.</div>
-            <div className="text-xs text-white/40">Create a channel from the sidebar to get started.</div>
+            <div className="text-sm text-[hsl(var(--vs-text-muted))]">No channels in this project yet.</div>
+            <div className="text-xs text-[hsl(var(--vs-text-subtle))]">Create a channel from the sidebar to get started.</div>
           </div>
         ) : !activeChannel ? (
           <div className="flex-1 flex items-center justify-center">

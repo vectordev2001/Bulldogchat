@@ -9,8 +9,8 @@ interface Props {
 }
 
 export function VectorLogo({ size = 40, className = "", stars = true, monochrome = false }: Props) {
-  const navy = monochrome ? "currentColor" : "hsl(220 50% 20%)";
-  const red = monochrome ? "currentColor" : "hsl(174 70% 55%)";
+  const navy = monochrome ? "currentColor" : "hsl(232 50% 20%)";
+  const red = monochrome ? "currentColor" : "hsl(2 70% 55%)";
   return (
     <svg
       width={size}
@@ -76,7 +76,7 @@ export function VectorWordmark({ className = "" }: { className?: string }) {
   return (
     <div className={`inline-flex items-center gap-2.5 ${className}`}>
       <VectorLogo size={32} />
-      <div className="font-display text-white tracking-[0.18em] text-sm uppercase">
+      <div className="font-display text-[hsl(var(--vs-text))] tracking-[0.18em] text-sm uppercase">
         Bulldog <span className="text-vs-red">Chat</span>
       </div>
     </div>
