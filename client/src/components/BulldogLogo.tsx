@@ -1,33 +1,164 @@
 import { SiZoom, SiGooglemeet } from "react-icons/si";
 import type { Origin } from "@/lib/meeting";
-import bulldogMarkUrl from "@/assets/bulldog-mark.png";
 
 // ── App-identity logo ──────────────────────────────────────────────────────
-// The canonical Bulldog mark (navy bulldog face), rendered identically across
-// every Bulldog Suite app. App identity comes from the wordmark and accent
-// color, NOT from per-app recoloring of the mark.
+// Canonical Bulldog Suite app-identity logo — three stars in a row above three
+// chevron stripes. Each app highlights ONE star and ONE chevron in its accent
+// color; everything else uses the muted neutral navy. Self-contained inline SVG.
 
-type AppId = "chat" | "contracts" | "ops";
+type App = "chat" | "contracts" | "ops";
 
-/**
- * <BulldogLogo /> — the shared Bulldog mark for the unified header.
- * The `app` prop is accepted for call-site API compatibility but no longer
- * affects rendering (all apps render the same mark).
- */
-export function BulldogLogo({
-  app = "chat",
-  size = 32,
-  className = "h-7 md:h-8 w-auto",
-}: {
-  app?: AppId;
+interface LogoProps {
+  /** App identity — controls which star + chevron is highlighted. */
+  app?: App;
   size?: number;
   className?: string;
+  stars?: boolean;
+  /** Render in a single currentColor tone (no per-app highlight). */
+  monochrome?: boolean;
+}
+
+const NEUTRAL = "hsl(232 30% 60%)"; // muted navy
+const NEUTRAL_STROKE_WIDTH = 5;
+const HIGHLIGHT_STROKE_WIDTH = NEUTRAL_STROKE_WIDTH * 1.5; // 1.5× neutral
+
+const NAVY = "#191E4A";
+const GOLD = "#C99A2E";
+const RED = "#DD403D";
+
+interface AppStyle {
+  // Which star (0 = left, 1 = middle, 2 = right) is highlighted.
+  star: number;
+  starFill: string;
+  starOutline?: string;
+  // Which chevron (0 = top, 1 = middle, 2 = bottom) is highlighted.
+  chevron: number;
+  chevronStroke: string;
+  chevronOutline?: string;
+}
+
+const APP_STYLES: Record<App, AppStyle> = {
+  contracts: { star: 0, starFill: GOLD, chevron: 0, chevronStroke: GOLD },
+  chat: { star: 1, starFill: NAVY, chevron: 1, chevronStroke: NAVY },
+  ops: { star: 2, starFill: RED, chevron: 2, chevronStroke: RED },
+};
+
+const STAR_POS = [
+  { cx: 20, cy: 10 },
+  { cx: 32, cy: 8 },
+  { cx: 44, cy: 10 },
+];
+
+const CHEVRON_PATHS = [
+  "M8 50 L32 22 L56 50",
+  "M16 50 L32 32 L48 50",
+  "M24 50 L32 42 L40 50",
+];
+
+export function BulldogLogo({
+  app = "chat",
+  size = 40,
+  className = "",
+  stars = true,
+  monochrome = false,
+}: LogoProps) {
+  const style = APP_STYLES[app];
+
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 64 64"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      aria-label={`Bulldog ${app.charAt(0).toUpperCase()}${app.slice(1)}`}
+      className={className}
+    >
+      {stars && (
+        <g>
+          {STAR_POS.map((pos, i) => {
+            const highlighted = !monochrome && i === style.star;
+            const fill = monochrome
+              ? "currentColor"
+              : highlighted
+                ? style.starFill
+                : NEUTRAL;
+            return (
+              <Star
+                key={i}
+                cx={pos.cx}
+                cy={pos.cy}
+                r={highlighted ? 2.6 : 2.2}
+                fill={fill}
+                stroke={highlighted ? style.starOutline : undefined}
+              />
+            );
+          })}
+        </g>
+      )}
+      {CHEVRON_PATHS.map((d, i) => {
+        const highlighted = !monochrome && i === style.chevron;
+        const stroke = monochrome
+          ? "currentColor"
+          : highlighted
+            ? style.chevronStroke
+            : NEUTRAL;
+        const strokeWidth = highlighted
+          ? HIGHLIGHT_STROKE_WIDTH
+          : NEUTRAL_STROKE_WIDTH;
+        return (
+          <g key={i}>
+            {highlighted && style.chevronOutline && (
+              // Navy outline behind a light highlight so it stays visible.
+              <path
+                d={d}
+                stroke={style.chevronOutline}
+                strokeWidth={strokeWidth + 2}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            )}
+            <path
+              d={d}
+              stroke={stroke}
+              strokeWidth={strokeWidth}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
+function Star({
+  cx,
+  cy,
+  r,
+  fill,
+  stroke,
+}: {
+  cx: number;
+  cy: number;
+  r: number;
+  fill: string;
+  stroke?: string;
 }) {
-  void app;
-  void size;
-  // `className` (h-7 md:h-8 w-auto) drives the responsive 28→32px sizing and
-  // preserves aspect ratio. The PNG renders as-is (navy bulldog, no tint).
-  return <img src={bulldogMarkUrl} alt="Bulldog" className={className} />;
+  const pts: string[] = [];
+  for (let i = 0; i < 10; i++) {
+    const angle = (i * Math.PI) / 5 - Math.PI / 2;
+    const radius = i % 2 === 0 ? r : r * 0.42;
+    pts.push(`${cx + Math.cos(angle) * radius},${cy + Math.sin(angle) * radius}`);
+  }
+  return (
+    <polygon
+      points={pts.join(" ")}
+      fill={fill}
+      stroke={stroke}
+      strokeWidth={stroke ? 1 : undefined}
+    />
+  );
 }
 
 // react-icons/si has no Microsoft Teams glyph in this version, so we draw a
