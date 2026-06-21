@@ -50,13 +50,14 @@ export function UnifiedHeader({ navOpen, onToggleNav, onLogoClick }: Props) {
       <button
         type="button"
         onClick={onLogoClick}
-        className="flex items-center gap-2 rounded-md py-1 pr-2 hover:opacity-90 transition-opacity"
+        className="flex min-w-0 items-center gap-2 rounded-md py-1 pr-2 hover:opacity-90 transition-opacity"
         aria-label="Bulldog Chat home"
         data-testid="button-logo-home"
       >
-        <BulldogLogo app="chat" className="h-7 md:h-8 w-auto" />
-        <span className="font-display font-semibold text-[16px] md:text-[18px] leading-none text-[hsl(var(--vs-text))]">
-          Bulldog Chat
+        <BulldogLogo className="h-7 md:h-8 w-auto shrink-0" />
+        <span className="min-w-0 truncate font-display font-semibold text-[16px] md:text-[18px] leading-none text-[hsl(var(--vs-accent))]">
+          <span className="sm:hidden">Chat</span>
+          <span className="hidden sm:inline">Bulldog Chat</span>
         </span>
       </button>
 
@@ -64,7 +65,7 @@ export function UnifiedHeader({ navOpen, onToggleNav, onLogoClick }: Props) {
       <div className="flex-1" />
 
       {/* Right cluster: notifications • app switcher • avatar */}
-      <div className="flex items-center gap-1">
+      <div className="flex shrink-0 items-center gap-1">
         <NotificationsButton variant="header" />
         <AppSwitcher currentApp="chat" placement="bottom-end" />
 
