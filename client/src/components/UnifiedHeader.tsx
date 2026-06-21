@@ -54,7 +54,7 @@ export function UnifiedHeader({ navOpen, onToggleNav, onLogoClick }: Props) {
         aria-label="Bulldog Chat home"
         data-testid="button-logo-home"
       >
-        <BulldogLogo className="h-7 md:h-8 w-auto shrink-0" />
+        <BulldogLogo app="chat" className="h-7 md:h-8 w-auto shrink-0" />
         <span className="min-w-0 truncate font-display font-semibold text-[16px] md:text-[18px] leading-none text-[hsl(var(--vs-accent))]">
           <span className="sm:hidden">Chat</span>
           <span className="hidden sm:inline">Bulldog Chat</span>
