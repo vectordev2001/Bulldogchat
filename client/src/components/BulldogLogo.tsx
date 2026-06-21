@@ -1,6 +1,6 @@
 import { SiZoom, SiGooglemeet } from "react-icons/si";
 import type { Origin } from "@/lib/meeting";
-import VectorEmblem from "@/assets/vector-emblem.svg?react";
+import emblemUrl from "@/assets/vector-emblem.svg";
 
 // ── App-identity logo ──────────────────────────────────────────────────────
 // The real Vector emblem (vectorservicesus.com), rendered identically across
@@ -26,16 +26,10 @@ export function BulldogLogo({
   className?: string;
 }) {
   void app;
+  void size;
   // `className` (h-7 md:h-8 w-auto) drives the responsive 28→32px sizing and
-  // preserves aspect ratio; `size` is the fallback width when no class is given.
-  return (
-    <VectorEmblem
-      width={size}
-      role="img"
-      aria-label="Vector"
-      className={className}
-    />
-  );
+  // preserves aspect ratio. Native blue/tan/red render directly via <img>.
+  return <img src={emblemUrl} alt="Vector emblem" className={className} />;
 }
 
 // react-icons/si has no Microsoft Teams glyph in this version, so we draw a
