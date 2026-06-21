@@ -27,11 +27,11 @@ persistent disk.
 
 ### v2 features
 
-- **File attachments** — drag-and-drop or paperclip upload (up to 4 files,
-  10 MB each). Images render inline with a click-to-zoom lightbox; PDFs and
-  docs render as download cards. Storage is pluggable: `STORAGE_BACKEND=disk`
-  writes to `/app/data/uploads`, `STORAGE_BACKEND=s3` writes to any S3-compatible
-  bucket (AWS, Cloudflare R2, Backblaze B2, MinIO) with presigned reads.
+- **File attachments** — drag-and-drop, paperclip, or paste-from-clipboard
+  upload (up to 8 files, 25 MB each; images and PDFs only). Images render inline
+  as lazy-loaded thumbnails with a click-to-zoom lightbox (Esc / click-outside to
+  close); PDFs render as download cards. Uploads show per-file progress. Storage
+  is pluggable — see [File attachments storage](#file-attachments-storage).
 - **Threaded replies** — every message has a "Reply in thread" hover action
   and a side panel showing the parent + scoped replies + a dedicated composer.
   Reply counts and last-reply timestamps surface in the main timeline.
@@ -110,6 +110,53 @@ See [.env.example](./.env.example) for the full list with comments.
 | `VITE_AUTH_MODE` | no | `bearer` (default) or `cookie`. |
 | `LIVEKIT_API_KEY/SECRET/WS_URL` | optional | Real voice channels. Omit → demo mode. |
 | `VAPID_*` + `VITE_VAPID_PUBLIC_KEY` | optional | Web push notifications. |
+| `STORAGE_BACKEND` | no | `disk` (default) or `s3`. See below. |
+| `LOCAL_UPLOAD_ROOT` | no | Disk backend path. Default `/app/data/uploads`. |
+| `S3_BUCKET` / `S3_ACCESS_KEY` / `S3_SECRET_KEY` | for s3 | Bucket + credentials. |
+| `S3_ENDPOINT` / `S3_REGION` | for s3 | Endpoint (R2/MinIO) + region. |
+| `S3_PUBLIC_URL_BASE` / `S3_KEY_PREFIX` | optional | CDN base + key namespace. |
+
+## File attachments storage
+
+Attachments (safety photos, site maps, PDFs) are uploaded via
+`POST /api/attachments` and served back through `GET /api/files/:id`, which
+checks tenant/channel access on every request. Two storage backends are
+selected by the `STORAGE_BACKEND` env var:
+
+### Disk (default)
+
+```bash
+STORAGE_BACKEND=disk
+LOCAL_UPLOAD_ROOT=/app/data/uploads   # persists on the Render disk
+```
+
+Files stream straight from disk. This is the zero-config default and works on
+the single-disk Render deployment.
+
+### S3-compatible (`s3`)
+
+Works with AWS S3, Cloudflare R2, Backblaze B2, MinIO, and Synology C2. The
+server uploads the original + a generated WebP thumbnail, and `GET /api/files/:id`
+302-redirects to a 5-minute presigned URL so range/seek works natively.
+
+```bash
+STORAGE_BACKEND=s3
+S3_BUCKET=bulldog-chat
+S3_ACCESS_KEY=...
+S3_SECRET_KEY=...
+S3_REGION=auto                                   # "auto" for R2
+S3_ENDPOINT=https://<accountid>.r2.cloudflarestorage.com   # omit for AWS
+S3_PUBLIC_URL_BASE=https://files.bulldogops.com  # optional CDN base
+S3_KEY_PREFIX=chat/                              # optional namespace
+```
+
+**Cloudflare R2 setup:** create a bucket, an R2 API token (Object Read & Write),
+set `S3_REGION=auto`, and point `S3_ENDPOINT` at your account's R2 endpoint.
+**MinIO/Synology:** set `S3_ENDPOINT` to the server URL; path-style addressing
+is enabled automatically whenever `S3_ENDPOINT` is set.
+
+Object key scheme: `tenants/<orgId>/<yyyy>/<mm>/<uuid>-<filename>`, with
+thumbnails at the same key plus a `.thumb.webp` suffix.
 
 ## Architecture
 

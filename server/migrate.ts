@@ -136,6 +136,8 @@ export function runMigrations() {
     size_bytes INTEGER NOT NULL,
     storage_key TEXT NOT NULL,
     thumbnail_key TEXT,
+    width INTEGER,
+    height INTEGER,
     created_at INTEGER NOT NULL
   );
   CREATE INDEX IF NOT EXISTS attachments_msg_idx ON attachments(message_id);
@@ -1121,5 +1123,21 @@ export function runMigrations() {
     } catch (e: any) {
       console.warn(`[migrate v27] ${tbl}.meeting_id column skipped:`, e?.message);
     }
+  }
+
+  // v28: image dimensions on attachments so the renderer can reserve aspect
+  // ratio before the image loads (avoids layout shift in field-crew threads).
+  try {
+    const cols = rawDb.prepare(`PRAGMA table_info(attachments)`).all() as Array<{ name: string }>;
+    if (!cols.find((c) => c.name === "width")) {
+      rawDb.exec(`ALTER TABLE attachments ADD COLUMN width INTEGER;`);
+      console.log("[migrate] v28 added attachments.width column");
+    }
+    if (!cols.find((c) => c.name === "height")) {
+      rawDb.exec(`ALTER TABLE attachments ADD COLUMN height INTEGER;`);
+      console.log("[migrate] v28 added attachments.height column");
+    }
+  } catch (e: any) {
+    console.warn("[migrate v28] attachments dimensions skipped:", e?.message);
   }
 }

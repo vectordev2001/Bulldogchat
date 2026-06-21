@@ -143,3 +143,9 @@ export function getStorageBackend(): StorageBackend {
   console.log(`[storage] Using local disk backend at ${UPLOAD_ROOT}`);
   return _backend;
 }
+
+// Lazy singleton accessor used across routes. The getter form keeps the
+// disk/S3 selection (and S3 client construction) deferred until first use.
+export const fileStorage = {
+  get backend() { return getStorageBackend(); },
+} as const;

@@ -89,8 +89,12 @@ export interface ApiAttachment {
   filename: string;
   contentType: string;
   sizeBytes: number;
+  width?: number | null;
+  height?: number | null;
   url: string;
+  downloadUrl?: string;
   thumbnailUrl: string | null;
+  thumbUrl?: string | null;
   createdAt: string;
 }
 
