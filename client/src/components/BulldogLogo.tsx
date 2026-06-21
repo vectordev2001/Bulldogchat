@@ -1,20 +1,18 @@
 import { SiZoom, SiGooglemeet } from "react-icons/si";
 import type { Origin } from "@/lib/meeting";
-import emblemUrl from "@/assets/vector-emblem.svg";
+import bulldogMarkUrl from "@/assets/bulldog-mark.png";
 
 // ── App-identity logo ──────────────────────────────────────────────────────
-// The real Vector emblem (vectorservicesus.com), rendered identically across
-// every Bulldog Suite app. App identity comes from the wordmark and the active
-// tab pill, NOT from per-app recoloring of the mark. Native colors are kept:
-// #246387 blue, #C5A582 tan, #E75B50 red.
+// The canonical Bulldog mark (navy bulldog face), rendered identically across
+// every Bulldog Suite app. App identity comes from the wordmark and accent
+// color, NOT from per-app recoloring of the mark.
 
 type AppId = "chat" | "contracts" | "ops";
 
 /**
- * <BulldogLogo /> — the shared Vector emblem for the unified header.
- * `size` is the rendered width in px; height is derived from the SVG's native
- * aspect ratio (~1583:1749, taller than wide). The `app` prop is accepted for
- * call-site API compatibility but no longer affects rendering.
+ * <BulldogLogo /> — the shared Bulldog mark for the unified header.
+ * The `app` prop is accepted for call-site API compatibility but no longer
+ * affects rendering (all apps render the same mark).
  */
 export function BulldogLogo({
   app = "chat",
@@ -28,8 +26,8 @@ export function BulldogLogo({
   void app;
   void size;
   // `className` (h-7 md:h-8 w-auto) drives the responsive 28→32px sizing and
-  // preserves aspect ratio. Native blue/tan/red render directly via <img>.
-  return <img src={emblemUrl} alt="Vector emblem" className={className} />;
+  // preserves aspect ratio. The PNG renders as-is (navy bulldog, no tint).
+  return <img src={bulldogMarkUrl} alt="Bulldog" className={className} />;
 }
 
 // react-icons/si has no Microsoft Teams glyph in this version, so we draw a
