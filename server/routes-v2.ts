@@ -15,13 +15,25 @@ import { emitMessageNew } from "./events";
 import { startRoomRecording, stopRecording, recordingStorageConfigured } from "./recording";
 import { livekitConfigured } from "./livekit";
 
+// Per-file 25 MB, up to 8 files; total request cap ~100 MB enforced by the
+// 8×12.5 envelope plus the per-file limit. memoryStorage so we can hand the
+// buffer straight to sharp + the storage backend without a temp-file round trip.
+const MAX_FILE_BYTES = 25 * 1024 * 1024;
+const MAX_FILES = 8;
+const ALLOWED_MIME = /^(image\/|application\/pdf$)/i;
+
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 25 * 1024 * 1024, files: 4 },
+  limits: { fileSize: MAX_FILE_BYTES, files: MAX_FILES },
 });
 
 function sanitizeFilename(name: string): string {
   return name.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 200) || "file";
+}
+
+// image/* (incl. heic/heif), and PDF. Everything else → 415.
+function isAllowedMime(mime: string): boolean {
+  return ALLOWED_MIME.test(mime);
 }
 
 function fmtAttachment(att: ReturnType<typeof storage.getAttachment>) {
@@ -29,15 +41,94 @@ function fmtAttachment(att: ReturnType<typeof storage.getAttachment>) {
   const backend = getStorageBackend();
   const publicUrl = backend.publicUrl(att.storageKey);
   const thumbPublic = att.thumbnailKey ? backend.publicUrl(att.thumbnailKey) : null;
+  const downloadUrl = publicUrl ?? `/api/files/${att.id}`;
+  const thumbnailUrl = thumbPublic ?? (att.thumbnailKey ? `/api/files/${att.id}?thumb=1` : null);
   return {
     id: att.id,
     filename: att.filename,
     contentType: att.contentType,
     sizeBytes: att.sizeBytes,
-    url: publicUrl ?? `/api/files/${att.id}`,
-    thumbnailUrl: thumbPublic ?? (att.thumbnailKey ? `/api/files/${att.id}?thumb=1` : null),
+    width: att.width ?? null,
+    height: att.height ?? null,
+    url: downloadUrl,
+    downloadUrl,
+    thumbnailUrl,
+    thumbUrl: thumbnailUrl,
     createdAt: att.createdAt,
   };
+}
+
+// Shared upload handler used by POST /api/attachments (spec name) and the
+// legacy POST /api/uploads alias. Validates MIME, generates WebP thumbnails +
+// captures dimensions for images, uploads original + thumb to the storage
+// backend, and inserts an unlinked attachment row (messageId set later when
+// the message is created).
+async function handleUpload(req: Request, res: Response, shape: "array" | "object") {
+  const u = (req as AuthedRequest).user;
+  const files = (req.files as Express.Multer.File[]) || [];
+  if (files.length === 0) return res.status(400).json({ message: "No files" });
+
+  const bad = files.find((f) => !isAllowedMime(f.mimetype));
+  if (bad) return res.status(415).json({ message: `Unsupported file type: ${bad.mimetype}. Only images and PDFs are allowed.` });
+
+  const backend = getStorageBackend();
+  const out: any[] = [];
+  for (const f of files) {
+    const id = nanoid(16);
+    const safeName = sanitizeFilename(f.originalname);
+    const now = new Date();
+    const yyyy = now.getUTCFullYear();
+    const mm = String(now.getUTCMonth() + 1).padStart(2, "0");
+    const storageKey = `tenants/${u.orgId}/${yyyy}/${mm}/${id}-${safeName}`;
+    await backend.upload(f.buffer, storageKey, f.mimetype);
+
+    let thumbnailKey: string | null = null;
+    let width: number | null = null;
+    let height: number | null = null;
+    if (f.mimetype.startsWith("image/")) {
+      try {
+        const pipeline = sharp(f.buffer).rotate();
+        const meta = await pipeline.metadata();
+        // metadata() reads dimensions pre-rotation; after .rotate() the
+        // EXIF orientation is baked in, so swap when orientation is sideways.
+        const sideways = (meta.orientation ?? 1) >= 5;
+        width = (sideways ? meta.height : meta.width) ?? null;
+        height = (sideways ? meta.width : meta.height) ?? null;
+        const thumbBuf = await sharp(f.buffer).rotate().resize(480, 480, { fit: "inside", withoutEnlargement: true }).webp({ quality: 80 }).toBuffer();
+        thumbnailKey = `${storageKey}.thumb.webp`;
+        await backend.upload(thumbBuf, thumbnailKey, "image/webp");
+      } catch (err) {
+        console.warn("[uploads] thumbnail/metadata failed:", err);
+      }
+    }
+
+    const att = storage.createAttachment({
+      id,
+      uploaderUserId: u.id,
+      filename: f.originalname,
+      contentType: f.mimetype,
+      sizeBytes: f.size,
+      storageKey,
+      thumbnailKey,
+      width,
+      height,
+    });
+    out.push(fmtAttachment(att));
+  }
+  res.json(shape === "object" ? { attachments: out } : out);
+}
+
+// multer rejects oversized files / too many files with a MulterError; map
+// those to 413 instead of a generic 500.
+function uploadMiddleware(req: Request, res: Response, next: (err?: any) => void) {
+  upload.array("files", MAX_FILES)(req as any, res as any, (err: any) => {
+    if (err) {
+      if (err?.code === "LIMIT_FILE_SIZE") return res.status(413).json({ message: "File too large (max 25 MB per file)" });
+      if (err?.code === "LIMIT_FILE_COUNT") return res.status(413).json({ message: `Too many files (max ${MAX_FILES})` });
+      return res.status(400).json({ message: err?.message ?? "Upload failed" });
+    }
+    next();
+  });
 }
 
 // Parse mentions out of message content.
@@ -65,41 +156,24 @@ export function parseMentions(content: string, projectMembers: Array<{ id: numbe
 
 export function registerV2Routes(app: Express) {
   // ─────────── UPLOADS ───────────
-  app.post("/api/uploads", requireAuth, upload.array("files", 4), async (req, res) => {
+  // Primary, spec-named route. Returns { attachments: [...] }.
+  app.post("/api/attachments", requireAuth, uploadMiddleware, (req, res) => handleUpload(req, res, "object"));
+  // Legacy alias kept for existing clients; returns a bare array.
+  app.post("/api/uploads", requireAuth, uploadMiddleware, (req, res) => handleUpload(req, res, "array"));
+
+  // DELETE /api/attachments/:id — uploader or admin only. Removes the storage
+  // objects (original + thumb) and the DB row; the row's FK cascade / the
+  // message render path drops it from any linked message automatically.
+  app.delete("/api/attachments/:id", requireAuth, async (req, res) => {
     const u = (req as AuthedRequest).user;
-    const files = (req.files as Express.Multer.File[]) || [];
-    if (files.length === 0) return res.status(400).json({ message: "No files" });
+    const att = storage.getAttachment(String(req.params.id));
+    if (!att) return res.status(404).json({ message: "Not found" });
+    if (att.uploaderUserId !== u.id && u.role !== "admin") return res.status(403).json({ message: "Forbidden" });
     const backend = getStorageBackend();
-    const out: any[] = [];
-    for (const f of files) {
-      const id = nanoid(16);
-      const safeName = sanitizeFilename(f.originalname);
-      const storageKey = `attachments/${u.orgId}/${id}-${safeName}`;
-      await backend.upload(f.buffer, storageKey, f.mimetype);
-
-      let thumbnailKey: string | null = null;
-      if (f.mimetype.startsWith("image/")) {
-        try {
-          const thumbBuf = await sharp(f.buffer).rotate().resize(400, 400, { fit: "inside", withoutEnlargement: true }).webp({ quality: 82 }).toBuffer();
-          thumbnailKey = `attachments/${u.orgId}/thumbs/${id}.webp`;
-          await backend.upload(thumbBuf, thumbnailKey, "image/webp");
-        } catch (err) {
-          console.warn("[uploads] thumbnail generation failed:", err);
-        }
-      }
-
-      const att = storage.createAttachment({
-        id,
-        uploaderUserId: u.id,
-        filename: f.originalname,
-        contentType: f.mimetype,
-        sizeBytes: f.size,
-        storageKey,
-        thumbnailKey,
-      });
-      out.push(fmtAttachment(att));
-    }
-    res.json(out);
+    try { await backend.delete(att.storageKey); } catch {}
+    if (att.thumbnailKey) try { await backend.delete(att.thumbnailKey); } catch {}
+    storage.deleteAttachment(att.id);
+    res.json({ ok: true });
   });
 
   // GET /api/files/:id — auth + access check; redirect to signed URL or stream
@@ -128,7 +202,13 @@ export function registerV2Routes(app: Express) {
     const backend = getStorageBackend();
     res.setHeader("Content-Type", wantThumb ? "image/webp" : att.contentType);
     res.setHeader("Cache-Control", "private, max-age=3600");
-    if (!wantThumb) res.setHeader("Content-Disposition", `inline; filename="${att.filename.replace(/"/g, "")}"`);
+    if (!wantThumb) {
+      // Inline for previewable types (images/PDF) so they render in-thread;
+      // ?download=1 forces a save dialog for the original.
+      const forceDownload = String(req.query.download ?? "") === "1";
+      const disposition = forceDownload ? "attachment" : "inline";
+      res.setHeader("Content-Disposition", `${disposition}; filename="${att.filename.replace(/"/g, "")}"`);
+    }
     const ok = await backend.streamTo(key, res);
     if (!ok && !res.headersSent) res.status(404).json({ message: "Storage object missing" });
   });

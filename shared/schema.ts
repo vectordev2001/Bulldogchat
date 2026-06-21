@@ -337,6 +337,8 @@ export const attachments = sqliteTable("attachments", {
   sizeBytes: integer("size_bytes").notNull(),
   storageKey: text("storage_key").notNull(),
   thumbnailKey: text("thumbnail_key"),
+  width: integer("width"),
+  height: integer("height"),
   createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
 });
 export type Attachment = typeof attachments.$inferSelect;
@@ -821,11 +823,14 @@ export const acceptInviteSchema = z.object({
   password: z.string().min(8).max(128),
 });
 export const sendMessageSchema = z.object({
-  content: z.string().min(1).max(4000),
+  content: z.string().max(4000),
   attachments: z.array(z.any()).optional(),
   attachmentIds: z.array(z.string()).optional(),
   replyToMessageId: z.number().nullable().optional(),
-});
+}).refine(
+  (d) => d.content.trim().length > 0 || (d.attachmentIds?.length ?? 0) > 0,
+  { message: "Message must have text or at least one attachment", path: ["content"] },
+);
 export const reactionSchema = z.object({
   emoji: z.string().min(1).max(32),
 });

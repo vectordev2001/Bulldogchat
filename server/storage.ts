@@ -145,7 +145,7 @@ export interface IStorage {
   deleteInvite(id: number): void;
 
   /* Attachments */
-  createAttachment(input: { id: string; uploaderUserId: number; filename: string; contentType: string; sizeBytes: number; storageKey: string; thumbnailKey?: string | null }): Attachment;
+  createAttachment(input: { id: string; uploaderUserId: number; filename: string; contentType: string; sizeBytes: number; storageKey: string; thumbnailKey?: string | null; width?: number | null; height?: number | null }): Attachment;
   getAttachment(id: string): Attachment | undefined;
   listAttachmentsForMessages(messageIds: number[]): Attachment[];
   linkAttachmentsToMessage(ids: string[], messageId: number, uploaderUserId: number): void;
@@ -686,6 +686,8 @@ class DatabaseStorage implements IStorage {
       sizeBytes: input.sizeBytes,
       storageKey: input.storageKey,
       thumbnailKey: input.thumbnailKey ?? null,
+      width: input.width ?? null,
+      height: input.height ?? null,
       messageId: null,
       createdAt: new Date(),
     }).returning().get();

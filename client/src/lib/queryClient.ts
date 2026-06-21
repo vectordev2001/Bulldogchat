@@ -1,13 +1,13 @@
 import { QueryClient, QueryFunction } from "@tanstack/react-query";
 
-const API_BASE = "__PORT_5000__".startsWith("__") ? "" : "__PORT_5000__";
+export const API_BASE = "__PORT_5000__".startsWith("__") ? "" : "__PORT_5000__";
 
 // In-memory token store. Auth provider sets/clears.
 let authToken: string | null = null;
 export function setAuthToken(t: string | null) { authToken = t; }
 export function getAuthToken(): string | null { return authToken; }
 
-function authHeaders(): Record<string, string> {
+export function authHeaders(): Record<string, string> {
   if (!authToken) return {};
   return { Authorization: `Bearer ${authToken}` };
 }

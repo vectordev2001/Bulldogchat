@@ -13,13 +13,14 @@ import { useCalls } from "@/lib/CallContext";
 import { Avatar } from "./Avatar";
 import { useState, useRef, useEffect, KeyboardEvent, useCallback, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import type { ApiChannel, ApiMessage, ApiUser, UserRole, ApiAttachment, ApiSystemMessageMeta, ApiWorkObjectSystemMessageMeta, ApiScheduledCallSystemMessageMeta, ApiMeetingSummarySystemMessageMeta } from "@/types/api";
+import type { ApiChannel, ApiMessage, ApiUser, UserRole, ApiSystemMessageMeta, ApiWorkObjectSystemMessageMeta, ApiScheduledCallSystemMessageMeta, ApiMeetingSummarySystemMessageMeta } from "@/types/api";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest, apiUpload, queryClient } from "@/lib/queryClient";
+import { useAttachmentUploader, ATTACH_ACCEPT } from "@/hooks/use-attachment-uploader";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 import { ThreadPanel } from "./ThreadPanel";
 import { SearchModal } from "./SearchModal";
-import { AttachmentList } from "./AttachmentRenderer";
+import { MessageAttachments } from "./MessageAttachments";
 import { ContractBanner } from "./ContractBanner";
 import { MeetingNotesHistory } from "./MeetingNotesHistory";
 
@@ -67,8 +68,7 @@ interface MentionMatch {
 
 export function TextChannelView({ channel, messages, loading, me, orgMembers, membersOpen, onToggleMembers, workObjectsOpen, onToggleWorkObjects, onSlashSchedule }: Props) {
   const [draft, setDraft] = useState("");
-  const [pendingAtts, setPendingAtts] = useState<ApiAttachment[]>([]);
-  const [uploading, setUploading] = useState(false);
+  const { pending: pendingAtts, addFiles, remove: removePending, clear: clearPending, uploading, readyIds, atCapacity } = useAttachmentUploader({ max: 8 });
   const [threadParent, setThreadParent] = useState<ApiMessage | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [dragOver, setDragOver] = useState(false);
@@ -325,7 +325,7 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers, me
 
   const submit = () => {
     const body = draft.trim();
-    if ((!body && pendingAtts.length === 0) || sendMutation.isPending) return;
+    if ((!body && readyIds.length === 0) || sendMutation.isPending || uploading) return;
 
     // Slash command interception: /job is primary; /object kept as silent alias
     // for one release so existing muscle memory still works.
@@ -333,7 +333,7 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers, me
     if (jobCmdMatch) {
       const rest = body.slice(jobCmdMatch[0].length);
       setDraft("");
-      setPendingAtts([]);
+      clearPending();
       setMentionMatch(null);
       void handleSlashJob(rest);
       return;
@@ -341,33 +341,28 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers, me
 
     sendMutation.mutate({
       content: body || " ",
-      attachmentIds: pendingAtts.length > 0 ? pendingAtts.map((a) => a.id) : undefined,
+      attachmentIds: readyIds.length > 0 ? readyIds : undefined,
     });
     setDraft("");
-    setPendingAtts([]);
+    clearPending();
     setMentionMatch(null);
   };
-
-  const uploadFiles = useCallback(async (files: FileList | File[]) => {
-    const list = Array.from(files);
-    if (list.length === 0) return;
-    setUploading(true);
-    try {
-      const fd = new FormData();
-      list.slice(0, 4).forEach((f) => fd.append("files", f));
-      const res = await apiUpload<ApiAttachment[]>(`/api/uploads`, fd);
-      setPendingAtts((p) => [...p, ...res].slice(0, 4));
-    } catch (e: any) {
-      alert(`Upload failed: ${e?.message ?? "Unknown"}`);
-    } finally {
-      setUploading(false);
-    }
-  }, []);
 
   const onDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setDragOver(false);
-    if (e.dataTransfer.files.length > 0) uploadFiles(e.dataTransfer.files);
+    if (e.dataTransfer.files.length > 0) addFiles(e.dataTransfer.files);
+  };
+
+  // Paste-from-clipboard: when an image is pasted into the composer, treat it
+  // as an attachment (common for screenshots / photos on desktop + mobile).
+  const onPaste = (e: React.ClipboardEvent) => {
+    const files = Array.from(e.clipboardData.files);
+    const images = files.filter((f) => f.type.startsWith("image/"));
+    if (images.length > 0) {
+      e.preventDefault();
+      addFiles(images);
+    }
   };
 
   const pinned = messages.find((m) => m.isPinned);
@@ -668,31 +663,35 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers, me
         {pendingAtts.length > 0 && (
           <div className="mb-2 flex flex-wrap gap-2" data-testid="row-pending-attachments">
             {pendingAtts.map((a) => (
-              <div key={a.id} className="relative group bg-secondary border border-border rounded-lg px-2 py-1.5 flex items-center gap-2 max-w-[200px]">
-                {a.thumbnailUrl ? (
-                  <img src={a.thumbnailUrl} alt="" className="w-9 h-9 rounded object-cover" />
+              <div key={a.localId} className="relative group bg-secondary border border-border rounded-lg px-2 py-1.5 flex items-center gap-2 max-w-[200px]">
+                {a.previewUrl ? (
+                  <img src={a.previewUrl} alt="" className="w-9 h-9 rounded object-cover" />
                 ) : (
                   <div className="w-9 h-9 rounded bg-[hsl(var(--vs-accent)/0.2)] flex items-center justify-center text-vs-red text-[10px] font-mono">FILE</div>
                 )}
                 <div className="min-w-0">
                   <div className="text-xs text-[hsl(var(--vs-text))] truncate max-w-[120px]">{a.filename}</div>
-                  <div className="text-[10px] text-[hsl(var(--vs-text-muted))] font-mono">{(a.sizeBytes / 1024).toFixed(0)} KB</div>
+                  {a.status === "uploading" ? (
+                    <div className="mt-1 h-1.5 w-[120px] rounded-full bg-[hsl(var(--vs-accent)/0.2)] overflow-hidden" data-testid={`upload-progress-${a.localId}`}>
+                      <div className="h-full bg-vs-blue transition-all" style={{ width: `${a.progress}%` }} />
+                    </div>
+                  ) : a.status === "error" ? (
+                    <div className="text-[10px] text-vs-red truncate max-w-[120px]" title={a.error}>{a.error ?? "Failed"}</div>
+                  ) : (
+                    <div className="text-[10px] text-[hsl(var(--vs-text-muted))] font-mono">{(a.sizeBytes / 1024).toFixed(0)} KB</div>
+                  )}
                 </div>
                 <button
                   type="button"
-                  onClick={() => setPendingAtts((p) => p.filter((x) => x.id !== a.id))}
+                  onClick={() => removePending(a.localId)}
                   className="opacity-0 group-hover:opacity-100 absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-vs-red text-white flex items-center justify-center transition-opacity"
                   title="Remove"
+                  data-testid={`remove-pending-${a.localId}`}
                 >
                   <X className="w-3 h-3" />
                 </button>
               </div>
             ))}
-            {uploading && (
-              <div className="flex items-center gap-2 px-2 py-1.5 text-xs text-vs-blue">
-                <Loader2 className="w-3.5 h-3.5 animate-spin" /> Uploading…
-              </div>
-            )}
           </div>
         )}
         <div className="relative">
@@ -742,7 +741,7 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers, me
               className="text-[hsl(var(--vs-text-muted))] hover:text-vs-red transition-colors p-1"
               title="Attach file"
               data-testid="button-attach"
-              disabled={uploading || pendingAtts.length >= 4}
+              disabled={atCapacity}
             >
               <Plus className="w-5 h-5" />
             </button>
@@ -750,9 +749,10 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers, me
               ref={fileInputRef}
               type="file"
               multiple
+              accept={ATTACH_ACCEPT}
               className="hidden"
               onChange={(e) => {
-                if (e.target.files) uploadFiles(e.target.files);
+                if (e.target.files) addFiles(e.target.files);
                 e.target.value = "";
               }}
               data-testid="input-file"
@@ -762,6 +762,7 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers, me
               value={draft}
               onChange={(e) => handleDraftChange(e.target.value)}
               onKeyDown={handleKey}
+              onPaste={onPaste}
               placeholder={`Message #${channel.name}`}
               rows={1}
               className="flex-1 bg-transparent text-sm text-[hsl(var(--vs-text))] placeholder:text-[hsl(var(--vs-text-subtle))] resize-none outline-none max-h-32 py-1"
@@ -781,7 +782,7 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers, me
               <button
                 type="button"
                 onClick={submit}
-                disabled={(!draft.trim() && pendingAtts.length === 0) || sendMutation.isPending}
+                disabled={(!draft.trim() && readyIds.length === 0) || sendMutation.isPending || uploading}
                 className="ml-1 w-8 h-8 rounded-md bg-vs-red text-white flex items-center justify-center hover:bg-[hsl(var(--vs-red-bright))] transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                 title="Send (Enter)"
                 data-testid="button-send"
@@ -1074,7 +1075,7 @@ function MessageRow({ msg, grouped, isMe, meId, myRole, onOpenThread, onJoinMeet
           </div>
         )}
         <MessageBody body={msg.content} mentions={msg.mentions} meId={meId} />
-        {msg.attachmentsList && msg.attachmentsList.length > 0 && <AttachmentList atts={msg.attachmentsList} />}
+        {msg.attachmentsList && msg.attachmentsList.length > 0 && <MessageAttachments atts={msg.attachmentsList} />}
         {msg.reactions && msg.reactions.length > 0 && (
           <div className="flex flex-wrap gap-1 mt-1.5">
             {msg.reactions.map((r) => (

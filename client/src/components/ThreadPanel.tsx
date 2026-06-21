@@ -5,7 +5,7 @@ import { Avatar } from "./Avatar";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { ApiMessage, ApiUser } from "@/types/api";
-import { AttachmentList } from "./AttachmentRenderer";
+import { MessageAttachments } from "./MessageAttachments";
 
 interface Props {
   parentMessage: ApiMessage | null;
@@ -142,7 +142,7 @@ function ThreadMessage({ msg, isParent = false }: { msg: ApiMessage; isParent?: 
           <span className="text-[10px] text-[hsl(0_0%_55%)]">{new Date(msg.createdAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>
         </div>
         <div className="text-[13px] text-[hsl(0_0%_88%)] leading-relaxed whitespace-pre-wrap break-words mt-0.5">{msg.content}</div>
-        {msg.attachmentsList && msg.attachmentsList.length > 0 && <AttachmentList atts={msg.attachmentsList} />}
+        {msg.attachmentsList && msg.attachmentsList.length > 0 && <MessageAttachments atts={msg.attachmentsList} />}
       </div>
     </div>
   );
