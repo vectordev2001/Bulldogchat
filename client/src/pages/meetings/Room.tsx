@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useMemo } from "react";
+import { useEffect, useRef, useState, useMemo, useCallback } from "react";
 import { useLocation, useRoute } from "wouter";
 import { AnimatePresence, motion } from "framer-motion";
 import {
@@ -14,17 +14,25 @@ import {
   isTrackReference,
   type TrackReferenceOrPlaceholder,
 } from "@livekit/components-react";
-import { Track, ConnectionQuality, type Participant } from "livekit-client";
+import { Track, ConnectionQuality, LocalVideoTrack, type Participant, type Room as LkRoom } from "livekit-client";
 import "@livekit/components-styles";
 import {
   Mic, MicOff, Video, VideoOff, MonitorUp, Hand, MessageSquare, Users, Sparkles,
-  X, Smile, PhoneOff, Send, MicOff as MicOffIcon,
+  X, Smile, PhoneOff, Send, MicOff as MicOffIcon, Aperture, Settings,
 } from "lucide-react";
 import { BulldogMark, PlatformLogo, initials } from "@/components/BulldogLogo";
 import { ThemeToggle } from "@/components/MeetingThemeToggle";
 import { useToast } from "@/hooks/use-toast";
 import { useMeeting, ORIGIN_CHIP } from "@/lib/meeting";
 import { apiRequest } from "@/lib/queryClient";
+import { VirtualBackgroundProcessor } from "@/lib/virtual-background";
+import {
+  VirtualBackgroundPicker,
+  loadSavedSelection,
+  type BgSelection,
+} from "@/components/call/VirtualBackgroundPicker";
+import { MeetSettingsModal } from "@/components/call/MeetSettingsModal";
+import { blurSupported, loadDevicePrefs, saveDevicePrefs, type DevicePrefs } from "@/lib/meet-devices";
 
 const REACTIONS = ["👍", "❤️", "😂", "🎉", "👏"];
 type SidebarTab = "chat" | "participants" | "transcript";
@@ -82,6 +90,109 @@ function fmt(s: number) {
   return `${h}:${mm}:${ss}`;
 }
 
+/**
+ * Drives the virtual-background processor against the live LiveKit Room camera
+ * publication. We swap the raw camera track for the processor's canvas output
+ * (and back) by unpublishing/republishing on the room's localParticipant.
+ *
+ * Returns an `apply` callback the UI invokes whenever the selection or camera
+ * state changes. On any MediaPipe failure it reverts to the raw camera and
+ * surfaces a toast — blur is best-effort, never fatal to the call.
+ */
+function useMeetBackground(
+  room: LkRoom,
+  camOn: boolean,
+  bgSel: BgSelection,
+  onError: () => void,
+) {
+  const processorRef = useRef<VirtualBackgroundProcessor | null>(null);
+  // The raw camera MediaStreamTrack we segment from. Stashed so it survives
+  // the unpublish/republish cycle (unpublish can stop the wrapper track).
+  const rawTrackRef = useRef<MediaStreamTrack | null>(null);
+
+  // Stop the processor and restore the raw camera publication.
+  const teardown = useCallback(async () => {
+    if (!processorRef.current) return;
+    processorRef.current.stop();
+    processorRef.current = null;
+    const lp = room.localParticipant;
+    const existing = lp.getTrackPublication(Track.Source.Camera);
+    if (existing?.track) {
+      try { await lp.unpublishTrack(existing.track as LocalVideoTrack, true); } catch { /* ignore */ }
+    }
+    const raw = rawTrackRef.current;
+    if (raw && raw.readyState === "live") {
+      try {
+        const lkTrack = new LocalVideoTrack(raw);
+        await lp.publishTrack(lkTrack, { source: Track.Source.Camera, name: "camera" });
+      } catch { /* ignore */ }
+    } else {
+      try { await lp.setCameraEnabled(true); } catch { /* ignore */ }
+    }
+    rawTrackRef.current = null;
+  }, [room]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const run = async () => {
+      const lp = room.localParticipant;
+      if (!camOn || bgSel.mode.kind === "none") {
+        await teardown();
+        return;
+      }
+      const pub = lp.getTrackPublication(Track.Source.Camera);
+      const raw = (pub?.track as { mediaStreamTrack?: MediaStreamTrack } | undefined)?.mediaStreamTrack;
+      if (!raw) return; // camera not published yet; effect re-runs on change
+
+      try {
+        if (processorRef.current) {
+          await processorRef.current.setMode(bgSel.mode);
+          return;
+        }
+        rawTrackRef.current = raw;
+        const proc = new VirtualBackgroundProcessor();
+        const processed = await proc.start(raw, bgSel.mode);
+        if (cancelled) { proc.stop(); return; }
+        processorRef.current = proc;
+        // Republish: drop the camera publication, publish the processed track.
+        // stopOnUnpublish=false so the raw input track stays alive for the
+        // processor to keep reading frames from.
+        const existing = lp.getTrackPublication(Track.Source.Camera);
+        if (existing?.track) {
+          try { await lp.unpublishTrack(existing.track as LocalVideoTrack, false); } catch { /* ignore */ }
+        }
+        const lkTrack = new LocalVideoTrack(processed);
+        await lp.publishTrack(lkTrack, { source: Track.Source.Camera, name: "camera" });
+      } catch (err) {
+        console.warn("[meet] virtual background unavailable:", (err as Error).message);
+        processorRef.current?.stop();
+        processorRef.current = null;
+        onError();
+        await teardown();
+      }
+    };
+    void run();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [camOn, bgSel.id, bgSel.mode.kind]);
+
+  // Tear the pipeline down on unmount so we don't leak a running processor.
+  useEffect(() => () => { void teardown(); }, [teardown]);
+}
+
+/** Apply persisted device selections to a live LiveKit room. */
+async function applyDevicePrefsToRoom(room: LkRoom, prefs: DevicePrefs): Promise<void> {
+  if (prefs.audioInput) {
+    try { await room.switchActiveDevice("audioinput", prefs.audioInput); } catch { /* ignore */ }
+  }
+  if (prefs.videoInput) {
+    try { await room.switchActiveDevice("videoinput", prefs.videoInput); } catch { /* ignore */ }
+  }
+  if (prefs.audioOutput) {
+    try { await room.switchActiveDevice("audiooutput", prefs.audioOutput); } catch { /* ignore */ }
+  }
+}
+
 function BulldogMeetingUI({ code }: { code: string }) {
   const [, navigate] = useLocation();
   const m = useMeeting();
@@ -102,6 +213,40 @@ function BulldogMeetingUI({ code }: { code: string }) {
   const camOn = localParticipant?.isCameraEnabled ?? false;
   const [handRaised, setHandRaised] = useState(false);
   const [sharing, setSharing] = useState(false);
+
+  // Background effects + device settings.
+  const canBlur = useMemo(() => blurSupported(), []);
+  const [bgOpen, setBgOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [bgSel, setBgSel] = useState<BgSelection>(() =>
+    canBlur ? loadSavedSelection() : { id: "none", mode: { kind: "none" } },
+  );
+  const [devicePrefs, setDevicePrefs] = useState<DevicePrefs>(() => loadDevicePrefs());
+
+  useMeetBackground(room, camOn, canBlur ? bgSel : { id: "none", mode: { kind: "none" } }, () => {
+    setBgSel({ id: "none", mode: { kind: "none" } });
+    toast({ title: "Background effects unavailable", description: "Falling back to your camera.", variant: "destructive" });
+  });
+
+  // Apply any persisted device selection once the room is connected.
+  useEffect(() => {
+    void applyDevicePrefsToRoom(room, devicePrefs);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [room]);
+
+  const onDeviceChange = (kind: keyof DevicePrefs, deviceId: string) => {
+    const next = { ...devicePrefs, [kind]: deviceId };
+    setDevicePrefs(next);
+    saveDevicePrefs(next);
+    const map: Record<keyof DevicePrefs, MediaDeviceKind> = {
+      audioInput: "audioinput",
+      videoInput: "videoinput",
+      audioOutput: "audiooutput",
+    };
+    room.switchActiveDevice(map[kind], deviceId).catch(() => {
+      toast({ title: "Couldn't switch device", variant: "destructive" });
+    });
+  };
 
   const origin = m.origin;
   const chipLabel = ORIGIN_CHIP[origin];
@@ -328,6 +473,36 @@ function BulldogMeetingUI({ code }: { code: string }) {
           </BarBtn>
 
           <div className="relative">
+            <BarBtn
+              testid="bar-background"
+              active={bgOpen || bgSel.id !== "none"}
+              onClick={() => {
+                if (!canBlur) {
+                  toast({ title: "Background effects unavailable", description: "Not supported on this browser." });
+                  return;
+                }
+                setBgOpen((o) => !o);
+              }}
+              label={canBlur ? "Background effects" : "Background effects (unavailable on this device)"}
+            >
+              <Aperture size={18} />
+            </BarBtn>
+            <AnimatePresence>
+              {bgOpen && canBlur && (
+                <VirtualBackgroundPicker
+                  current={bgSel}
+                  onSelect={(sel) => setBgSel(sel)}
+                  onClose={() => setBgOpen(false)}
+                />
+              )}
+            </AnimatePresence>
+          </div>
+
+          <BarBtn testid="bar-settings" active={settingsOpen} onClick={() => setSettingsOpen(true)} label="Settings">
+            <Settings size={18} />
+          </BarBtn>
+
+          <div className="relative">
             <BarBtn testid="bar-reactions" active={reactionsOpen} onClick={() => setReactionsOpen((o) => !o)} label="Reactions">
               <Smile size={18} />
             </BarBtn>
@@ -384,6 +559,14 @@ function BulldogMeetingUI({ code }: { code: string }) {
           </div>
         )}
       </div>
+
+      {settingsOpen && (
+        <MeetSettingsModal
+          prefs={devicePrefs}
+          onChange={onDeviceChange}
+          onClose={() => setSettingsOpen(false)}
+        />
+      )}
     </div>
   );
 }
