@@ -19,6 +19,14 @@ import {
   useMeeting, parseOrigin, getHashSearch, ORIGIN_BANNER, type Origin,
 } from "@/lib/meeting";
 import { apiRequest } from "@/lib/queryClient";
+import { VirtualBackgroundProcessor } from "@/lib/virtual-background";
+import {
+  VirtualBackgroundPicker,
+  loadSavedSelection,
+  type BgSelection,
+} from "@/components/call/VirtualBackgroundPicker";
+import { MeetSettingsModal } from "@/components/call/MeetSettingsModal";
+import { blurSupported, loadDevicePrefs, saveDevicePrefs, type DevicePrefs } from "@/lib/meet-devices";
 
 interface MeetingMeta {
   code: string;
@@ -84,6 +92,19 @@ export default function Join() {
   const [camOn, setCamOn] = useState(true);
   const [permDenied, setPermDenied] = useState(false);
   const [level, setLevel] = useState(0);
+
+  // Background effects + device settings for the preview / carried into the call.
+  const canBlur = blurSupported();
+  const [bgOpen, setBgOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [bgSel, setBgSel] = useState<BgSelection>(() =>
+    canBlur ? loadSavedSelection() : { id: "none", mode: { kind: "none" } },
+  );
+  const [devicePrefs, setDevicePrefs] = useState<DevicePrefs>(() => loadDevicePrefs());
+  const bgProcRef = useRef<VirtualBackgroundProcessor | null>(null);
+  // Bumped whenever the preview camera track is replaced (device switch) so the
+  // background effect re-runs against the fresh track.
+  const [previewEpoch, setPreviewEpoch] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -180,6 +201,87 @@ export default function Join() {
     const next = !camOn;
     if (next) vt.unmute(); else vt.mute();
     setCamOn(next);
+  };
+
+  // Apply / revert the background effect on the live preview. The processor
+  // reads the raw camera MediaStreamTrack and produces a canvas track we
+  // attach to the preview <video>. Reverting re-attaches the raw track.
+  useEffect(() => {
+    let cancelled = false;
+    const apply = async () => {
+      const vt = videoTrackRef.current;
+      const videoEl = videoRef.current;
+      if (!vt || !videoEl) return;
+
+      if (!camOn || bgSel.mode.kind === "none" || !canBlur) {
+        if (bgProcRef.current) {
+          bgProcRef.current.stop();
+          bgProcRef.current = null;
+          vt.attach(videoEl); // restore raw preview
+        }
+        return;
+      }
+
+      try {
+        if (bgProcRef.current) {
+          await bgProcRef.current.setMode(bgSel.mode);
+          return;
+        }
+        const proc = new VirtualBackgroundProcessor();
+        const processed = await proc.start(vt.mediaStreamTrack, bgSel.mode);
+        if (cancelled) { proc.stop(); return; }
+        bgProcRef.current = proc;
+        videoEl.srcObject = new MediaStream([processed]);
+        await videoEl.play().catch(() => {});
+      } catch (err) {
+        console.warn("[meet] preview background unavailable:", (err as Error).message);
+        bgProcRef.current?.stop();
+        bgProcRef.current = null;
+        setBgSel({ id: "none", mode: { kind: "none" } });
+        vt.attach(videoEl);
+        toast({ title: "Background effects unavailable", description: "Falling back to your camera." });
+      }
+    };
+    void apply();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bgSel.id, bgSel.mode.kind, camOn, previewEpoch]);
+
+  useEffect(() => () => { bgProcRef.current?.stop(); bgProcRef.current = null; }, []);
+
+  // Rebuild the preview camera/mic with a chosen device, persist the choice.
+  const onDeviceChange = async (kind: keyof DevicePrefs, deviceId: string) => {
+    const next = { ...devicePrefs, [kind]: deviceId };
+    setDevicePrefs(next);
+    saveDevicePrefs(next);
+
+    try {
+      if (kind === "videoInput") {
+        // Tear down any active processor and swap the raw preview track. The
+        // background effect re-runs (previewEpoch bump) and re-applies blur to
+        // the new track if a selection is active.
+        bgProcRef.current?.stop();
+        bgProcRef.current = null;
+        videoTrackRef.current?.stop();
+        const vt = await createLocalVideoTrack({ deviceId });
+        videoTrackRef.current = vt;
+        if (videoRef.current) vt.attach(videoRef.current);
+        setCamOn(true);
+        setPreviewEpoch((n) => n + 1);
+      } else if (kind === "audioInput") {
+        stopMeter();
+        audioTrackRef.current?.stop();
+        const at = await createLocalAudioTrack({ deviceId });
+        audioTrackRef.current = at;
+        setMicOn(true);
+        startMeter(at);
+      } else if (kind === "audioOutput") {
+        const videoEl = videoRef.current as (HTMLVideoElement & { setSinkId?: (id: string) => Promise<void> }) | null;
+        await videoEl?.setSinkId?.(deviceId);
+      }
+    } catch {
+      toast({ title: "Couldn't switch device", variant: "destructive" });
+    }
   };
 
   useEffect(() => {
@@ -348,18 +450,33 @@ export default function Join() {
               >
                 {camOn ? <Video size={18} /> : <VideoOff size={18} />}
               </ControlBtn>
-              <ControlBtn
-                testid="button-toggle-blur"
-                tone="neutral"
-                onClick={() => toast({ title: "Background blur", description: "Coming soon" })}
-                label="Background blur"
-              >
-                <Aperture size={18} />
-              </ControlBtn>
+              <div className="relative">
+                <ControlBtn
+                  testid="button-toggle-blur"
+                  tone={bgSel.id !== "none" ? "accent" : "neutral"}
+                  onClick={() => {
+                    if (!canBlur) {
+                      toast({ title: "Background effects unavailable", description: "Not supported on this browser." });
+                      return;
+                    }
+                    setBgOpen((o) => !o);
+                  }}
+                  label={canBlur ? "Background effects" : "Background effects (unavailable on this device)"}
+                >
+                  <Aperture size={18} />
+                </ControlBtn>
+                {bgOpen && canBlur && (
+                  <VirtualBackgroundPicker
+                    current={bgSel}
+                    onSelect={(sel) => setBgSel(sel)}
+                    onClose={() => setBgOpen(false)}
+                  />
+                )}
+              </div>
               <ControlBtn
                 testid="button-settings"
                 tone="neutral"
-                onClick={() => toast({ title: "Settings", description: "Coming soon" })}
+                onClick={() => setSettingsOpen(true)}
                 label="Settings"
               >
                 <Settings size={18} />
@@ -433,6 +550,14 @@ export default function Join() {
           </div>
         </section>
       </main>
+
+      {settingsOpen && (
+        <MeetSettingsModal
+          prefs={devicePrefs}
+          onChange={onDeviceChange}
+          onClose={() => setSettingsOpen(false)}
+        />
+      )}
     </div>
   );
 }
