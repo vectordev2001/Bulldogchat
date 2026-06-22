@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useMemo, useCallback } from "react";
 import { useLocation, useRoute } from "wouter";
+import { useQuery } from "@tanstack/react-query";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   LiveKitRoom,
@@ -18,13 +19,14 @@ import { Track, ConnectionQuality, LocalVideoTrack, type Participant, type Room 
 import "@livekit/components-styles";
 import {
   Mic, MicOff, Video, VideoOff, MonitorUp, Hand, MessageSquare, Users, Sparkles,
-  X, Smile, PhoneOff, Send, MicOff as MicOffIcon, Aperture, Settings,
+  X, Smile, PhoneOff, Send, MicOff as MicOffIcon, Aperture, Settings, DoorOpen, Check,
 } from "lucide-react";
 import { BulldogMark, PlatformLogo, initials } from "@/components/BulldogLogo";
 import { ThemeToggle } from "@/components/MeetingThemeToggle";
 import { useToast } from "@/hooks/use-toast";
 import { useMeeting, ORIGIN_CHIP } from "@/lib/meeting";
 import { apiRequest } from "@/lib/queryClient";
+import { useAuth } from "@/lib/auth";
 import { VirtualBackgroundProcessor } from "@/lib/virtual-background";
 import {
   VirtualBackgroundPicker,
@@ -41,6 +43,12 @@ interface FloatingReaction {
   id: number;
   emoji: string;
   left: number;
+}
+
+interface LobbyKnock {
+  id: string;
+  displayName: string;
+  createdAt: number;
 }
 
 export default function Room() {
@@ -246,6 +254,60 @@ function BulldogMeetingUI({ code }: { code: string }) {
     room.switchActiveDevice(map[kind], deviceId).catch(() => {
       toast({ title: "Couldn't switch device", variant: "destructive" });
     });
+  };
+
+  // ── Host lobby (server-side waiting room) ──
+  const { user: authedUser } = useAuth();
+  const { data: meetingData } = useQuery<{ meeting: { waitingRoom: boolean } }>({
+    queryKey: ["/api/meetings", code],
+    enabled: !!code,
+  });
+  const waitingRoomOn = meetingData?.meeting?.waitingRoom ?? false;
+  // Only authed org members can act as a host; the GET /lobby endpoint is
+  // org-gated server-side, so a 403 for cross-org users is handled gracefully.
+  const isHost = !!authedUser;
+  const lobbyEnabled = waitingRoomOn && isHost;
+
+  const [lobbyOpen, setLobbyOpen] = useState(false);
+  const [pending, setPending] = useState<LobbyKnock[]>([]);
+  const [acting, setActing] = useState<string | null>(null);
+  const knownKnockIds = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (!lobbyEnabled) return;
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const data = await apiRequest<{ pending: LobbyKnock[] }>("GET", `/api/meetings/${code}/lobby`);
+        if (cancelled) return;
+        const list = data.pending ?? [];
+        // Toast on genuinely new knocks (ids we haven't seen before).
+        const fresh = list.filter((k) => !knownKnockIds.current.has(k.id));
+        if (fresh.length > 0 && knownKnockIds.current.size > 0) {
+          toast({ title: "Someone's waiting", description: `${fresh[0].displayName} wants to join.` });
+        }
+        knownKnockIds.current = new Set(list.map((k) => k.id));
+        setPending(list);
+      } catch {
+        // 403 (cross-org) or transient error — leave the panel empty.
+      }
+    };
+    void poll();
+    const id = setInterval(poll, 3000);
+    return () => { cancelled = true; clearInterval(id); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lobbyEnabled, code]);
+
+  const decide = async (knockId: string, action: "admit" | "deny") => {
+    setActing(knockId);
+    setPending((cur) => cur.filter((k) => k.id !== knockId));
+    try {
+      await apiRequest("POST", `/api/meetings/${code}/lobby/${knockId}/${action}`);
+    } catch {
+      toast({ title: "Couldn't update the lobby", variant: "destructive" });
+    } finally {
+      setActing(null);
+    }
   };
 
   const origin = m.origin;
@@ -502,6 +564,33 @@ function BulldogMeetingUI({ code }: { code: string }) {
             <Settings size={18} />
           </BarBtn>
 
+          {lobbyEnabled && (
+            <div className="relative">
+              <BarBtn testid="bar-lobby" active={lobbyOpen} onClick={() => setLobbyOpen((o) => !o)} label="Lobby">
+                <DoorOpen size={18} />
+              </BarBtn>
+              {pending.length > 0 && (
+                <span
+                  className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-bold text-primary-foreground ring-2 ring-[hsl(220_16%_12%)]"
+                  data-testid="badge-lobby-count"
+                >
+                  {pending.length}
+                </span>
+              )}
+              <AnimatePresence>
+                {lobbyOpen && (
+                  <LobbyPanel
+                    pending={pending}
+                    acting={acting}
+                    onAdmit={(id) => decide(id, "admit")}
+                    onDeny={(id) => decide(id, "deny")}
+                    onClose={() => setLobbyOpen(false)}
+                  />
+                )}
+              </AnimatePresence>
+            </div>
+          )}
+
           <div className="relative">
             <BarBtn testid="bar-reactions" active={reactionsOpen} onClick={() => setReactionsOpen((o) => !o)} label="Reactions">
               <Smile size={18} />
@@ -568,6 +657,72 @@ function BulldogMeetingUI({ code }: { code: string }) {
         />
       )}
     </div>
+  );
+}
+
+function LobbyPanel({
+  pending, acting, onAdmit, onDeny, onClose,
+}: {
+  pending: LobbyKnock[];
+  acting: string | null;
+  onAdmit: (id: string) => void;
+  onDeny: (id: string) => void;
+  onClose: () => void;
+}) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 8, scale: 0.97 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      exit={{ opacity: 0, y: 8, scale: 0.97 }}
+      transition={{ duration: 0.18 }}
+      className="absolute bottom-14 left-1/2 w-72 -translate-x-1/2 rounded-xl border border-border bg-card p-2 shadow-lg"
+      data-testid="popover-lobby"
+    >
+      <div className="flex items-center justify-between px-2 py-1.5">
+        <span className="text-sm font-semibold">Waiting room</span>
+        <button
+          data-testid="button-close-lobby"
+          onClick={onClose}
+          aria-label="Close lobby"
+          className="flex h-7 w-7 items-center justify-center rounded-full text-muted-foreground hover-elevate"
+        >
+          <X size={15} />
+        </button>
+      </div>
+      {pending.length === 0 ? (
+        <p className="px-2 py-4 text-center text-sm text-muted-foreground" data-testid="text-lobby-empty">
+          No one is waiting.
+        </p>
+      ) : (
+        <div className="max-h-72 space-y-1 overflow-y-auto">
+          {pending.map((k) => (
+            <div key={k.id} className="flex items-center gap-2 rounded-lg px-2 py-1.5" data-testid={`lobby-knock-${k.id}`}>
+              <span className="min-w-0 flex-1 truncate text-sm font-medium">{k.displayName}</span>
+              <button
+                data-testid={`button-admit-${k.id}`}
+                disabled={acting === k.id}
+                onClick={() => onAdmit(k.id)}
+                title="Admit"
+                aria-label={`Admit ${k.displayName}`}
+                className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-primary-foreground hover-elevate disabled:opacity-50"
+              >
+                <Check size={15} />
+              </button>
+              <button
+                data-testid={`button-deny-${k.id}`}
+                disabled={acting === k.id}
+                onClick={() => onDeny(k.id)}
+                title="Deny"
+                aria-label={`Deny ${k.displayName}`}
+                className="flex h-8 w-8 items-center justify-center rounded-full bg-destructive text-destructive-foreground hover-elevate disabled:opacity-50"
+              >
+                <X size={15} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </motion.div>
   );
 }
 
