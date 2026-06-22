@@ -16,6 +16,16 @@ import {
 } from "./storage/meetings";
 import { storage } from "./storage";
 import {
+  allowKnock,
+  cancelKnock,
+  createKnock,
+  decideKnock,
+  getKnock,
+  listPending,
+  markTokenIssued,
+  startLobbySweeper,
+} from "./storage/lobby";
+import {
   meetingKinds,
   summaryRecipientPolicies,
   type Meeting,
@@ -37,6 +47,36 @@ function publicMeetingShape(m: Meeting) {
     scheduledStartAt: m.scheduledStartAt ? new Date(m.scheduledStartAt).getTime() : null,
     startedAt: m.startedAt ? new Date(m.startedAt).getTime() : null,
     endedAt: m.endedAt ? new Date(m.endedAt).getTime() : null,
+  };
+}
+
+// Mints a LiveKit token for a guest joining `meeting` under `identity`, and
+// records the participant. Shared by the direct guest-join path and the lobby
+// admit path so token minting lives in exactly one place.
+async function mintGuestJoin(meeting: Meeting, identity: string, displayName: string) {
+  if (meeting.status === "scheduled") {
+    setMeetingStatus(meeting.id, "active", { startedAt: new Date() });
+  }
+  createParticipant({
+    meetingId: meeting.id,
+    participantIdentity: identity,
+    displayName,
+    userId: null,
+    role: "guest",
+    origin: "guest_link",
+  });
+  const token = await mintLivekitToken({
+    identity,
+    name: displayName,
+    roomName: meeting.livekitRoomName,
+    canPublish: true,
+  });
+  return {
+    token,
+    identity,
+    roomName: meeting.livekitRoomName,
+    ws_url: process.env.LIVEKIT_WS_URL,
+    meeting: publicMeetingShape(meeting),
   };
 }
 
@@ -73,7 +113,21 @@ const joinBodySchema = z.object({
   guestName: z.string().min(1).max(80).optional(),
 });
 
+const knockBodySchema = z.object({
+  displayName: z.string().max(60).optional(),
+});
+
+// Resolve the client IP for the per-meeting knock rate-limit bucket.
+function clientIp(req: Request): string {
+  const fwd = req.headers["x-forwarded-for"];
+  if (typeof fwd === "string" && fwd.length > 0) return fwd.split(",")[0].trim();
+  return req.ip ?? req.socket.remoteAddress ?? "unknown";
+}
+
 export function registerMeetingRoutes(app: Express) {
+  // Single boot-time sweeper that expires overdue pending knocks (30s tick).
+  startLobbySweeper();
+
   // ── CREATE a meeting (authed) ──
   app.post("/api/meetings", requireAuth, (req: Request, res: Response) => {
     const u = (req as unknown as AuthedRequest).user;
@@ -146,63 +200,157 @@ export function registerMeetingRoutes(app: Express) {
     }
     const authed = (req as unknown as Partial<AuthedRequest>).user;
 
-    let identity: string;
-    let name: string;
-    let userId: number | null;
-    let role: "host" | "participant" | "guest";
-    let origin: string;
-
     if (authed) {
       // Authed users must belong to the same org as the meeting.
       if (authed.orgId !== meeting.orgId) {
         return res.status(403).json({ message: "This meeting belongs to another organization" });
       }
-      identity = `u_${authed.id}`;
-      name = authed.name;
-      userId = authed.id;
-      role = meeting.hostUserId === authed.id ? "host" : "participant";
-      origin = "app";
-    } else {
-      if (!meeting.allowGuests) {
-        return res.status(401).json({ message: "Sign-in required to join this meeting" });
+      const identity = `u_${authed.id}`;
+      const role = meeting.hostUserId === authed.id ? "host" : "participant";
+      if (meeting.status === "scheduled") {
+        setMeetingStatus(meeting.id, "active", { startedAt: new Date() });
       }
-      const guestName = parsed.data.guestName?.trim();
-      if (!guestName) return res.status(400).json({ message: "Guest name required" });
-      identity = `g_${nanoid(10)}`;
-      name = guestName;
-      userId = null;
-      role = "guest";
-      origin = "guest_link";
+      createParticipant({
+        meetingId: meeting.id,
+        participantIdentity: identity,
+        displayName: authed.name,
+        userId: authed.id,
+        role,
+        origin: "app",
+      });
+      const token = await mintLivekitToken({
+        identity,
+        name: authed.name,
+        roomName: meeting.livekitRoomName,
+        canPublish: true,
+      });
+      return res.json({
+        token,
+        identity,
+        roomName: meeting.livekitRoomName,
+        ws_url: process.env.LIVEKIT_WS_URL,
+        meeting: publicMeetingShape(meeting),
+      });
     }
 
-    // First join flips a scheduled meeting to active.
-    if (meeting.status === "scheduled") {
-      setMeetingStatus(meeting.id, "active", { startedAt: new Date() });
+    if (!meeting.allowGuests) {
+      return res.status(401).json({ message: "Sign-in required to join this meeting" });
+    }
+    const guestName = parsed.data.guestName?.trim();
+    if (!guestName) return res.status(400).json({ message: "Guest name required" });
+    const result = await mintGuestJoin(meeting, `g_${nanoid(10)}`, guestName);
+    res.json(result);
+  });
+
+  // ── KNOCK: guest requests entry to a lobby-gated meeting (public) ──
+  app.post("/api/meetings/:code/knock", async (req: Request, res: Response) => {
+    const meeting = getMeetingByCode(String(req.params.code));
+    if (!meeting) return res.status(404).json({ error: "Meeting not found", message: "Meeting not found" });
+    if (meeting.status === "ended") {
+      return res.status(409).json({ error: "This meeting has ended", message: "This meeting has ended" });
+    }
+    if (!meeting.allowGuests) {
+      return res.status(403).json({ error: "This meeting doesn't allow guests", message: "This meeting doesn't allow guests" });
+    }
+    if (!livekitConfigured()) {
+      return res.status(503).json({ error: "Calling unavailable: LiveKit not configured", message: "Calling unavailable: LiveKit not configured" });
+    }
+    if (!allowKnock(meeting.code, clientIp(req))) {
+      return res.status(429).json({ error: "Too many knocks. Try again in a minute.", message: "Too many knocks. Try again in a minute." });
     }
 
-    createParticipant({
-      meetingId: meeting.id,
-      participantIdentity: identity,
-      displayName: name,
-      userId,
-      role,
-      origin,
-    });
+    const parsed = knockBodySchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      return res.status(400).json({ error: "Invalid knock request", message: "Invalid knock request" });
+    }
+    const displayName = (parsed.data.displayName?.trim() || "Guest").slice(0, 60);
 
-    const token = await mintLivekitToken({
-      identity,
-      name,
-      roomName: meeting.livekitRoomName,
-      canPublish: true,
-    });
+    // Escape hatch: waiting room off → immediate token, no knock queued.
+    if (!meeting.waitingRoom) {
+      const result = await mintGuestJoin(meeting, `g_${nanoid(10)}`, displayName);
+      return res.json({ admitted: true, ...result });
+    }
 
-    res.json({
-      token,
-      identity,
-      roomName: meeting.livekitRoomName,
-      ws_url: process.env.LIVEKIT_WS_URL,
-      meeting: publicMeetingShape(meeting),
-    });
+    const knock = createKnock(meeting.code, displayName);
+    res.json({ knockId: knock.id, status: knock.status, pollIntervalMs: 2000 });
+  });
+
+  // ── KNOCK POLL: guest polls for a decision; one-shot token on admit (public) ──
+  app.get("/api/meetings/:code/knock/:knockId", async (req: Request, res: Response) => {
+    const meeting = getMeetingByCode(String(req.params.code));
+    if (!meeting) return res.status(404).json({ error: "Meeting not found", message: "Meeting not found" });
+    const knock = getKnock(String(req.params.knockId));
+    if (!knock || knock.meetingCode !== meeting.code) {
+      return res.status(404).json({ error: "Knock not found", message: "Knock not found" });
+    }
+
+    if (knock.status === "admitted" && !knock.tokenIssued) {
+      // One-shot: mint the token now and consume the admit.
+      const result = await mintGuestJoin(meeting, knock.guestIdentity, knock.displayName);
+      markTokenIssued(knock.id);
+      return res.json({ status: "admitted", ...result });
+    }
+    if (knock.status === "admitted") {
+      return res.json({ status: "admitted", tokenIssued: true });
+    }
+    res.json({ status: knock.status });
+  });
+
+  // ── KNOCK CANCEL: guest leaves the lobby (public) ──
+  app.delete("/api/meetings/:code/knock/:knockId", (req: Request, res: Response) => {
+    const meeting = getMeetingByCode(String(req.params.code));
+    if (!meeting) return res.status(404).json({ error: "Meeting not found", message: "Meeting not found" });
+    const knock = getKnock(String(req.params.knockId));
+    if (!knock || knock.meetingCode !== meeting.code) {
+      return res.status(404).json({ error: "Knock not found", message: "Knock not found" });
+    }
+    cancelKnock(knock.id);
+    res.json({ status: getKnock(knock.id)?.status ?? "cancelled" });
+  });
+
+  // ── LOBBY LIST: host polls pending knocks (authed + org-gated) ──
+  app.get("/api/meetings/:code/lobby", requireAuth, (req: Request, res: Response) => {
+    const u = (req as unknown as AuthedRequest).user;
+    const meeting = getMeetingByCode(String(req.params.code));
+    if (!meeting) return res.status(404).json({ error: "Meeting not found", message: "Meeting not found" });
+    if (meeting.orgId !== u.orgId) {
+      return res.status(403).json({ error: "Forbidden", message: "Forbidden" });
+    }
+    res.json({ pending: listPending(meeting.code) });
+  });
+
+  // ── LOBBY ADMIT (authed + org-gated) ──
+  app.post("/api/meetings/:code/lobby/:knockId/admit", requireAuth, (req: Request, res: Response) => {
+    const u = (req as unknown as AuthedRequest).user;
+    const meeting = getMeetingByCode(String(req.params.code));
+    if (!meeting) return res.status(404).json({ error: "Meeting not found", message: "Meeting not found" });
+    if (meeting.orgId !== u.orgId) {
+      return res.status(403).json({ error: "Forbidden", message: "Forbidden" });
+    }
+    const knock = getKnock(String(req.params.knockId));
+    if (!knock || knock.meetingCode !== meeting.code) {
+      return res.status(404).json({ error: "Knock not found", message: "Knock not found" });
+    }
+    const updated = decideKnock(knock.id, "admitted", `u_${u.id}`);
+    if (!updated) return res.status(409).json({ error: "Knock is no longer pending", message: "Knock is no longer pending" });
+    res.json({ status: updated.status });
+  });
+
+  // ── LOBBY DENY (authed + org-gated) ──
+  app.post("/api/meetings/:code/lobby/:knockId/deny", requireAuth, (req: Request, res: Response) => {
+    const u = (req as unknown as AuthedRequest).user;
+    const meeting = getMeetingByCode(String(req.params.code));
+    if (!meeting) return res.status(404).json({ error: "Meeting not found", message: "Meeting not found" });
+    if (meeting.orgId !== u.orgId) {
+      return res.status(403).json({ error: "Forbidden", message: "Forbidden" });
+    }
+    const knock = getKnock(String(req.params.knockId));
+    if (!knock || knock.meetingCode !== meeting.code) {
+      return res.status(404).json({ error: "Knock not found", message: "Knock not found" });
+    }
+    const updated = decideKnock(knock.id, "denied", `u_${u.id}`);
+    if (!updated) return res.status(409).json({ error: "Knock is no longer pending", message: "Knock is no longer pending" });
+    res.json({ status: updated.status });
   });
 
   // ── LEAVE a meeting (public) ──

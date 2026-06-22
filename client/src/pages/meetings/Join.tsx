@@ -19,6 +19,7 @@ import {
   useMeeting, parseOrigin, getHashSearch, ORIGIN_BANNER, type Origin,
 } from "@/lib/meeting";
 import { apiRequest } from "@/lib/queryClient";
+import { useAuth } from "@/lib/auth";
 import { VirtualBackgroundProcessor } from "@/lib/virtual-background";
 import {
   VirtualBackgroundPicker,
@@ -46,6 +47,27 @@ interface JoinResponse {
   meeting: MeetingMeta;
 }
 
+type KnockStatus = "pending" | "admitted" | "denied" | "expired" | "cancelled";
+
+interface KnockResponse {
+  knockId?: string;
+  status?: KnockStatus;
+  pollIntervalMs?: number;
+  // Waiting-room-off shortcut: full join payload alongside `admitted: true`.
+  admitted?: boolean;
+  token?: string;
+  identity?: string;
+  roomName?: string;
+  ws_url?: string;
+  meeting?: MeetingMeta;
+}
+
+type LobbyState =
+  | { phase: "idle" }
+  | { phase: "waiting"; knockId: string; pollIntervalMs: number; displayName: string }
+  | { phase: "denied" }
+  | { phase: "expired"; displayName: string };
+
 export default function Join() {
   const [, params] = useRoute("/m/:code");
   const [, navigate] = useLocation();
@@ -54,10 +76,13 @@ export default function Join() {
   const { toast } = useToast();
   const inputRef = useRef<HTMLInputElement>(null);
 
+  const { user: authedUser } = useAuth();
+
   const [localName, setLocalName] = useState(m.displayName ?? "");
   const [joining, setJoining] = useState(false);
   const [nameError, setNameError] = useState<string | null>(null);
   const [creatingNew, setCreatingNew] = useState(false);
+  const [lobby, setLobby] = useState<LobbyState>({ phase: "idle" });
 
   // GET /api/meetings/:code → { meeting: {...} }
   const { data, isLoading, isError, error } = useQuery<{ meeting: MeetingMeta }>({
@@ -296,6 +321,42 @@ export default function Join() {
     audioTrackRef.current = null;
   }
 
+  // Finalize a join from a token payload: stash result + navigate into the room.
+  const finalizeJoin = (
+    p: { token: string; ws_url: string; roomName: string; identity: string },
+    name: string,
+  ) => {
+    stopPreview();
+    m.setJoinResult({
+      token: p.token,
+      wsUrl: p.ws_url,
+      room: p.roomName,
+      identity: p.identity,
+      role: "participant",
+      displayName: name,
+      origin,
+    });
+    m.setCode(code);
+    navigate(`/r/${code}`);
+  };
+
+  const handleJoinError = (e: unknown) => {
+    const msg = String((e as Error)?.message || "");
+    if (msg.includes("409")) {
+      toast({ title: "Meeting ended", description: "This meeting is no longer available.", variant: "destructive" });
+    } else if (msg.includes("404")) {
+      toast({ title: "Meeting ended", description: "This meeting is no longer available.", variant: "destructive" });
+    } else if (msg.includes("403") || msg.includes("401")) {
+      toast({ title: "Sign-in required", description: "This meeting doesn't allow guests. Please sign in.", variant: "destructive" });
+    } else if (msg.includes("429")) {
+      toast({ title: "Too many attempts", description: "Please wait a moment and try again.", variant: "destructive" });
+    } else if (msg.includes("400")) {
+      setNameError("That name was rejected. Use 1–60 characters.");
+    } else {
+      toast({ title: "Connection problem", description: "Couldn't reach the meeting. Try again.", variant: "destructive" });
+    }
+  };
+
   const join = async () => {
     const name = localName.trim();
     if (name.length < 1 || name.length > 60) {
@@ -309,36 +370,90 @@ export default function Join() {
     m.setMicEnabled(micOn);
     m.setCamEnabled(camOn);
 
-    try {
-      const data = await apiRequest<JoinResponse>("POST", `/api/meetings/${code}/join`, {
-        guestName: name,
-      });
-      stopPreview();
-      m.setJoinResult({
-        token: data.token,
-        wsUrl: data.ws_url,
-        room: data.roomName,
-        identity: data.identity,
-        role: "participant",
-        displayName: name,
-        origin,
-      });
-      m.setCode(code);
-      navigate(`/r/${code}`);
-    } catch (e) {
-      const msg = String((e as Error)?.message || "");
-      if (msg.includes("409")) {
-        toast({ title: "Meeting ended", description: "This meeting is no longer available.", variant: "destructive" });
-      } else if (msg.includes("404")) {
-        toast({ title: "Meeting ended", description: "This meeting is no longer available.", variant: "destructive" });
-      } else if (msg.includes("401")) {
-        toast({ title: "Sign-in required", description: "This meeting doesn't allow guests. Please sign in.", variant: "destructive" });
-      } else if (msg.includes("400")) {
-        setNameError("That name was rejected. Use 1–60 characters.");
-      } else {
-        toast({ title: "Connection problem", description: "Couldn't reach the meeting. Try again.", variant: "destructive" });
+    // Authed org members bypass the lobby entirely (existing flow).
+    if (authedUser) {
+      try {
+        const data = await apiRequest<JoinResponse>("POST", `/api/meetings/${code}/join`, {
+          guestName: name,
+        });
+        finalizeJoin(data, name);
+      } catch (e) {
+        handleJoinError(e);
+        setJoining(false);
       }
+      return;
+    }
+
+    // Anonymous guests knock. The server decides whether to admit immediately
+    // (waiting room off) or queue us for host approval.
+    try {
+      const data = await apiRequest<KnockResponse>("POST", `/api/meetings/${code}/knock`, {
+        displayName: name,
+      });
+      if (data.admitted && data.token && data.ws_url && data.roomName && data.identity) {
+        finalizeJoin(data as Required<KnockResponse>, name);
+        return;
+      }
+      if (data.knockId) {
+        setLobby({
+          phase: "waiting",
+          knockId: data.knockId,
+          pollIntervalMs: data.pollIntervalMs ?? 2000,
+          displayName: name,
+        });
+        return;
+      }
+      toast({ title: "Connection problem", description: "Couldn't reach the meeting. Try again.", variant: "destructive" });
       setJoining(false);
+    } catch (e) {
+      handleJoinError(e);
+      setJoining(false);
+    }
+  };
+
+  // Poll the knock while in the waiting room; transition on a host decision.
+  useEffect(() => {
+    if (lobby.phase !== "waiting") return;
+    let cancelled = false;
+    const { knockId, pollIntervalMs, displayName } = lobby;
+
+    const poll = async () => {
+      try {
+        const data = await apiRequest<KnockResponse>("GET", `/api/meetings/${code}/knock/${knockId}`);
+        if (cancelled) return;
+        if (data.status === "admitted" && data.token && data.ws_url && data.roomName && data.identity) {
+          finalizeJoin(data as Required<KnockResponse>, displayName);
+        } else if (data.status === "denied") {
+          setLobby({ phase: "denied" });
+          setJoining(false);
+        } else if (data.status === "expired") {
+          setLobby({ phase: "expired", displayName });
+          setJoining(false);
+        } else if (data.status === "cancelled") {
+          setLobby({ phase: "idle" });
+          setJoining(false);
+        }
+        // pending / admitted-already-issued → keep polling.
+      } catch {
+        // Transient network error — keep polling on the next tick.
+      }
+    };
+
+    void poll();
+    const id = setInterval(poll, pollIntervalMs);
+    return () => { cancelled = true; clearInterval(id); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lobby.phase, lobby.phase === "waiting" ? lobby.knockId : null]);
+
+  const cancelKnock = async () => {
+    if (lobby.phase !== "waiting") return;
+    const { knockId } = lobby;
+    setLobby({ phase: "idle" });
+    setJoining(false);
+    try {
+      await apiRequest("DELETE", `/api/meetings/${code}/knock/${knockId}`);
+    } catch {
+      /* best-effort */
     }
   };
 
@@ -389,6 +504,18 @@ export default function Join() {
   }
 
   const title = meta?.title ?? (isLoading ? "Loading…" : "Meeting");
+
+  if (lobby.phase !== "idle") {
+    return (
+      <WaitingRoom
+        state={lobby}
+        meetingTitle={meta?.title ?? "Meeting"}
+        onCancel={cancelKnock}
+        onRetry={() => { setLobby({ phase: "idle" }); setJoining(false); void join(); }}
+        onBack={() => { setLobby({ phase: "idle" }); setJoining(false); }}
+      />
+    );
+  }
 
   return (
     <div className="flex min-h-screen flex-col bg-background text-foreground">
@@ -558,6 +685,97 @@ export default function Join() {
           onClose={() => setSettingsOpen(false)}
         />
       )}
+    </div>
+  );
+}
+
+/** Waiting-room screen shown to guests after they knock a lobby-gated meeting. */
+function WaitingRoom({
+  state, meetingTitle, onCancel, onRetry, onBack,
+}: {
+  state: LobbyState;
+  meetingTitle: string;
+  onCancel: () => void;
+  onRetry: () => void;
+  onBack: () => void;
+}) {
+  return (
+    <div className="flex min-h-screen flex-col bg-background text-foreground">
+      <header className="flex items-center justify-between px-5 py-4 sm:px-8">
+        <BulldogWordmark />
+        <ThemeToggle />
+      </header>
+      <main className="mx-auto flex w-full max-w-md flex-1 flex-col items-center justify-center px-5 pb-16 text-center">
+        <div className="w-full rounded-2xl border border-card-border bg-card p-7 shadow-sm">
+          <div className="text-xs font-medium uppercase tracking-wide text-primary">{meetingTitle}</div>
+
+          {state.phase === "waiting" && (
+            <>
+              <div className="mx-auto mt-5 flex h-12 w-12 items-center justify-center rounded-full bg-accent text-primary">
+                <Loader2 size={24} className="animate-spin" />
+              </div>
+              <h1 className="mt-4 font-display text-xl font-bold tracking-tight" data-testid="text-waiting-title">
+                Waiting for the host to let you in…
+              </h1>
+              <p className="mt-2 text-sm text-muted-foreground">
+                You'll join automatically once you're admitted. Joining as{" "}
+                <span className="font-medium text-foreground" data-testid="text-waiting-name">{state.displayName}</span>.
+              </p>
+              <Button
+                data-testid="button-cancel-knock"
+                variant="outline"
+                onClick={onCancel}
+                className="mt-6 h-11 w-full font-semibold"
+              >
+                Cancel
+              </Button>
+            </>
+          )}
+
+          {state.phase === "denied" && (
+            <>
+              <div className="mx-auto mt-5 flex h-12 w-12 items-center justify-center rounded-full bg-destructive/10 text-destructive">
+                <VideoOffIcon size={22} />
+              </div>
+              <h1 className="mt-4 font-display text-xl font-bold tracking-tight" data-testid="text-denied-title">
+                The host didn't let you in.
+              </h1>
+              <p className="mt-2 text-sm text-muted-foreground">
+                You can head back and try again later.
+              </p>
+              <Button
+                data-testid="button-back-prejoin"
+                variant="outline"
+                onClick={onBack}
+                className="mt-6 h-11 w-full font-semibold"
+              >
+                Back
+              </Button>
+            </>
+          )}
+
+          {state.phase === "expired" && (
+            <>
+              <div className="mx-auto mt-5 flex h-12 w-12 items-center justify-center rounded-full bg-amber-400/15 text-amber-600 dark:text-amber-400">
+                <Loader2 size={22} />
+              </div>
+              <h1 className="mt-4 font-display text-xl font-bold tracking-tight" data-testid="text-expired-title">
+                Knock timed out — try again.
+              </h1>
+              <p className="mt-2 text-sm text-muted-foreground">
+                No one let you in this time. You can knock again.
+              </p>
+              <Button
+                data-testid="button-retry-knock"
+                onClick={onRetry}
+                className="mt-6 h-11 w-full font-semibold"
+              >
+                Knock again
+              </Button>
+            </>
+          )}
+        </div>
+      </main>
     </div>
   );
 }
