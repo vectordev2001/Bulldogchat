@@ -104,6 +104,7 @@ export interface CallJoinTokenPayload {
   roomName: string;
   callerName: string;
   kind: "voice" | "video";
+  channelId?: number | null;
 }
 
 export function signCallJoinToken(p: CallJoinTokenPayload): string {
@@ -115,6 +116,7 @@ export function signCallJoinToken(p: CallJoinTokenPayload): string {
       room: p.roomName,
       cn: p.callerName,
       k: p.kind,
+      ...(p.channelId != null ? { ch: p.channelId } : {}),
     },
     secret,
     { expiresIn: "60m" },
@@ -130,6 +132,7 @@ export function verifyCallJoinToken(token: string): CallJoinTokenPayload | null 
       room?: string;
       cn?: string;
       k?: "voice" | "video";
+      ch?: number | null;
     };
     if (payload.cj !== 1 || !payload.uid || !payload.room) return null;
     return {
@@ -137,6 +140,7 @@ export function verifyCallJoinToken(token: string): CallJoinTokenPayload | null 
       roomName: payload.room,
       callerName: payload.cn || "Someone",
       kind: payload.k === "video" ? "video" : "voice",
+      channelId: payload.ch ?? null,
     };
   } catch {
     return null;

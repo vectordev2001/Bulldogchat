@@ -32,6 +32,7 @@ import { sendNotificationToUsers } from "./push";
 import { createTeamsMeeting } from "./teams/createMeeting";
 import { emitOpsNotifications } from "./notify-ops";
 import type { ScheduledCall, ScheduledCallInvitee, ScheduledCallSystemMessageMeta, RsvpResponse } from "@shared/schema";
+import { getMeetingById } from "./storage/meetings";
 
 const CHAT_BASE_URL = process.env.CHAT_BASE_URL || "https://chat.bulldogops.com";
 
@@ -282,6 +283,7 @@ function buildJoinUrl(call: ScheduledCall, invitee: ScheduledCallInvitee, caller
     roomName: call.roomName,
     callerName,
     kind: call.kind,
+    channelId: call.channelId,
   });
   return `${CHAT_BASE_URL}/call-join?t=${encodeURIComponent(token)}`;
 }
@@ -747,22 +749,34 @@ export function registerScheduledCallRoutes(app: Express) {
       return invs.some((i) => i.userId === u.id);
     });
     res.json({
-      calls: visible.map((c) => ({
-        ...c,
-        startAt: c.startAt.getTime(),
-        endAt: c.endAt.getTime(),
-        reminderSentAt: c.reminderSentAt?.getTime() ?? null,
-        createdAt: c.createdAt.getTime(),
-        updatedAt: c.updatedAt.getTime(),
-        invitees: listInviteesForCall(c.id).map((i) => ({
-          id: i.id,
-          userId: i.userId,
-          externalPhone: i.externalPhone,
-          externalEmail: i.externalEmail,
-          response: i.response,
-          // intentionally not returning rsvpCode here — it's only embedded in the SMS
-        })),
-      })),
+      calls: visible.map((c) => {
+        // Resolve meetingCode from the linked meetings row (via meeting_id FK).
+        let meetingCode: string | null = null;
+        try {
+          const raw = rawDb.prepare("SELECT meeting_id FROM scheduled_calls WHERE id = ?").get(c.id) as { meeting_id?: string | null } | undefined;
+          if (raw?.meeting_id) {
+            const meeting = getMeetingById(raw.meeting_id);
+            meetingCode = meeting?.code ?? null;
+          }
+        } catch { /* best-effort */ }
+        return {
+          ...c,
+          startAt: c.startAt.getTime(),
+          endAt: c.endAt.getTime(),
+          reminderSentAt: c.reminderSentAt?.getTime() ?? null,
+          createdAt: c.createdAt.getTime(),
+          updatedAt: c.updatedAt.getTime(),
+          meetingCode,
+          invitees: listInviteesForCall(c.id).map((i) => ({
+            id: i.id,
+            userId: i.userId,
+            externalPhone: i.externalPhone,
+            externalEmail: i.externalEmail,
+            response: i.response,
+            // intentionally not returning rsvpCode here — it's only embedded in the SMS
+          })),
+        };
+      }),
     });
   });
 

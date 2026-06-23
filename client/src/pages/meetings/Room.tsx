@@ -242,6 +242,26 @@ function BulldogMeetingUI({ code }: { code: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [room]);
 
+  // Fix 3 — Publish mic/cam immediately on room connect using the prejoin
+  // prefs. The LiveKitRoom audio/video props request tracks but may not
+  // publish them before the first render cycle on some browsers; explicitly
+  // enabling here ensures the mic is live without a manual toggle.
+  useEffect(() => {
+    if (!localParticipant) return;
+    const prefs = loadDevicePrefs();
+    void localParticipant.setMicrophoneEnabled(m.micEnabled, {
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true,
+      ...(prefs.audioInput ? { deviceId: prefs.audioInput } : {}),
+    }).catch(() => { /* best-effort */ });
+    void localParticipant.setCameraEnabled(m.camEnabled, {
+      ...(prefs.videoInput ? { deviceId: prefs.videoInput } : {}),
+      resolution: { width: 1280, height: 720, frameRate: 30 },
+    }).catch(() => { /* best-effort */ });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [!!localParticipant]);
+
   const onDeviceChange = (kind: keyof DevicePrefs, deviceId: string) => {
     const next = { ...devicePrefs, [kind]: deviceId };
     setDevicePrefs(next);

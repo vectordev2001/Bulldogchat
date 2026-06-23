@@ -295,6 +295,7 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
         kind: payload.kind,
         userName: me.name,
         userHue: me.hue,
+        channelId: payload.channelId ?? null,
       });
     } catch (e: any) {
       console.error("[call-join/redeem] failed:", e);
