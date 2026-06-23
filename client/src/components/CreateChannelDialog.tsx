@@ -259,12 +259,12 @@ export function CreateChannelDialog({ open, onClose, projectId, me, onCreated, d
         <form onSubmit={onSubmit} className="space-y-4">
           {/* Name only — every channel supports chat + voice/video. */}
           <div className="flex items-center gap-2 rounded-md border border-[hsl(0_0%_18%)] bg-[hsl(0_0%_8%)] px-2">
-            <Hash className="h-4 w-4 text-[hsl(0_0%_55%)]" />
+            <Hash className="h-4 w-4 text-[hsl(0_0%_70%)]" />
             <input
               value={name}
               onChange={(e) => setName(e.target.value.replace(/\s+/g, "-").toLowerCase())}
               placeholder="channel-name"
-              className="w-full bg-transparent py-2 text-sm outline-none placeholder:text-[hsl(0_0%_40%)]"
+              className="w-full bg-transparent py-2 text-sm text-white outline-none placeholder:text-[hsl(0_0%_40%)]"
               data-testid="input-channel-name"
               maxLength={80}
               autoFocus
@@ -278,7 +278,7 @@ export function CreateChannelDialog({ open, onClose, projectId, me, onCreated, d
             value={topic}
             onChange={(e) => setTopic(e.target.value)}
             placeholder="Topic (optional)"
-            className="w-full rounded-md border border-[hsl(0_0%_18%)] bg-[hsl(0_0%_8%)] px-3 py-2 text-sm outline-none placeholder:text-[hsl(0_0%_40%)]"
+            className="w-full rounded-md border border-[hsl(0_0%_18%)] bg-[hsl(0_0%_8%)] px-3 py-2 text-sm text-white outline-none placeholder:text-[hsl(0_0%_40%)]"
             data-testid="input-channel-topic"
             maxLength={500}
           />
@@ -297,7 +297,7 @@ export function CreateChannelDialog({ open, onClose, projectId, me, onCreated, d
                 <button
                   type="button"
                   onClick={() => setNewJobOpen(true)}
-                  className="inline-flex items-center gap-1 rounded-md border border-border bg-accent px-2 py-0.5 text-[11px] font-medium text-foreground hover:bg-accent/80"
+                  className="inline-flex items-center gap-1 rounded-md border border-border bg-accent px-2 py-0.5 text-[11px] font-medium text-[hsl(0_0%_15%)] hover:bg-accent/80"
                   data-testid="button-new-job-inline"
                 >
                   <Plus className="h-3 w-3" /> New job
@@ -307,7 +307,7 @@ export function CreateChannelDialog({ open, onClose, projectId, me, onCreated, d
             <select
               value={workObjectId}
               onChange={(e) => setWorkObjectId(e.target.value)}
-              className="w-full rounded-md border border-[hsl(0_0%_18%)] bg-[hsl(0_0%_8%)] px-3 py-2 text-sm"
+              className="w-full rounded-md border border-[hsl(0_0%_18%)] bg-[hsl(0_0%_8%)] px-3 py-2 text-sm text-white"
               data-testid="select-work-object"
               disabled={jobsQ.isLoading}
             >
@@ -330,7 +330,7 @@ export function CreateChannelDialog({ open, onClose, projectId, me, onCreated, d
             {newJobOpen && (
               <div className="rounded-md border border-border bg-input p-3 space-y-2" data-testid="inline-new-job">
                 <div className="flex items-center justify-between">
-                  <div className="text-xs font-semibold text-foreground">New job in this company</div>
+                  <div className="text-xs font-semibold text-[hsl(0_0%_15%)]">New job in this company</div>
                   <button
                     type="button"
                     onClick={() => { setNewJobOpen(false); setNewJobError(null); }}
@@ -348,7 +348,7 @@ export function CreateChannelDialog({ open, onClose, projectId, me, onCreated, d
                     if (e.key === "Enter") { e.preventDefault(); void submitNewJob(e as unknown as React.FormEvent); }
                   }}
                   placeholder="Job name (e.g. BOE Fiber 2026)"
-                  className="w-full rounded-md border border-[hsl(0_0%_18%)] bg-[hsl(0_0%_8%)] px-3 py-2 text-sm outline-none placeholder:text-[hsl(0_0%_40%)]"
+                  className="w-full rounded-md border border-[hsl(0_0%_18%)] bg-[hsl(0_0%_8%)] px-3 py-2 text-sm text-white outline-none placeholder:text-[hsl(0_0%_40%)]"
                   data-testid="input-new-job-title"
                   maxLength={200}
                   autoFocus
@@ -358,7 +358,7 @@ export function CreateChannelDialog({ open, onClose, projectId, me, onCreated, d
                   <select
                     value={newJobKind}
                     onChange={(e) => setNewJobKind(e.target.value as "job_site" | "work_project")}
-                    className="flex-1 rounded-md border border-[hsl(0_0%_18%)] bg-[hsl(0_0%_8%)] px-2 py-1.5 text-xs"
+                    className="flex-1 rounded-md border border-[hsl(0_0%_18%)] bg-[hsl(0_0%_8%)] px-2 py-1.5 text-xs text-white"
                     data-testid="select-new-job-kind"
                   >
                     <option value="job_site">Job site (field crew location)</option>
@@ -404,7 +404,7 @@ export function CreateChannelDialog({ open, onClose, projectId, me, onCreated, d
                 <button
                   type="button"
                   onClick={() => setAttachContractOpen(true)}
-                  className="inline-flex items-center gap-1 rounded-md border border-border bg-accent px-2 py-0.5 text-[11px] font-medium text-foreground hover:bg-accent/80"
+                  className="inline-flex items-center gap-1 rounded-md border border-border bg-accent px-2 py-0.5 text-[11px] font-medium text-[hsl(0_0%_15%)] hover:bg-accent/80"
                   data-testid="button-attach-contract"
                 >
                   <Plus className="h-3 w-3" /> Attach
@@ -414,7 +414,7 @@ export function CreateChannelDialog({ open, onClose, projectId, me, onCreated, d
             {attachContractOpen && (
               <div className="rounded-md border border-border bg-input p-3 space-y-2" data-testid="inline-attach-contract">
                 <div className="flex items-center justify-between">
-                  <div className="text-xs font-semibold text-foreground">Pick a contract</div>
+                  <div className="text-xs font-semibold text-[hsl(0_0%_15%)]">Pick a contract</div>
                   <button
                     type="button"
                     onClick={() => { setAttachContractOpen(false); setLinkedContractId(""); }}
@@ -427,7 +427,7 @@ export function CreateChannelDialog({ open, onClose, projectId, me, onCreated, d
                 <select
                   value={linkedContractId}
                   onChange={(e) => setLinkedContractId(e.target.value)}
-                  className="w-full rounded-md border border-[hsl(0_0%_18%)] bg-[hsl(0_0%_8%)] px-3 py-2 text-sm"
+                  className="w-full rounded-md border border-[hsl(0_0%_18%)] bg-[hsl(0_0%_8%)] px-3 py-2 text-sm text-white"
                   data-testid="select-linked-contract"
                   disabled={contractsQ.isLoading}
                 >
@@ -467,14 +467,14 @@ export function CreateChannelDialog({ open, onClose, projectId, me, onCreated, d
                   className={`flex items-start gap-2 rounded-md border p-3 text-left transition ${
                     scope === value
                       ? "border-vs-accent bg-vs-accent-soft ring-2 ring-vs-accent"
-                      : "border-[hsl(0_0%_18%)] bg-[hsl(0_0%_8%)] hover:border-[hsl(0_0%_30%)]"
+                      : "border-[hsl(0_0%_18%)] bg-[hsl(0_0%_8%)] text-white hover:border-[hsl(0_0%_30%)]"
                   }`}
                   data-testid={`scope-${value}`}
                 >
                   <Icon className="mt-0.5 h-4 w-4 shrink-0 text-[hsl(0_0%_70%)]" />
                   <div className="min-w-0">
-                    <div className="text-sm font-medium text-foreground">{label}</div>
-                    <div className={`text-[11px] leading-tight ${scope === value ? "text-[hsl(0_0%_75%)]" : "text-[hsl(0_0%_55%)]"}`}>{desc}</div>
+                    <div className={`text-sm font-medium ${scope === value ? "text-[hsl(0_0%_15%)]" : "text-white"}`}>{label}</div>
+                    <div className={`text-[11px] leading-tight ${scope === value ? "text-[hsl(0_0%_30%)]" : "text-[hsl(0_0%_70%)]"}`}>{desc}</div>
                   </div>
                 </button>
               ))}
@@ -489,7 +489,7 @@ export function CreateChannelDialog({ open, onClose, projectId, me, onCreated, d
                 onChange={(e) => setEntityId(e.target.value)}
                 list="known-entities"
                 placeholder="e.g. Bulldog Underground"
-                className="w-full rounded-md border border-[hsl(0_0%_18%)] bg-[hsl(0_0%_8%)] px-3 py-2 text-sm outline-none placeholder:text-[hsl(0_0%_40%)]"
+                className="w-full rounded-md border border-[hsl(0_0%_18%)] bg-[hsl(0_0%_8%)] px-3 py-2 text-sm text-white outline-none placeholder:text-[hsl(0_0%_40%)]"
                 data-testid="input-entity-id"
               />
               <datalist id="known-entities">
@@ -507,7 +507,7 @@ export function CreateChannelDialog({ open, onClose, projectId, me, onCreated, d
               <select
                 value={teamRole}
                 onChange={(e) => setTeamRole(e.target.value as UserRole)}
-                className="w-full rounded-md border border-[hsl(0_0%_18%)] bg-[hsl(0_0%_8%)] px-3 py-2 text-sm"
+                className="w-full rounded-md border border-[hsl(0_0%_18%)] bg-[hsl(0_0%_8%)] px-3 py-2 text-sm text-white"
                 data-testid="select-team-role"
               >
                 {ROLES.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
@@ -524,7 +524,7 @@ export function CreateChannelDialog({ open, onClose, projectId, me, onCreated, d
                 ? `Members (${memberIds.size} selected — you are automatically included)`
                 : `Also invite specific people (optional — ${memberIds.size} selected)`}
             </label>
-              <div className="max-h-48 overflow-y-auto rounded-md border border-[hsl(0_0%_18%)] bg-[hsl(0_0%_8%)] p-1">
+              <div className="max-h-48 overflow-y-auto rounded-md border border-[hsl(0_0%_18%)] bg-[hsl(0_0%_8%)] p-1 text-white">
                 {(orgMembersQ.data ?? []).filter(m => m.id !== me.id).map(m => (
                   <label
                     key={m.id}
@@ -537,7 +537,7 @@ export function CreateChannelDialog({ open, onClose, projectId, me, onCreated, d
                       onChange={() => toggleMember(m.id)}
                       data-testid={`checkbox-member-${m.id}`}
                     />
-                    <span className="font-medium text-foreground">{m.name}</span>
+                    <span className="font-medium text-white">{m.name}</span>
                     {m.title && <span className="text-[11px] text-[hsl(0_0%_55%)]">{m.title}</span>}
                     <span className="ml-auto text-[10px] uppercase tracking-wider text-[hsl(0_0%_45%)]">{m.role}</span>
                   </label>
