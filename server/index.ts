@@ -7,6 +7,10 @@ import { syncDeactivatedFromAuth } from "./users-sync";
 import { createServer } from "node:http";
 
 const app = express();
+// Behind Render's TLS-terminating reverse proxy. Honor X-Forwarded-* so
+// req.protocol reflects the real client-facing scheme (https), which Twilio
+// signature verification depends on.
+app.set("trust proxy", true);
 const httpServer = createServer(app);
 
 declare module "http" {

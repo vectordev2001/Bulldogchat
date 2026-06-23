@@ -1065,7 +1065,9 @@ export function registerScheduledCallRoutes(app: Express) {
   // code, and update the response.
   app.post("/api/sms/inbound", async (req, res) => {
     const sig = req.headers["x-twilio-signature"] as string | undefined;
-    const url = `${req.protocol}://${req.get("host")}${req.originalUrl}`;
+    const proto = (req.get("x-forwarded-proto") || req.protocol || "https").split(",")[0].trim();
+    const host = (req.get("x-forwarded-host") || req.get("host") || "").split(",")[0].trim();
+    const url = `${proto}://${host}${req.originalUrl}`;
     // Twilio sends form-encoded; Express only parses if the bodyParser is set
     // up for that. We support both shapes.
     const params: Record<string, string> = {};
