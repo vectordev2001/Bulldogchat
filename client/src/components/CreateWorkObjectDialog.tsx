@@ -162,49 +162,52 @@ export function CreateWorkObjectDialog({ open, onClose, channelId, projectId, me
         <form onSubmit={onSubmit} className="space-y-4">
           {/* Kind picker */}
           <div className="space-y-2">
-            <div className="text-xs uppercase tracking-wider text-[hsl(0_0%_55%)]">Type</div>
+            <div className="text-xs uppercase tracking-wider text-muted-foreground">Type</div>
             <div className="grid grid-cols-2 gap-2">
-              {KINDS.map(({ value, label, desc, Icon }) => (
+              {KINDS.map(({ value, label, desc, Icon }) => {
+                const selected = kind === value;
+                return (
                 <button
                   key={value}
                   type="button"
                   onClick={() => setKind(value)}
                   className={`flex items-start gap-2 rounded-md border p-3 text-left transition ${
-                    kind === value
-                      ? "border-[hsl(220_70%_60%)] bg-[hsl(220_30%_15%)]"
-                      : "border-[hsl(0_0%_18%)] bg-[hsl(0_0%_8%)] hover:border-[hsl(0_0%_30%)]"
+                    selected
+                      ? "border-vs-accent bg-vs-accent-soft ring-2 ring-vs-accent"
+                      : "border-border bg-input hover:border-vs-accent/50"
                   }`}
                   data-testid={`kind-${value}`}
                 >
-                  <Icon className="mt-0.5 h-4 w-4 shrink-0 text-[hsl(0_0%_70%)]" />
+                  <Icon className={`mt-0.5 h-4 w-4 shrink-0 ${selected ? "text-vs-accent" : "text-muted-foreground"}`} />
                   <div className="min-w-0">
-                    <div className="text-sm font-medium">{label}</div>
-                    <div className="text-[11px] text-[hsl(0_0%_55%)] leading-tight">{desc}</div>
+                    <div className="text-sm font-medium text-foreground">{label}</div>
+                    <div className="text-[11px] text-muted-foreground leading-tight">{desc}</div>
                   </div>
                 </button>
-              ))}
+                );
+              })}
             </div>
           </div>
 
           {/* Ref + Title */}
           <div className="space-y-1.5">
-            <label className="text-xs text-[hsl(0_0%_55%)]">Ref</label>
+            <label className="text-xs text-muted-foreground">Ref</label>
             <input
               value={ref}
               onChange={(e) => setRef(e.target.value.toUpperCase().replace(/[^A-Z0-9._\-]/g, ""))}
               placeholder={selectedKind.refHint}
-              className="w-full rounded-md border border-[hsl(0_0%_18%)] bg-[hsl(0_0%_8%)] px-3 py-2 text-sm font-mono outline-none placeholder:text-[hsl(0_0%_40%)]"
+              className="w-full rounded-md border border-border bg-input px-3 py-2 text-sm font-mono text-foreground outline-none focus-visible:ring-1 focus-visible:ring-vs-accent focus-visible:outline-none placeholder:text-muted-foreground/60"
               data-testid="input-ref"
               maxLength={80}
               autoFocus
             />
-            <div className="text-[11px] text-[hsl(0_0%_55%)]">
+            <div className="text-[11px] text-muted-foreground">
               Unique identifier. Letters, numbers, dot, dash, underscore.
             </div>
           </div>
 
           <div className="space-y-1.5">
-            <label className="text-xs text-[hsl(0_0%_55%)]">Title</label>
+            <label className="text-xs text-muted-foreground">Title</label>
             <input
               value={title}
               onChange={(e) => setTitle(e.target.value)}
@@ -214,7 +217,7 @@ export function CreateWorkObjectDialog({ open, onClose, channelId, projectId, me
                 : kind === "change_order" ? "Added conduit run"
                 : "Trench collapse — near miss"
               }
-              className="w-full rounded-md border border-[hsl(0_0%_18%)] bg-[hsl(0_0%_8%)] px-3 py-2 text-sm outline-none placeholder:text-[hsl(0_0%_40%)]"
+              className="w-full rounded-md border border-border bg-input px-3 py-2 text-sm text-foreground outline-none focus-visible:ring-1 focus-visible:ring-vs-accent focus-visible:outline-none placeholder:text-muted-foreground/60"
               data-testid="input-title"
               maxLength={200}
             />
@@ -222,11 +225,11 @@ export function CreateWorkObjectDialog({ open, onClose, channelId, projectId, me
 
           {/* Owner */}
           <div className="space-y-1.5">
-            <label className="text-xs text-[hsl(0_0%_55%)]">Owner (optional)</label>
+            <label className="text-xs text-muted-foreground">Owner (optional)</label>
             <select
               value={ownerUserId}
               onChange={(e) => setOwnerUserId(e.target.value ? Number(e.target.value) : "")}
-              className="w-full rounded-md border border-[hsl(0_0%_18%)] bg-[hsl(0_0%_8%)] px-3 py-2 text-sm"
+              className="w-full rounded-md border border-border bg-input px-3 py-2 text-sm text-foreground focus-visible:ring-1 focus-visible:ring-vs-accent focus-visible:outline-none"
               data-testid="select-owner"
             >
               <option value="">— Unassigned —</option>
@@ -239,12 +242,12 @@ export function CreateWorkObjectDialog({ open, onClose, channelId, projectId, me
           {/* Kind-specific quick fields */}
           {(kind === "work_project" || kind === "job_site") && (
             <div className="space-y-1.5">
-              <label className="text-xs text-[hsl(0_0%_55%)]">Customer (optional)</label>
+              <label className="text-xs text-muted-foreground">Customer (optional)</label>
               <input
                 value={customer}
                 onChange={(e) => setCustomer(e.target.value)}
                 placeholder="Boeing, Comcast, City of Woodinville…"
-                className="w-full rounded-md border border-[hsl(0_0%_18%)] bg-[hsl(0_0%_8%)] px-3 py-2 text-sm outline-none placeholder:text-[hsl(0_0%_40%)]"
+                className="w-full rounded-md border border-border bg-input px-3 py-2 text-sm text-foreground outline-none focus-visible:ring-1 focus-visible:ring-vs-accent focus-visible:outline-none placeholder:text-muted-foreground/60"
                 data-testid="input-customer"
                 maxLength={160}
               />
@@ -253,12 +256,12 @@ export function CreateWorkObjectDialog({ open, onClose, channelId, projectId, me
 
           {kind === "job_site" && (
             <div className="space-y-1.5">
-              <label className="text-xs text-[hsl(0_0%_55%)]">Address (optional)</label>
+              <label className="text-xs text-muted-foreground">Address (optional)</label>
               <input
                 value={address}
                 onChange={(e) => setAddress(e.target.value)}
                 placeholder="14010 NE 145th St, Woodinville, WA"
-                className="w-full rounded-md border border-[hsl(0_0%_18%)] bg-[hsl(0_0%_8%)] px-3 py-2 text-sm outline-none placeholder:text-[hsl(0_0%_40%)]"
+                className="w-full rounded-md border border-border bg-input px-3 py-2 text-sm text-foreground outline-none focus-visible:ring-1 focus-visible:ring-vs-accent focus-visible:outline-none placeholder:text-muted-foreground/60"
                 data-testid="input-address"
                 maxLength={300}
               />
@@ -267,13 +270,13 @@ export function CreateWorkObjectDialog({ open, onClose, channelId, projectId, me
 
           {kind === "change_order" && (
             <div className="space-y-1.5">
-              <label className="text-xs text-[hsl(0_0%_55%)]">Amount, USD (optional)</label>
+              <label className="text-xs text-muted-foreground">Amount, USD (optional)</label>
               <input
                 value={amount}
                 onChange={(e) => setAmount(e.target.value)}
                 placeholder="12500"
                 inputMode="decimal"
-                className="w-full rounded-md border border-[hsl(0_0%_18%)] bg-[hsl(0_0%_8%)] px-3 py-2 text-sm font-mono outline-none placeholder:text-[hsl(0_0%_40%)]"
+                className="w-full rounded-md border border-border bg-input px-3 py-2 text-sm font-mono text-foreground outline-none focus-visible:ring-1 focus-visible:ring-vs-accent focus-visible:outline-none placeholder:text-muted-foreground/60"
                 data-testid="input-amount"
               />
             </div>
@@ -282,23 +285,23 @@ export function CreateWorkObjectDialog({ open, onClose, channelId, projectId, me
           {kind === "safety_incident" && (
             <>
               <div className="space-y-1.5">
-                <label className="text-xs text-[hsl(0_0%_55%)]">Severity</label>
+                <label className="text-xs text-muted-foreground">Severity</label>
                 <select
                   value={severity}
                   onChange={(e) => setSeverity(e.target.value)}
-                  className="w-full rounded-md border border-[hsl(0_0%_18%)] bg-[hsl(0_0%_8%)] px-3 py-2 text-sm"
+                  className="w-full rounded-md border border-border bg-input px-3 py-2 text-sm text-foreground focus-visible:ring-1 focus-visible:ring-vs-accent focus-visible:outline-none"
                   data-testid="select-severity"
                 >
                   {SAFETY_SEVERITIES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
                 </select>
               </div>
               <div className="space-y-1.5">
-                <label className="text-xs text-[hsl(0_0%_55%)]">Location (optional)</label>
+                <label className="text-xs text-muted-foreground">Location (optional)</label>
                 <input
                   value={location}
                   onChange={(e) => setLocation(e.target.value)}
                   placeholder="Pole 12, north side trench"
-                  className="w-full rounded-md border border-[hsl(0_0%_18%)] bg-[hsl(0_0%_8%)] px-3 py-2 text-sm outline-none placeholder:text-[hsl(0_0%_40%)]"
+                  className="w-full rounded-md border border-border bg-input px-3 py-2 text-sm text-foreground outline-none focus-visible:ring-1 focus-visible:ring-vs-accent focus-visible:outline-none placeholder:text-muted-foreground/60"
                   data-testid="input-location"
                   maxLength={300}
                 />
@@ -307,7 +310,7 @@ export function CreateWorkObjectDialog({ open, onClose, channelId, projectId, me
           )}
 
           {error && (
-            <div className="rounded-md border border-[hsl(0_70%_45%)] bg-[hsl(0_40%_15%)] px-3 py-2 text-sm text-[hsl(0_80%_85%)]" data-testid="text-error">
+            <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive" data-testid="text-error">
               {error}
             </div>
           )}
@@ -316,7 +319,7 @@ export function CreateWorkObjectDialog({ open, onClose, channelId, projectId, me
             <button
               type="button"
               onClick={onClose}
-              className="rounded-md border border-[hsl(0_0%_18%)] px-3 py-2 text-sm hover:bg-[hsl(0_0%_12%)]"
+              className="rounded-md border border-border px-3 py-2 text-sm text-foreground hover:bg-muted"
               data-testid="button-cancel"
             >
               Cancel
@@ -324,7 +327,7 @@ export function CreateWorkObjectDialog({ open, onClose, channelId, projectId, me
             <button
               type="submit"
               disabled={createMutation.isPending}
-              className="flex items-center gap-2 rounded-md bg-[hsl(220_70%_55%)] px-3 py-2 text-sm font-medium text-white hover:bg-[hsl(220_70%_60%)] disabled:opacity-60"
+              className="flex items-center gap-2 rounded-md bg-vs-accent px-3 py-2 text-sm font-medium text-vs-accent-foreground hover:bg-vs-accent-hover disabled:opacity-60"
               data-testid="button-create"
             >
               {createMutation.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}

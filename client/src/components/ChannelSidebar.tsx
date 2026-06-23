@@ -61,13 +61,17 @@ export function ChannelSidebar({
   // was right-clicked plus the screen coordinates so the menu pops up under
   // the cursor without us needing a heavier popover lib.
   const [ctxMenu, setCtxMenu] = useState<{ channel: ApiChannel; x: number; y: number } | null>(null);
+  // Parallel context menu for Job rows — same shape/behavior as the channel
+  // menu, but the action deletes the whole job (and its nested channels).
+  const [jobCtxMenu, setJobCtxMenu] = useState<{ job: SidebarJob; x: number; y: number } | null>(null);
 
   // Dismiss the context menu on any outside click / Escape / scroll. Keeps
-  // the UX tight — native-feeling without trapping focus.
+  // the UX tight — native-feeling without trapping focus. Covers both the
+  // channel and job context menus.
   useEffect(() => {
-    if (!ctxMenu) return;
-    const dismiss = () => setCtxMenu(null);
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setCtxMenu(null); };
+    if (!ctxMenu && !jobCtxMenu) return;
+    const dismiss = () => { setCtxMenu(null); setJobCtxMenu(null); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") dismiss(); };
     window.addEventListener("click", dismiss);
     window.addEventListener("scroll", dismiss, true);
     window.addEventListener("keydown", onKey);
@@ -76,7 +80,7 @@ export function ChannelSidebar({
       window.removeEventListener("scroll", dismiss, true);
       window.removeEventListener("keydown", onKey);
     };
-  }, [ctxMenu]);
+  }, [ctxMenu, jobCtxMenu]);
   // Any signed-in user can create a channel. Visibility is controlled by
   // the scope they pick in the dialog (global / entity / team / private).
   const canCreateChannel = true;
@@ -258,6 +262,7 @@ export function ChannelSidebar({
                 activeChannelId={activeChannelId}
                 onSelectChannel={onSelectChannel}
                 onChannelContextMenu={isAdmin ? (ch, x, y) => setCtxMenu({ channel: ch, x, y }) : undefined}
+                onJobContextMenu={isAdmin ? (j, x, y) => setJobCtxMenu({ job: j, x, y }) : undefined}
               />
             );
           })}
@@ -396,6 +401,45 @@ export function ChannelSidebar({
         </div>
       )}
 
+      {/* Admin: right-click context menu for Job rows. Mirrors the channel
+          menu; deletes the whole job (and every channel nested under it). */}
+      {isAdmin && jobCtxMenu && (
+        <div
+          style={{ position: "fixed", top: jobCtxMenu.y, left: jobCtxMenu.x, zIndex: 60 }}
+          onClick={(e) => e.stopPropagation()}
+          data-testid="context-menu-job"
+          className="min-w-[180px] rounded-md border border-popover-border bg-popover shadow-2xl overflow-hidden text-sm"
+        >
+          <button
+            type="button"
+            onClick={async () => {
+              const job = jobCtxMenu.job;
+              setJobCtxMenu(null);
+              const ok = window.confirm(
+                `Delete job ${job.ref} — “${job.title}”?\n\nThis permanently deletes the job AND every channel nested under it, along with all messages, reactions, mentions, read receipts, member grants, recordings, and call rooms in those channels. Cannot be undone.`,
+              );
+              if (!ok) return;
+              try {
+                await apiRequest("DELETE", `/api/work-objects/${job.id}`);
+                queryClient.invalidateQueries({ queryKey: ["/api/work-objects"] });
+                queryClient.invalidateQueries({ queryKey: ["/api/channels"] });
+              } catch (err) {
+                console.error("[delete-job]", err);
+                window.alert("Failed to delete job. Check the console for details.");
+              }
+            }}
+            className="w-full flex items-center gap-2 px-3 py-2 text-left text-[hsl(var(--vs-danger))] hover:bg-destructive/10 hover:text-[hsl(var(--vs-danger))]"
+            data-testid="menu-item-delete-job"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+            <span>Delete job…</span>
+          </button>
+          <div className="px-3 py-1.5 text-[10px] text-[hsl(var(--vs-text-subtle))] border-t border-border font-mono">
+            {jobCtxMenu.job.ref}
+          </div>
+        </div>
+      )}
+
       {/* Phase 1.8 admin: Move Channel dialog. */}
       {isAdmin && moveChannel && allProjects && (
         <MoveChannelDialog
@@ -448,7 +492,7 @@ function jobKindIcon(kind: SidebarJob["kind"]) {
 }
 
 function JobGroup({
-  job, expanded, onToggle, channels, activeChannelId, onSelectChannel, onChannelContextMenu,
+  job, expanded, onToggle, channels, activeChannelId, onSelectChannel, onChannelContextMenu, onJobContextMenu,
 }: {
   job: SidebarJob;
   expanded: boolean;
@@ -457,6 +501,7 @@ function JobGroup({
   activeChannelId: number | null;
   onSelectChannel: (id: number) => void;
   onChannelContextMenu?: (channel: ApiChannel, x: number, y: number) => void;
+  onJobContextMenu?: (job: SidebarJob, x: number, y: number) => void;
 }) {
   const Icon = jobKindIcon(job.kind);
   const isClosed = job.status === "closed";
@@ -465,6 +510,7 @@ function JobGroup({
       <button
         type="button"
         onClick={onToggle}
+        onContextMenu={onJobContextMenu ? (e) => { e.preventDefault(); onJobContextMenu(job, e.clientX, e.clientY); } : undefined}
         title={`${job.ref} — ${job.title}`}
         className={[
           "w-full flex items-center gap-1.5 px-1.5 py-1 rounded-md text-[12px] text-left transition-colors",

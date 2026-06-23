@@ -51,6 +51,12 @@ export default {
           foreground: "hsl(var(--destructive-foreground) / <alpha-value>)",
           border: "var(--destructive-border)",
         },
+        "vs-accent": {
+          DEFAULT: "hsl(var(--vs-accent) / <alpha-value>)",
+          soft: "hsl(var(--vs-accent-soft) / <alpha-value>)",
+          hover: "hsl(var(--vs-accent-hover) / <alpha-value>)",
+          foreground: "hsl(var(--vs-accent-foreground) / <alpha-value>)",
+        },
         ring: "hsl(var(--ring) / <alpha-value>)",
         chart: {
           "1": "hsl(var(--chart-1) / <alpha-value>)",

@@ -121,6 +121,47 @@ export function WorkObjectsListDialog({ open, onClose, me, orgMembers, activePro
     });
   }, [listQ.data, search, statusFilter]);
 
+  // Kind-agnostic query so the kind pills can show how many rows sit behind a
+  // filter. listQ is kind-scoped server-side, so it can't tell us the per-kind
+  // breakdown once a kind is selected — this second query always asks kind=all.
+  const countsQ = useQuery<WorkObject[]>({
+    queryKey: ["/api/work-objects", { includeClosed: statusFilter !== "open", kind: "all", limit: 500, projectId: activeProjectId ?? null, counts: true }],
+    queryFn: () => {
+      const params = new URLSearchParams();
+      if (statusFilter !== "open") params.set("includeClosed", "1");
+      if (activeProjectId != null) params.set("projectId", String(activeProjectId));
+      params.set("limit", "500");
+      return apiRequest<WorkObject[]>("GET", `/api/work-objects?${params.toString()}`);
+    },
+    enabled: open,
+  });
+
+  // Same status + search filtering as `filtered`, but kind-agnostic — this is
+  // the population the kind pills count against and the footer's "Y total".
+  const countsBase = useMemo(() => {
+    const rows = countsQ.data ?? [];
+    const q = search.trim().toLowerCase();
+    return rows.filter((r) => {
+      if (statusFilter === "closed" && r.status !== "closed") return false;
+      if (statusFilter === "open" && r.status === "closed") return false;
+      if (q && !(r.ref.toLowerCase().includes(q) || r.title.toLowerCase().includes(q))) return false;
+      return true;
+    });
+  }, [countsQ.data, search, statusFilter]);
+
+  const kindCounts = useMemo(() => {
+    const c: Record<string, number> = { all: countsBase.length };
+    for (const r of countsBase) c[r.kind] = (c[r.kind] ?? 0) + 1;
+    return c;
+  }, [countsBase]);
+
+  const filtersEngaged = kindFilter !== "all" || statusFilter !== "open";
+
+  const clearFilters = () => {
+    setKindFilter("all");
+    setStatusFilter("open");
+  };
+
   // Group by kind so the eye scans by category — matches the right-rail panel pattern.
   const grouped = useMemo(() => {
     const out = new Map<WorkObjectKind, WorkObject[]>();
@@ -205,11 +246,12 @@ export function WorkObjectsListDialog({ open, onClose, me, orgMembers, activePro
               />
             </div>
             <div className="flex items-center gap-1 bg-[hsl(220_60%_9%)] border border-black/40 rounded-md p-0.5" data-testid="filter-kind">
-              <FilterPill label="All" active={kindFilter === "all"} onClick={() => setKindFilter("all")} testid="filter-kind-all" />
+              <FilterPill label="All" count={kindCounts.all} active={kindFilter === "all"} onClick={() => setKindFilter("all")} testid="filter-kind-all" />
               {(Object.entries(KIND_META) as [WorkObjectKind, typeof KIND_META[WorkObjectKind]][]).map(([k, meta]) => (
                 <FilterPill
                   key={k}
                   label={meta.label}
+                  count={kindCounts[k] ?? 0}
                   Icon={meta.icon}
                   active={kindFilter === k}
                   onClick={() => setKindFilter(k)}
@@ -222,6 +264,17 @@ export function WorkObjectsListDialog({ open, onClose, me, orgMembers, activePro
               <FilterPill label="Closed" active={statusFilter === "closed"} onClick={() => setStatusFilter("closed")} testid="filter-status-closed" />
               <FilterPill label="All" active={statusFilter === "all"} onClick={() => setStatusFilter("all")} testid="filter-status-all" />
             </div>
+            {filtersEngaged && (
+              <button
+                type="button"
+                onClick={clearFilters}
+                className="inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] font-semibold text-vs-accent hover:underline"
+                data-testid="button-clear-filters"
+              >
+                <X className="w-3 h-3" />
+                Clear filters
+              </button>
+            )}
           </div>
 
           {/* List */}
@@ -286,7 +339,11 @@ export function WorkObjectsListDialog({ open, onClose, me, orgMembers, activePro
 
           {/* Footer summary */}
           <div className="px-5 py-2.5 border-t border-[hsl(220_40%_22%)] flex items-center justify-between text-[11px] text-[hsl(0_0%_55%)]">
-            <span data-testid="text-work-object-count">{filtered.length} {filtered.length === 1 ? "object" : "objects"}</span>
+            <span data-testid="text-work-object-count">
+              {filtersEngaged
+                ? `${filtered.length} of ${countsBase.length} total`
+                : `${filtered.length} ${filtered.length === 1 ? "object" : "objects"}`}
+            </span>
             <span className="font-mono">org · {me.role}</span>
           </div>
         </div>
@@ -318,8 +375,8 @@ export function WorkObjectsListDialog({ open, onClose, me, orgMembers, activePro
 }
 
 function FilterPill({
-  label, Icon, active, onClick, testid,
-}: { label: string; Icon?: typeof MapPin; active: boolean; onClick: () => void; testid?: string }) {
+  label, Icon, active, onClick, testid, count,
+}: { label: string; Icon?: typeof MapPin; active: boolean; onClick: () => void; testid?: string; count?: number }) {
   return (
     <button
       type="button"
@@ -334,6 +391,7 @@ function FilterPill({
     >
       {Icon && <Icon className="w-3 h-3" />}
       {label}
+      {count !== undefined && <span className="opacity-70 font-mono">({count})</span>}
     </button>
   );
 }
@@ -406,7 +464,7 @@ function WorkObjectRow({ wo, ownerName, onOpen, canDelete }: { wo: WorkObject; o
           disabled={deleting}
           title="Delete job (admin)"
           data-testid={`button-delete-work-object-${wo.id}`}
-          className="absolute top-1.5 right-9 opacity-0 group-hover:opacity-100 disabled:opacity-50 transition-opacity p-1 rounded text-red-300 hover:bg-red-950/40 hover:text-red-200"
+          className="absolute top-1.5 right-9 opacity-60 hover:opacity-100 disabled:opacity-50 transition-opacity p-1 rounded text-destructive hover:bg-destructive/10"
         >
           {deleting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
         </button>
