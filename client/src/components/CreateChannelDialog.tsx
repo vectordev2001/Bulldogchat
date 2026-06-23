@@ -297,7 +297,7 @@ export function CreateChannelDialog({ open, onClose, projectId, me, onCreated, d
                 <button
                   type="button"
                   onClick={() => setNewJobOpen(true)}
-                  className="inline-flex items-center gap-1 rounded-md border border-[hsl(220_70%_45%)] bg-[hsl(220_50%_18%)] px-2 py-0.5 text-[11px] font-medium text-vs-blue-light hover:bg-[hsl(220_50%_22%)]"
+                  className="inline-flex items-center gap-1 rounded-md border border-vs-accent bg-vs-accent-soft px-2 py-0.5 text-[11px] font-medium text-vs-accent-foreground hover:bg-vs-accent-hover"
                   data-testid="button-new-job-inline"
                 >
                   <Plus className="h-3 w-3" /> New job
@@ -328,9 +328,9 @@ export function CreateChannelDialog({ open, onClose, projectId, me, onCreated, d
                 onSubmit doesn't fire when the user presses Enter here — we
                 bind submit on the inner <div role="group"> button instead. */}
             {newJobOpen && (
-              <div className="rounded-md border border-[hsl(220_40%_30%)] bg-[hsl(220_30%_12%)] p-3 space-y-2" data-testid="inline-new-job">
+              <div className="rounded-md border border-border bg-input p-3 space-y-2" data-testid="inline-new-job">
                 <div className="flex items-center justify-between">
-                  <div className="text-xs font-semibold text-vs-blue-light">New job in this company</div>
+                  <div className="text-xs font-semibold text-foreground">New job in this company</div>
                   <button
                     type="button"
                     onClick={() => { setNewJobOpen(false); setNewJobError(null); }}
@@ -404,7 +404,7 @@ export function CreateChannelDialog({ open, onClose, projectId, me, onCreated, d
                 <button
                   type="button"
                   onClick={() => setAttachContractOpen(true)}
-                  className="inline-flex items-center gap-1 rounded-md border border-[hsl(220_70%_45%)] bg-[hsl(220_50%_18%)] px-2 py-0.5 text-[11px] font-medium text-vs-blue-light hover:bg-[hsl(220_50%_22%)]"
+                  className="inline-flex items-center gap-1 rounded-md border border-vs-accent bg-vs-accent-soft px-2 py-0.5 text-[11px] font-medium text-vs-accent-foreground hover:bg-vs-accent-hover"
                   data-testid="button-attach-contract"
                 >
                   <Plus className="h-3 w-3" /> Attach
@@ -412,9 +412,9 @@ export function CreateChannelDialog({ open, onClose, projectId, me, onCreated, d
               )}
             </div>
             {attachContractOpen && (
-              <div className="rounded-md border border-[hsl(220_40%_30%)] bg-[hsl(220_30%_12%)] p-3 space-y-2" data-testid="inline-attach-contract">
+              <div className="rounded-md border border-border bg-input p-3 space-y-2" data-testid="inline-attach-contract">
                 <div className="flex items-center justify-between">
-                  <div className="text-xs font-semibold text-vs-blue-light">Pick a contract</div>
+                  <div className="text-xs font-semibold text-foreground">Pick a contract</div>
                   <button
                     type="button"
                     onClick={() => { setAttachContractOpen(false); setLinkedContractId(""); }}
@@ -466,7 +466,7 @@ export function CreateChannelDialog({ open, onClose, projectId, me, onCreated, d
                   onClick={() => setScope(value)}
                   className={`flex items-start gap-2 rounded-md border p-3 text-left transition ${
                     scope === value
-                      ? "border-[hsl(220_70%_60%)] bg-[hsl(220_30%_15%)]"
+                      ? "border-vs-accent bg-vs-accent-soft ring-2 ring-vs-accent"
                       : "border-[hsl(0_0%_18%)] bg-[hsl(0_0%_8%)] hover:border-[hsl(0_0%_30%)]"
                   }`}
                   data-testid={`scope-${value}`}
@@ -474,7 +474,7 @@ export function CreateChannelDialog({ open, onClose, projectId, me, onCreated, d
                   <Icon className="mt-0.5 h-4 w-4 shrink-0 text-[hsl(0_0%_70%)]" />
                   <div className="min-w-0">
                     <div className="text-sm font-medium">{label}</div>
-                    <div className="text-[11px] text-[hsl(0_0%_55%)] leading-tight">{desc}</div>
+                    <div className={`text-[11px] leading-tight ${scope === value ? "text-[hsl(0_0%_75%)]" : "text-[hsl(0_0%_55%)]"}`}>{desc}</div>
                   </div>
                 </button>
               ))}
