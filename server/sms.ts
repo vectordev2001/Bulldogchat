@@ -144,6 +144,38 @@ export function verifyCallJoinToken(token: string): CallJoinTokenPayload | null 
 }
 
 /**
+ * Normalize a raw phone string to E.164, returning null when it can't be
+ * confidently parsed. Mirrors the normalizer in scheduled-calls.ts so callers
+ * inviting external (non-user) numbers have one canonical helper to reach for.
+ * US-centric: bare 10-digit numbers get a +1; anything already starting with
+ * "+" is trusted if it has enough digits.
+ */
+export function normalizeE164(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  const digits = String(raw).replace(/\D/g, "");
+  if (String(raw).trim().startsWith("+") && digits.length >= 10) return `+${digits}`;
+  if (digits.length === 10) return `+1${digits}`;
+  if (digits.length === 11 && digits.startsWith("1")) return `+${digits}`;
+  return null;
+}
+
+/**
+ * Build the SMS body for a Bulldog Meet invite sent at meeting-create time.
+ * Title is optional (quick meetings may be untitled) and trimmed to ~60 chars
+ * so the whole message stays close to a single 160-char segment.
+ */
+export function buildMeetingInviteSmsBody(p: {
+  hostName: string;
+  joinUrl: string;
+  title?: string | null;
+}): string {
+  const title = p.title?.trim();
+  const trimmed = title && title.length > 60 ? `${title.slice(0, 59)}…` : title;
+  const titlePart = trimmed ? `: "${trimmed}"` : "";
+  return `${p.hostName} invited you to a Bulldog meeting${titlePart}. Join: ${p.joinUrl}`;
+}
+
+/**
  * Build the SMS body for an immediate call invite. Kept terse — most
  * carriers split at 160 chars and we want a single segment when possible.
  * The link is the join-token URL which auto-redirects into the LiveKit
