@@ -15,6 +15,8 @@ import {
   updateMeetingFields,
 } from "./storage/meetings";
 import { storage } from "./storage";
+import { sendSms, smsAvailable, buildMeetingInviteSmsBody, normalizeE164 } from "./sms";
+import { checkSmsConsent } from "./auth-consent";
 import {
   allowKnock,
   cancelKnock,
@@ -95,6 +97,10 @@ const createBodySchema = z.object({
   // Hand-picked extra recipients (for the 'explicit' policy or as extras).
   summaryRecipientUserIds: z.array(z.number().int().positive()).optional(),
   summaryRecipientEmails: z.array(z.string().email()).optional(),
+  // SMS invitees: org members (phone looked up on the users table) and raw
+  // external E.164 numbers for non-users. Both additive + optional.
+  inviteeUserIds: z.array(z.number().int().positive()).max(50).optional(),
+  inviteeExternalPhones: z.array(z.string()).max(50).optional(),
 });
 
 const patchBodySchema = z.object({
@@ -117,6 +123,12 @@ const knockBodySchema = z.object({
   displayName: z.string().max(60).optional(),
 });
 
+// Mask a phone for logs — keep only the last 4 digits (e.g. +1•••••1234).
+function maskPhone(e164: string): string {
+  const last4 = e164.replace(/\D/g, "").slice(-4);
+  return `•••••${last4}`;
+}
+
 // Resolve the client IP for the per-meeting knock rate-limit bucket.
 function clientIp(req: Request): string {
   const fwd = req.headers["x-forwarded-for"];
@@ -129,7 +141,7 @@ export function registerMeetingRoutes(app: Express) {
   startLobbySweeper();
 
   // ── CREATE a meeting (authed) ──
-  app.post("/api/meetings", requireAuth, (req: Request, res: Response) => {
+  app.post("/api/meetings", requireAuth, async (req: Request, res: Response) => {
     const u = (req as unknown as AuthedRequest).user;
     const parsed = createBodySchema.safeParse(req.body ?? {});
     if (!parsed.success) {
@@ -168,9 +180,71 @@ export function registerMeetingRoutes(app: Express) {
       addSummaryRecipient({ meetingId: meeting.id, email, addedByUserId: u.id });
     }
 
+    const joinUrl = `https://chat.bulldogops.com/m/${meeting.code}`;
+
+    // ── SMS invites (best-effort) ──────────────────────────────────────────
+    // Resolve invitees to a de-duped set of { email, phone } recipients. Email
+    // is the key the consent gate uses; external numbers carry none and so
+    // fail-closed (skipped) under the consent check — TCPA-safe.
+    const hostPhone = normalizeE164(u.phone ?? null);
+    const seen = new Set<string>();
+    if (hostPhone) seen.add(hostPhone); // never text the host themselves
+    const recipients: { email: string | null; phone: string }[] = [];
+
+    for (const uid of body.inviteeUserIds ?? []) {
+      if (uid === u.id) continue;
+      const invUser = storage.getUser(uid);
+      const phone = normalizeE164(invUser?.phone ?? null);
+      if (!phone || seen.has(phone)) continue;
+      seen.add(phone);
+      recipients.push({ email: invUser?.email ?? null, phone });
+    }
+    for (const raw of body.inviteeExternalPhones ?? []) {
+      const phone = normalizeE164(raw);
+      if (!phone || seen.has(phone)) continue;
+      seen.add(phone);
+      recipients.push({ email: null, phone });
+    }
+
+    let smsOkCount = 0;
+    let smsSkipCount = 0;
+    if (recipients.length > 0 && smsAvailable()) {
+      const smsBody = buildMeetingInviteSmsBody({
+        hostName: u.name,
+        joinUrl,
+        title: meeting.title,
+      });
+      for (const r of recipients) {
+        // Consent gate (source of truth = bulldog-auth, keyed by email).
+        const consent = await checkSmsConsent(r.email ?? "", "meeting_invite");
+        if (!consent.allowed) {
+          smsSkipCount++;
+          console.log(`[meetings] sms skipped (no consent): ${maskPhone(r.phone)}`);
+          continue;
+        }
+        const to = consent.phoneE164 ?? r.phone;
+        try {
+          const sent = await sendSms({ to, body: smsBody });
+          if (sent.ok) {
+            smsOkCount++;
+          } else {
+            smsSkipCount++;
+            console.warn("[meetings] sms send failed:", sent.error);
+          }
+        } catch (e) {
+          smsSkipCount++;
+          console.warn("[meetings] sms send threw:", e);
+        }
+      }
+    } else if (recipients.length > 0) {
+      // SMS provider not configured — everything is effectively skipped.
+      smsSkipCount = recipients.length;
+    }
+
     res.json({
       meeting: publicMeetingShape(meeting),
-      joinUrl: `https://chat.bulldogops.com/m/${meeting.code}`,
+      joinUrl,
+      invitesSent: { sms: smsOkCount, skipped: smsSkipCount },
     });
   });
 
