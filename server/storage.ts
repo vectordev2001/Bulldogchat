@@ -1040,7 +1040,9 @@ class DatabaseStorage implements IStorage {
   }
   // Cascade-delete a job (work_object) and every channel nested under it.
   // Unlinks any non-nested channels that point at this job via
-  // work_object_channel_links so they survive the delete.
+  // work_object_channel_links so they survive the delete. Also tears down
+  // the work_object_activity timeline rows (NOT NULL FK) and recursively
+  // deletes any child work_objects (parent_id self-reference).
   deleteWorkObjectCascade(workObjectId: number) {
     const nested = db.select({ id: channels.id }).from(channels).where(eq(channels.workObjectId, workObjectId)).all();
     for (const ch of nested) {
@@ -1051,6 +1053,19 @@ class DatabaseStorage implements IStorage {
         if (!/no such table/i.test(String(e?.message))) throw e;
       }
     };
+    // Recursively delete children that point at this row via parent_id.
+    // Read child ids first, then recurse so the loop sees a stable set.
+    try {
+      const childRows = rawDb
+        .prepare(`SELECT id FROM work_objects WHERE parent_id = ?`)
+        .all(workObjectId) as Array<{ id: number }>;
+      for (const child of childRows) {
+        this.deleteWorkObjectCascade(child.id);
+      }
+    } catch (e: any) {
+      if (!/no such (table|column)/i.test(String(e?.message))) throw e;
+    }
+    safeRun(`DELETE FROM work_object_activity WHERE work_object_id = ?`, workObjectId);
     safeRun(`DELETE FROM work_object_channel_links WHERE work_object_id = ?`, workObjectId);
     safeRun(`DELETE FROM work_objects WHERE id = ?`, workObjectId);
   }
