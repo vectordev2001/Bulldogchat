@@ -181,7 +181,13 @@ function ActiveCallOverlay() {
   }, [active?.callId, active?.roomName]);
 
   // ── In-call HUD upgrades (Phase 1.9.14) ───────────────────────────────
-  const channelId = useMemo(() => channelIdFromRoomName(active?.roomName), [active?.roomName]);
+  // Fix 2: prefer the channelId threaded through the call-join token/redeem
+  // (covers sched-* room names that don't match the regex), fall back to
+  // regex-based extraction for backward-compat with existing group call rooms.
+  const channelId = useMemo(
+    () => active?.channelId ?? channelIdFromRoomName(active?.roomName),
+    [active?.channelId, active?.roomName],
+  );
   const hasChannel = typeof channelId === "number";
 
   const [contractOpen, setContractOpen] = useState(false);
@@ -206,6 +212,8 @@ function ActiveCallOverlay() {
   }, [toast]);
   const [panelWidth, setPanelWidth] = useState(400);
   const [layout, setLayout] = useState<CallLayout>(loadSavedLayout);
+  // Fix 4: track whether the user explicitly chose a layout this session.
+  const [userPickedLayout, setUserPickedLayout] = useState(false);
   const [bgOpen, setBgOpen] = useState(false);
   const [bgSel, setBgSel] = useState<BgSelection>(() => loadSavedSelection());
   const processorRef = useRef<VirtualBackgroundProcessor | null>(null);
@@ -282,6 +290,7 @@ function ActiveCallOverlay() {
   useEffect(() => () => { processorRef.current?.stop(); processorRef.current = null; }, []);
 
   const cycleLayout = () => {
+    setUserPickedLayout(true);
     setLayout((cur) => {
       const next: CallLayout = cur === "grid" ? "speaker" : cur === "speaker" ? "sidebar" : "grid";
       try { localStorage.setItem(LAYOUT_STORAGE_KEY, next); } catch { /* ignore */ }
@@ -322,7 +331,11 @@ function ActiveCallOverlay() {
     : [{ key: "them", name: active.otherName, hue: active.otherHue, participant: null, isMe: false }];
   const firstRemote = others[0]?.participant ?? null;
 
-  const effectiveLayout: CallLayout = contractOpen && layout === "grid" ? "sidebar" : layout;
+  // Fix 4: auto-speaker when exactly 1 remote participant and user hasn't
+  // explicitly chosen a layout this session. Respects explicit user choice.
+  const autoLayout: CallLayout =
+    !userPickedLayout && others.length === 1 ? "speaker" : layout;
+  const effectiveLayout: CallLayout = contractOpen && autoLayout === "grid" ? "sidebar" : autoLayout;
 
   return (
     <div

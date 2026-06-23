@@ -41,6 +41,8 @@ export interface ActiveCallSession {
   iAmCaller: boolean;
   /** Set true once both sides have joined the room. */
   active: boolean;
+  /** Channel this call is scoped to (enables chat panel + MeetingClerk). */
+  channelId?: number | null;
 }
 
 export interface OutgoingCallState {
@@ -433,6 +435,7 @@ export function CallProvider({ children }: { children: ReactNode }) {
       kind: "voice" | "video";
       userName: string;
       userHue: number;
+      channelId?: number | null;
     }>("POST", "/api/call-join/redeem", { token });
     setActive({
       callId: 0,
@@ -444,6 +447,7 @@ export function CallProvider({ children }: { children: ReactNode }) {
       kind: resp.kind,
       iAmCaller: false,
       active: true,
+      channelId: resp.channelId ?? null,
     });
   }, [active, outgoing]);
 

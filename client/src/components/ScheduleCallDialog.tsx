@@ -426,6 +426,7 @@ interface ApiScheduledCall {
   endAt: number;
   status: "scheduled" | "started" | "cancelled" | "completed";
   roomName: string;
+  meetingCode: string | null;
   invitees: Array<{
     id: number;
     userId: number | null;
@@ -618,6 +619,15 @@ function MeetingRow({
         </div>
         {(cancelled ? canDelete : !readOnly) && (
           <div className="flex items-center gap-1 shrink-0">
+            {!cancelled && call.meetingCode && (
+              <a
+                href={`/m/${call.meetingCode}`}
+                className="px-3 py-1.5 rounded-md bg-vs-green/20 hover:bg-vs-green/35 border border-vs-green/50 text-[11px] font-semibold flex items-center gap-1.5 text-white"
+                data-testid={`button-meeting-join-${call.id}`}
+              >
+                <Video className="w-3 h-3" /> Join
+              </a>
+            )}
             {!cancelled && iAmOrganizer && (
               <button
                 type="button"
