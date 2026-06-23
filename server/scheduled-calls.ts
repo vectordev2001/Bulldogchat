@@ -327,6 +327,67 @@ function formatWhenLabel(d: Date, tz: string = "America/Los_Angeles"): string {
   }
 }
 
+/* ─────────────────── RSVP confirmation page (server-rendered) ─────────── */
+const NAVY = "#191E4A";
+function escHtml(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+function rsvpPageShell(inner: string): string {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RSVP — Bulldog Chat</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #f4f5f7; color: ${NAVY};
+           font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+           min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px; }
+    .card { max-width: 440px; width: 100%; background: #fff; border: 1px solid #e5e7eb;
+            border-radius: 12px; padding: 36px 28px; text-align: center; }
+    h1 { font-size: 22px; font-weight: 700; margin-bottom: 12px; color: ${NAVY}; }
+    .meeting { font-size: 17px; font-weight: 600; color: ${NAVY}; margin-bottom: 4px; }
+    .when { font-size: 14px; color: #6b7280; margin-bottom: 24px; }
+    .actions { margin-top: 24px; }
+    a.btn { display: inline-block; margin: 4px; padding: 10px 18px; border-radius: 8px;
+            text-decoration: none; font-weight: 600; font-size: 14px;
+            border: 1px solid ${NAVY}; color: ${NAVY}; background: #fff; }
+    a.btn.primary { background: ${NAVY}; color: #fff; }
+    p.hint { font-size: 14px; color: #6b7280; line-height: 1.5; }
+  </style>
+</head>
+<body>
+  <div class="card">${inner}</div>
+</body>
+</html>`;
+}
+function renderRsvpConfirmationPage(p: {
+  title: string;
+  whenLabel: string;
+  response: RsvpResponse;
+  icsUrl: string;
+  meetingsUrl: string;
+}): string {
+  const headline =
+    p.response === "yes" ? "✓ You're marked as attending" :
+    p.response === "no" ? "✓ You're marked as declined" :
+    "✓ You're marked as maybe";
+  return rsvpPageShell(`
+    <h1>${escHtml(headline)}</h1>
+    <div class="meeting">${escHtml(p.title)}</div>
+    <div class="when">${escHtml(p.whenLabel)}</div>
+    <div class="actions">
+      <a class="btn" href="${escHtml(p.icsUrl)}">Add to calendar</a>
+      <a class="btn primary" href="${escHtml(p.meetingsUrl)}">View in Bulldog</a>
+    </div>`);
+}
+function renderRsvpErrorPage(message: string): string {
+  return rsvpPageShell(`
+    <h1>RSVP not recorded</h1>
+    <p class="hint">${escHtml(message)}</p>`);
+}
+
 /* ─────────────────── Dispatch (send invite SMSes + emails) ────────────── */
 async function dispatchInvites(call: ScheduledCall): Promise<void> {
   const organizer = storage.getUser(call.organizerId);
@@ -365,11 +426,6 @@ async function dispatchInvites(call: ScheduledCall): Promise<void> {
     console.log(`[scheduled-calls] inv=${inv.id} user=${inv.userId} email=${email ? "yes" : "no"} phone=${phone ? "yes" : "no"} emailConfigured=${isEmailConfigured()}`);
 
     const joinUrl = buildJoinUrl(call, inv, organizer.name);
-    const rsvpBase = `${CHAT_BASE_URL}/api/scheduled-calls/${call.id}/rsvp-public?code=${inv.rsvpCode}`;
-    const rsvpYesUrl    = `${rsvpBase}&response=yes`;
-    const rsvpNoUrl     = `${rsvpBase}&response=no`;
-    const rsvpMaybeUrl  = `${rsvpBase}&response=maybe`;
-    const channelUrl    = call.channelId ? `${CHAT_BASE_URL}/channel/${call.channelId}` : CHAT_BASE_URL;
 
     let emailSent = false;
     let smsSent = false;
@@ -408,39 +464,49 @@ async function dispatchInvites(call: ScheduledCall): Promise<void> {
 
         const escH = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
         const joinShortUrl = ensureShortUrl();
+        // RSVP buttons point at /r/<token> (record-and-confirm, no room drop).
+        // The Join button keeps the /j/<token> short link (join-and-redirect).
+        // Both reuse the same per-invitee short-link token.
+        const shortToken = joinShortUrl.substring(joinShortUrl.lastIndexOf("/") + 1);
+        const rsvpBase = `${CHAT_BASE_URL}/r/${shortToken}`;
+        const rsvpYesUrl   = `${rsvpBase}?response=yes`;
+        const rsvpNoUrl    = `${rsvpBase}?response=no`;
+        const rsvpMaybeUrl = `${rsvpBase}?response=maybe`;
         const subject = `${organizer.name} invited you to "${call.title}" — ${whenLabel}`;
         const textBody = [
           `${organizer.name} has scheduled a ${call.kind} call: "${call.title}"`,
           `When: ${whenLabel}`,
           ``,
-          `Choose your preferred way to join:`,
-          `Join via Bulldog: ${joinShortUrl}`,
+          `Join the meeting: ${joinShortUrl}`,
           ...(call.teamsJoinUrl ? [`Join via Teams:   ${call.teamsJoinUrl}`] : []),
           ``,
-          `RSVP:`,
+          `RSVP (records your response, does not join):`,
           `  Yes    → ${rsvpYesUrl}`,
           `  No     → ${rsvpNoUrl}`,
           `  Maybe  → ${rsvpMaybeUrl}`,
         ].join("\n");
 
         const htmlBody = `<!DOCTYPE html>
-<html><body style="font-family:sans-serif;background:#0d1117;color:#e6edf3;padding:24px;">
-<h2 style="color:#58a6ff;margin-top:0">${escH(call.title)}</h2>
-<p><strong>Organizer:</strong> ${escH(organizer.name)}<br/>
+<html><body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f4f5f7;color:#191E4A;padding:24px;">
+<div style="max-width:480px;margin:0 auto;background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:28px 24px;">
+<h2 style="color:#191E4A;margin-top:0">${escH(call.title)}</h2>
+<p style="color:#191E4A"><strong>Organizer:</strong> ${escH(organizer.name)}<br/>
 <strong>When:</strong> ${escH(whenLabel)}</p>
-<p style="margin-bottom:6px;font-size:13px;color:#8b949e;">Choose your preferred way to join:</p>
-<p style="margin-top:0"><a href="${escH(joinShortUrl)}" style="display:inline-block;padding:10px 20px;background:#1f6feb;color:#fff;border-radius:6px;text-decoration:none;font-weight:bold;">Join via Bulldog</a>${
+<p style="margin:20px 0 6px;text-align:center">
+  <a href="${escH(joinShortUrl)}" style="display:inline-block;padding:14px 32px;background:#191E4A;color:#fff;border-radius:8px;text-decoration:none;font-weight:bold;font-size:16px;">Join meeting</a>
+</p>${
   call.teamsJoinUrl
-    ? `<br/><a href="${escH(call.teamsJoinUrl)}" style="display:inline-block;padding:10px 20px;background:#5b5fc7;color:#fff;border-radius:6px;text-decoration:none;font-weight:bold;margin-top:8px;">Join via Microsoft Teams</a>`
+    ? `<p style="text-align:center;margin-top:8px"><a href="${escH(call.teamsJoinUrl)}" style="display:inline-block;padding:10px 20px;background:#5b5fc7;color:#fff;border-radius:6px;text-decoration:none;font-weight:bold;">Join via Microsoft Teams</a></p>`
     : ""
-}</p>
-<p style="margin-top:16px"><strong>RSVP:</strong></p>
+}
+<p style="margin:24px 0 8px;color:#191E4A"><strong>RSVP:</strong> <span style="font-size:12px;color:#6b7280;">(records your response — won't join you)</span></p>
 <p>
-  <a href="${escH(rsvpYesUrl)}" style="display:inline-block;margin-right:8px;padding:8px 16px;background:#238636;color:#fff;border-radius:6px;text-decoration:none;font-weight:bold;">Yes</a>
-  <a href="${escH(rsvpNoUrl)}" style="display:inline-block;margin-right:8px;padding:8px 16px;background:#b91c1c;color:#fff;border-radius:6px;text-decoration:none;font-weight:bold;">No</a>
-  <a href="${escH(rsvpMaybeUrl)}" style="display:inline-block;padding:8px 16px;background:#92400e;color:#fff;border-radius:6px;text-decoration:none;font-weight:bold;">Maybe</a>
+  <a href="${escH(rsvpYesUrl)}" style="display:inline-block;margin-right:8px;padding:8px 16px;background:#16a34a;color:#fff;border-radius:6px;text-decoration:none;font-weight:bold;">Yes</a>
+  <a href="${escH(rsvpNoUrl)}" style="display:inline-block;margin-right:8px;padding:8px 16px;background:#dc2626;color:#fff;border-radius:6px;text-decoration:none;font-weight:bold;">No</a>
+  <a href="${escH(rsvpMaybeUrl)}" style="display:inline-block;padding:8px 16px;background:#d97706;color:#fff;border-radius:6px;text-decoration:none;font-weight:bold;">Maybe</a>
 </p>
-<p style="margin-top:24px;font-size:12px;color:#8b949e;">You received this because you were invited to a Bulldog Chat meeting.</p>
+<p style="margin-top:24px;font-size:12px;color:#6b7280;">You received this because you were invited to a Bulldog Chat meeting.</p>
+</div>
 </body></html>`;
 
         const res = await sendEmail({
@@ -1079,10 +1145,11 @@ export function registerScheduledCallRoutes(app: Express) {
     const from = String(params.From || "").trim();
     const body = String(params.Body || "");
     const parsed = parseRsvpSms(body);
+    const parseFailReply =
+      "Sorry, we couldn't process that RSVP. Reply with the format: <code> Y/N/M (e.g., B38B Y)";
     if (!from || !parsed) {
-      // Respond politely so users replying random text aren't confused.
       return res.type("text/xml").send(
-        "<Response><Message>Reply with your code + Y, N, or M (e.g. \"#A4F9 Y\"). Need help? Reply HELP.</Message></Response>"
+        `<Response><Message>${parseFailReply}</Message></Response>`
       );
     }
     // Find invitees with this rsvp_code whose phone (either chat-user phone
@@ -1105,14 +1172,70 @@ export function registerScheduledCallRoutes(app: Express) {
     }
     if (!matched) {
       return res.type("text/xml").send(
-        `<Response><Message>We couldn't find an invite with code #${parsed.code} for this number. Reply HELP to talk to the organizer.</Message></Response>`
+        `<Response><Message>${parseFailReply}</Message></Response>`
       );
     }
     setRsvp(matched.id, parsed.response, "sms");
-    const word = parsed.response === "yes" ? "YES" : parsed.response === "no" ? "NO" : "MAYBE";
-    return res.type("text/xml").send(
-      `<Response><Message>Got it \u2014 you replied ${word} to "${matched.title}". Thanks.</Message></Response>`
-    );
+    // Confirm back via an outbound SMS (best-effort). We reply with an empty
+    // TwiML body so the recipient gets exactly one confirmation message.
+    const phrase =
+      parsed.response === "yes" ? `attending "${matched.title}"` :
+      parsed.response === "no" ? `declined for "${matched.title}"` :
+      `maybe for "${matched.title}"`;
+    const whenLabel = formatWhenLabel(new Date(matched.start_at * 1000));
+    const confirmBody = `Got it \u2014 you're marked as ${phrase} on ${whenLabel}.`;
+    try {
+      const replyTo = normalizeE164(from);
+      if (replyTo && smsAvailable()) {
+        await sendSms({ to: replyTo, body: confirmBody });
+      }
+    } catch (e) {
+      console.warn("[sms/inbound] confirmation reply failed:", e);
+    }
+    return res.type("text/xml").send("<Response/>");
+  });
+
+  // RSVP-only confirmation route — records the response WITHOUT joining the
+  // meeting, then renders a server-side confirmation page. The token is the
+  // per-invitee short-link token (same one /j/:token redeems for joining), so
+  // /r/<token> and /j/<token> share identity but do different things:
+  //   /j/<token> → join-and-redirect into the LiveKit room
+  //   /r/<token> → record RSVP + show confirmation page (no room drop)
+  // GET /r/:token?response=yes|no|maybe
+  app.get("/r/:token", (req, res) => {
+    const token = String(req.params.token || "");
+    const response = String(req.query.response || "").toLowerCase();
+    const row = rawDb.prepare(
+      "SELECT * FROM scheduled_call_invitees WHERE short_link_token = ?"
+    ).get(token) as any;
+    if (!row) {
+      res.status(404).setHeader("Content-Type", "text/html; charset=utf-8");
+      return res.send(renderRsvpErrorPage("This RSVP link is invalid or has expired."));
+    }
+    const inv = rowToInvitee(row);
+    const call = getScheduledCall(inv.scheduledCallId);
+    if (!call) {
+      res.status(404).setHeader("Content-Type", "text/html; charset=utf-8");
+      return res.send(renderRsvpErrorPage("This meeting could not be found."));
+    }
+    if (!["yes", "no", "maybe"].includes(response)) {
+      res.status(400).setHeader("Content-Type", "text/html; charset=utf-8");
+      return res.send(renderRsvpErrorPage(
+        "Please click one of the RSVP buttons (Yes, No, or Maybe) in your invitation email."
+      ));
+    }
+    setRsvp(inv.id, response as RsvpResponse, "web");
+    const whenLabel = formatWhenLabel(call.startAt);
+    const icsUrl = `${CHAT_BASE_URL}/api/scheduled-calls/${call.id}/ics?code=${encodeURIComponent(inv.rsvpCode)}`;
+    const meetingsUrl = `${CHAT_BASE_URL}/meetings`;
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.send(renderRsvpConfirmationPage({
+      title: call.title,
+      whenLabel,
+      response: response as RsvpResponse,
+      icsUrl,
+      meetingsUrl,
+    }));
   });
 
   // Public RSVP page — no login required; rsvp_code is the auth token.
