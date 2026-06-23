@@ -32,6 +32,9 @@ interface Props {
   onToggleMic: () => void;
   onToggleDeafen: () => void;
   onCreateChannel?: () => void;
+  // Opens the create-channel dialog with a job preselected (from a job row's
+  // "New channel under …" context-menu action).
+  onCreateChannelInJob?: (jobId: number) => void;
   onOpenWorkObjects?: () => void;
   // Phase 1.9.1 — opens the Meetings list dialog (upcoming/past scheduled calls).
   onOpenMeetings?: () => void;
@@ -48,7 +51,7 @@ interface Props {
 
 export function ChannelSidebar({
   project, channels, projectMembers, activeChannelId, onSelectChannel,
-  me, myMicMuted, myDeafened, onToggleMic, onToggleDeafen, onCreateChannel, onOpenWorkObjects,
+  me, myMicMuted, myDeafened, onToggleMic, onToggleDeafen, onCreateChannel, onCreateChannelInJob, onOpenWorkObjects,
   onOpenMeetings,
   allProjects, orgMembers, activeDmId, onSelectDm,
 }: Props) {
@@ -410,6 +413,19 @@ export function ChannelSidebar({
           data-testid="context-menu-job"
           className="min-w-[180px] rounded-md border border-popover-border bg-popover shadow-2xl overflow-hidden text-sm"
         >
+          <button
+            type="button"
+            onClick={() => {
+              const jobId = jobCtxMenu.job.id;
+              setJobCtxMenu(null);
+              onCreateChannelInJob?.(jobId);
+            }}
+            className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-accent"
+            data-testid="menu-item-new-channel-in-job"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            <span className="truncate">New channel under {jobCtxMenu.job.ref}</span>
+          </button>
           <button
             type="button"
             onClick={async () => {
