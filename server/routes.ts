@@ -572,22 +572,23 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
   });
 
   // Phase 1.9.3 — proxy: list contracts from bulldog-contracts so the chat
-  // UI can populate an "Attach contract" dropdown without dealing with
-  // cross-origin cookies. Forwards the user's bulldog_access cookie/header
-  // to contracts so its own JWT middleware authorizes the call.
+  // UI can populate an "Attach contract" dropdown. Contracts is a separate
+  // service with its own session, so forwarding the chat cookie 401s. Instead
+  // authenticate service-to-service with SUITE_INTERNAL_SECRET and pass the
+  // user's email so contracts can apply its own role/company filtering.
   app.get("/api/contracts/list", requireAuth, async (req, res) => {
-    const contractsBase = (process.env.CONTRACTS_BASE_URL || "https://bulldog-contracts.onrender.com").replace(/\/+$/, "");
-    // Pull the bearer token from the chat request — prefer Authorization
-    // header (mobile/API clients) but fall back to the cookie header.
-    const auth = req.headers.authorization;
-    const cookie = req.headers.cookie;
-    if (!auth && !cookie) return res.status(401).json({ message: "No auth" });
+    const u = (req as AuthedRequest).user;
+    const contractsBase = (process.env.CONTRACTS_BASE_URL || "https://vectorcontracts.bulldogops.com").replace(/\/+$/, "");
+    const secret = process.env.SUITE_INTERNAL_SECRET;
+    if (!secret) {
+      return res.status(503).json({ message: "SUITE_INTERNAL_SECRET not configured on chat" });
+    }
     const search = typeof req.query.q === "string" ? `?q=${encodeURIComponent(req.query.q)}` : "";
     try {
-      const upstream = await fetch(`${contractsBase}/api/contracts${search}`, {
+      const upstream = await fetch(`${contractsBase}/api/suite/contracts/list${search}`, {
         headers: {
-          ...(auth ? { authorization: auth } : {}),
-          ...(cookie ? { cookie } : {}),
+          "x-suite-secret": secret,
+          "x-bulldog-user-email": u.email,
         },
       });
       const text = await upstream.text();

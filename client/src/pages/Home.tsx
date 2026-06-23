@@ -31,6 +31,9 @@ export default function Home() {
   const [activeDmId, setActiveDmId] = useState<number | null>(null);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [createChannelOpen, setCreateChannelOpen] = useState(false);
+  // When the create-channel dialog is opened from a job row's context menu,
+  // preselect that job so the new channel nests under it.
+  const [createChannelDefaultJobId, setCreateChannelDefaultJobId] = useState<number | null>(null);
   // Right-rail members list. Default to closed on mobile so the drawer
   // never auto-pops on iPhone; open on desktop (≥md) so the static
   // sidebar shows by default. Re-evaluated once on mount; user toggles
@@ -362,6 +365,7 @@ export default function Home() {
             onToggleMic={() => setMyMicMuted((v) => !v)}
             onToggleDeafen={() => setMyDeafened((v) => !v)}
             onCreateChannel={() => setCreateChannelOpen(true)}
+            onCreateChannelInJob={(id) => { setCreateChannelDefaultJobId(id); setCreateChannelOpen(true); }}
             onOpenWorkObjects={() => setWorkObjectsListOpen(true)}
             onOpenMeetings={() => setMeetingsOpen(true)}
             allProjects={projects}
@@ -407,9 +411,10 @@ export default function Home() {
         {activeProject && user && (
           <CreateChannelDialog
             open={createChannelOpen}
-            onClose={() => setCreateChannelOpen(false)}
+            onClose={() => { setCreateChannelOpen(false); setCreateChannelDefaultJobId(null); }}
             projectId={activeProject.id}
             me={user as ApiUser}
+            defaultWorkObjectId={createChannelDefaultJobId}
             onCreated={(ch) => {
               // Auto-select the new channel for the creator.
               setChannelByProject((prev) => ({ ...prev, [activeProject.id]: ch.id }));

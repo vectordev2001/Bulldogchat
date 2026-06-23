@@ -8,7 +8,8 @@ import { Loader2, Hash, Globe, Building2, Users, Lock, Briefcase, Plus, X, FileT
 
 interface ApiJob {
   id: number;
-  name: string;
+  ref: string;
+  title: string;
   kind: string;
   status: string;
   projectId?: number | null;
@@ -31,6 +32,9 @@ interface Props {
   projectId: number;
   me: ApiUser | null;
   onCreated?: (channel: ApiChannel) => void;
+  // When opened from a job row's "New channel under …" action, preselect
+  // that job so the new channel nests under it without the user re-picking.
+  defaultWorkObjectId?: number | null;
 }
 
 const SCOPES: { value: ChannelScope; label: string; desc: string; Icon: typeof Globe }[] = [
@@ -46,7 +50,7 @@ const ROLES: { value: UserRole; label: string }[] = [
   { value: "admin", label: "Admin" },
 ];
 
-export function CreateChannelDialog({ open, onClose, projectId, me, onCreated }: Props) {
+export function CreateChannelDialog({ open, onClose, projectId, me, onCreated, defaultWorkObjectId }: Props) {
   const [name, setName] = useState("");
   const [topic, setTopic] = useState("");
   // Phase 1.9: unified channels — every new channel is created with
@@ -57,7 +61,9 @@ export function CreateChannelDialog({ open, onClose, projectId, me, onCreated }:
   const [entityId, setEntityId] = useState("");
   const [teamRole, setTeamRole] = useState<UserRole>("user");
   const [memberIds, setMemberIds] = useState<Set<number>>(new Set());
-  const [workObjectId, setWorkObjectId] = useState<string>("");
+  const [workObjectId, setWorkObjectId] = useState<string>(
+    defaultWorkObjectId != null ? String(defaultWorkObjectId) : "",
+  );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -88,7 +94,7 @@ export function CreateChannelDialog({ open, onClose, projectId, me, onCreated }:
       setEntityId("");
       setTeamRole("user");
       setMemberIds(new Set());
-      setWorkObjectId("");
+      setWorkObjectId(defaultWorkObjectId != null ? String(defaultWorkObjectId) : "");
       setError(null);
       setLoading(false);
       setNewJobOpen(false);
@@ -99,7 +105,7 @@ export function CreateChannelDialog({ open, onClose, projectId, me, onCreated }:
       setAttachContractOpen(false);
       setLinkedContractId("");
     }
-  }, [open]);
+  }, [open, defaultWorkObjectId]);
 
   const orgMembersQ = useQuery<ApiUser[]>({
     queryKey: ["/api/org/members"],
@@ -308,7 +314,7 @@ export function CreateChannelDialog({ open, onClose, projectId, me, onCreated }:
               <option value="">— Company-wide (no job)</option>
               {openJobs.map(j => (
                 <option key={j.id} value={String(j.id)}>
-                  {j.name} · {j.kind.replace(/_/g, " ")}
+                  {j.ref} — {j.title} · {j.kind.replace(/_/g, " ")}
                 </option>
               ))}
             </select>
