@@ -1374,14 +1374,11 @@ function ScheduledCallCard({ meta, createdAt, meId, myRole, onJoin }: { meta: Ap
       data-testid={`scheduled-call-card-${meta.scheduledCallId}`}
     >
       <div className="flex items-start gap-3">
-        <button
-          type="button"
-          title="Join meeting"
-          onClick={() => onJoin?.()}
-          className={`w-10 h-10 rounded-full bg-${accent}/15 border border-${accent}/40 flex items-center justify-center shrink-0 cursor-pointer hover:bg-${accent}/25 transition-colors`}
+        <div
+          className={`w-10 h-10 rounded-full bg-${accent}/15 border border-${accent}/40 flex items-center justify-center shrink-0`}
         >
           <Icon className={`w-5 h-5 text-${accent}`} />
-        </button>
+        </div>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-[10px] font-mono uppercase tracking-wider text-[hsl(var(--vs-text-subtle))]">
@@ -1389,20 +1386,31 @@ function ScheduledCallCard({ meta, createdAt, meId, myRole, onJoin }: { meta: Ap
             </span>
             <CalendarIcon className="w-3 h-3 text-[hsl(var(--vs-text-subtle))]" />
             <span className="text-[11px] text-[hsl(var(--vs-text-muted))]">{whenLabel}</span>
-            {canDelete && !cancelled && (
-              <ActionPill
-                variant="danger"
-                size="sm"
-                className="ml-auto"
-                onClick={onDelete}
-                disabled={deleteMut.isPending}
-                icon={<Trash2 />}
-                title="Delete meeting"
-                data-testid={`button-card-delete-${meta.scheduledCallId}`}
-              >
-                Delete
-              </ActionPill>
-            )}
+            <div className="ml-auto flex items-center gap-1.5">
+              {onJoin && !cancelled && (
+                <button
+                  type="button"
+                  onClick={() => onJoin?.()}
+                  className="px-3 py-1.5 rounded-md bg-vs-green/20 hover:bg-vs-green/35 border border-vs-green/50 text-[11px] font-semibold flex items-center gap-1.5 text-white"
+                  data-testid={`button-card-join-${meta.scheduledCallId}`}
+                >
+                  <Icon className="w-3 h-3" /> Join
+                </button>
+              )}
+              {canDelete && !cancelled && (
+                <ActionPill
+                  variant="danger"
+                  size="sm"
+                  onClick={onDelete}
+                  disabled={deleteMut.isPending}
+                  icon={<Trash2 />}
+                  title="Delete meeting"
+                  data-testid={`button-card-delete-${meta.scheduledCallId}`}
+                >
+                  Delete
+                </ActionPill>
+              )}
+            </div>
           </div>
           <div className="text-sm font-semibold text-[hsl(var(--vs-text))] mt-0.5">{meta.callTitle}</div>
           {!cancelled && (
