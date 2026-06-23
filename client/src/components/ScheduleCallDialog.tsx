@@ -613,6 +613,40 @@ function MeetingRow({
           <div className="text-[11px] text-[hsl(0_0%_65%)] mt-0.5">
             {whenLabel} · {organizer?.name ?? "—"} · {call.invitees.length} invitee{call.invitees.length === 1 ? "" : "s"}
           </div>
+          {call.invitees.length > 0 && (() => {
+            const shortName = (full: string) => {
+              const parts = full.trim().split(/\s+/).filter(Boolean);
+              if (parts.length <= 1) return parts[0] ?? "Guest";
+              return `${parts[0]} ${parts[parts.length - 1][0]}.`;
+            };
+            const nameOf = (inv: ApiScheduledCall["invitees"][number]) => {
+              if (inv.userId != null) return shortName(memberById.get(inv.userId)?.name ?? `User ${inv.userId}`);
+              if (inv.externalEmail) return inv.externalEmail.split("@")[0];
+              if (inv.externalPhone) return `…${inv.externalPhone.slice(-4)}`;
+              return "Guest";
+            };
+            const nameList = (arr: typeof call.invitees, max = 3) => {
+              const names = arr.map(nameOf);
+              return names.length <= max ? names.join(", ") : `${names.slice(0, max).join(", ")} +${names.length - max}`;
+            };
+            const by = (r: string) => call.invitees.filter((i) => i.response === r);
+            const accepted = by("yes"), declined = by("no"), maybe = by("maybe"), noReply = by("pending");
+            const segs: Array<{ text: string; cls: string }> = [];
+            if (accepted.length) segs.push({ text: `Accepted: ${nameList(accepted)}`, cls: "text-vs-green" });
+            if (declined.length) segs.push({ text: `Declined: ${nameList(declined)}`, cls: "text-[hsl(0_0%_60%)]" });
+            if (maybe.length) segs.push({ text: `Maybe: ${nameList(maybe)}`, cls: "text-vs-blue-light" });
+            if (noReply.length) segs.push({ text: `No reply: ${noReply.length}`, cls: "text-[hsl(0_0%_55%)]" });
+            return (
+              <div className="text-[11px] mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-0.5" data-testid={`meeting-rsvp-summary-${call.id}`}>
+                {segs.map((s, idx) => (
+                  <span key={s.text} className={s.cls}>
+                    {idx > 0 && <span className="text-[hsl(0_0%_35%)] mr-1.5">·</span>}
+                    {s.text}
+                  </span>
+                ))}
+              </div>
+            );
+          })()}
           {call.notes && (
             <div className="text-[11px] text-[hsl(0_0%_75%)] mt-1 line-clamp-2">{call.notes}</div>
           )}

@@ -375,6 +375,16 @@ async function dispatchInvites(call: ScheduledCall): Promise<void> {
     let smsSent = false;
     const errors: string[] = [];
 
+    // Mint one short link per invitee, reused across email + SMS (and later
+    // reminders via the persisted short_link_token). The short /j/<token> URL
+    // is what the iOS AASA claims (/j/*) so it deep-links into the app, and it
+    // keeps the visible link clean instead of a ~280-char signed JWT.
+    let inviteeShortUrl: string | null = null;
+    const ensureShortUrl = (): string => {
+      if (!inviteeShortUrl) inviteeShortUrl = getOrMintInviteeShortUrl(inv.id, call.id, joinUrl, null);
+      return inviteeShortUrl;
+    };
+
     // ─── Email ───────────────────────────────────────────────────────────
     if (email && isEmailConfigured()) {
       try {
@@ -397,13 +407,14 @@ async function dispatchInvites(call: ScheduledCall): Promise<void> {
         });
 
         const escH = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+        const joinShortUrl = ensureShortUrl();
         const subject = `${organizer.name} invited you to "${call.title}" — ${whenLabel}`;
         const textBody = [
           `${organizer.name} has scheduled a ${call.kind} call: "${call.title}"`,
           `When: ${whenLabel}`,
           ``,
           `Choose your preferred way to join:`,
-          `Join via Bulldog: ${joinUrl}`,
+          `Join via Bulldog: ${joinShortUrl}`,
           ...(call.teamsJoinUrl ? [`Join via Teams:   ${call.teamsJoinUrl}`] : []),
           ``,
           `RSVP:`,
@@ -418,7 +429,7 @@ async function dispatchInvites(call: ScheduledCall): Promise<void> {
 <p><strong>Organizer:</strong> ${escH(organizer.name)}<br/>
 <strong>When:</strong> ${escH(whenLabel)}</p>
 <p style="margin-bottom:6px;font-size:13px;color:#8b949e;">Choose your preferred way to join:</p>
-<p style="margin-top:0"><a href="${escH(joinUrl)}" style="display:inline-block;padding:10px 20px;background:#1f6feb;color:#fff;border-radius:6px;text-decoration:none;font-weight:bold;">Join via Bulldog</a>${
+<p style="margin-top:0"><a href="${escH(joinShortUrl)}" style="display:inline-block;padding:10px 20px;background:#1f6feb;color:#fff;border-radius:6px;text-decoration:none;font-weight:bold;">Join via Bulldog</a>${
   call.teamsJoinUrl
     ? `<br/><a href="${escH(call.teamsJoinUrl)}" style="display:inline-block;padding:10px 20px;background:#5b5fc7;color:#fff;border-radius:6px;text-decoration:none;font-weight:bold;margin-top:8px;">Join via Microsoft Teams</a>`
     : ""
@@ -474,9 +485,10 @@ async function dispatchInvites(call: ScheduledCall): Promise<void> {
         }));
       } else {
       const smsTo = consent.phoneE164 ?? phone;
-      // Mint (and persist) a short link so the SMS is one Twilio segment; the
-      // reminder reuses the same token via short_link_token on the invitee row.
-      const shortUrl = getOrMintInviteeShortUrl(inv.id, call.id, joinUrl, null);
+      // Reuse the per-invitee short link (minted above for email, or here if
+      // email wasn't sent); the reminder reuses the same token via
+      // short_link_token on the invitee row.
+      const shortUrl = ensureShortUrl();
       const smsBody = buildScheduledCallSmsBody({
         organizerName: organizer.name,
         title: call.title,

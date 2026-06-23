@@ -297,7 +297,7 @@ export function CreateChannelDialog({ open, onClose, projectId, me, onCreated, d
                 <button
                   type="button"
                   onClick={() => setNewJobOpen(true)}
-                  className="inline-flex items-center gap-1 rounded-md border border-vs-accent bg-vs-accent-soft px-2 py-0.5 text-[11px] font-medium text-vs-accent-foreground hover:bg-vs-accent-hover"
+                  className="inline-flex items-center gap-1 rounded-md border border-border bg-accent px-2 py-0.5 text-[11px] font-medium text-foreground hover:bg-accent/80"
                   data-testid="button-new-job-inline"
                 >
                   <Plus className="h-3 w-3" /> New job
@@ -404,7 +404,7 @@ export function CreateChannelDialog({ open, onClose, projectId, me, onCreated, d
                 <button
                   type="button"
                   onClick={() => setAttachContractOpen(true)}
-                  className="inline-flex items-center gap-1 rounded-md border border-vs-accent bg-vs-accent-soft px-2 py-0.5 text-[11px] font-medium text-vs-accent-foreground hover:bg-vs-accent-hover"
+                  className="inline-flex items-center gap-1 rounded-md border border-border bg-accent px-2 py-0.5 text-[11px] font-medium text-foreground hover:bg-accent/80"
                   data-testid="button-attach-contract"
                 >
                   <Plus className="h-3 w-3" /> Attach
@@ -473,7 +473,7 @@ export function CreateChannelDialog({ open, onClose, projectId, me, onCreated, d
                 >
                   <Icon className="mt-0.5 h-4 w-4 shrink-0 text-[hsl(0_0%_70%)]" />
                   <div className="min-w-0">
-                    <div className="text-sm font-medium">{label}</div>
+                    <div className="text-sm font-medium text-foreground">{label}</div>
                     <div className={`text-[11px] leading-tight ${scope === value ? "text-[hsl(0_0%_75%)]" : "text-[hsl(0_0%_55%)]"}`}>{desc}</div>
                   </div>
                 </button>
@@ -537,7 +537,7 @@ export function CreateChannelDialog({ open, onClose, projectId, me, onCreated, d
                       onChange={() => toggleMember(m.id)}
                       data-testid={`checkbox-member-${m.id}`}
                     />
-                    <span className="font-medium">{m.name}</span>
+                    <span className="font-medium text-foreground">{m.name}</span>
                     {m.title && <span className="text-[11px] text-[hsl(0_0%_55%)]">{m.title}</span>}
                     <span className="ml-auto text-[10px] uppercase tracking-wider text-[hsl(0_0%_45%)]">{m.role}</span>
                   </label>
