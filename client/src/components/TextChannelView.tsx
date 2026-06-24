@@ -1394,7 +1394,7 @@ function ScheduledCallCard({ meta, createdAt, meId, myRole, onJoin }: { meta: Ap
                       href={(meta as any).teamsJoinUrl as string}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="px-3 py-1.5 rounded-md bg-vs-green/20 hover:bg-vs-green/35 border border-vs-green/50 text-[11px] font-semibold flex items-center gap-1.5 text-white"
+                      className="px-3 py-1.5 rounded-md bg-[#5b5fc7] hover:bg-[#4a4ea8] text-[11px] font-bold flex items-center gap-1.5 text-white shadow-sm"
                       data-testid={`button-card-teams-${meta.scheduledCallId}`}
                       title="Join via Microsoft Teams"
                     >
@@ -1405,7 +1405,7 @@ function ScheduledCallCard({ meta, createdAt, meId, myRole, onJoin }: { meta: Ap
                     <button
                       type="button"
                       onClick={() => onJoin?.()}
-                      className="px-3 py-1.5 rounded-md bg-[#5b5fc7]/20 hover:bg-[#5b5fc7]/35 border border-[#5b5fc7]/60 text-[11px] font-semibold flex items-center gap-1.5 text-white"
+                      className="px-3 py-1.5 rounded-md bg-vs-green hover:bg-vs-green/85 text-[11px] font-bold flex items-center gap-1.5 text-white shadow-sm"
                       data-testid={`button-card-join-${meta.scheduledCallId}`}
                     >
                       <Icon className="w-3 h-3" /> Bulldog
@@ -1418,7 +1418,7 @@ function ScheduledCallCard({ meta, createdAt, meId, myRole, onJoin }: { meta: Ap
                     <button
                       type="button"
                       onClick={() => onJoin?.()}
-                      className="px-3 py-1.5 rounded-md bg-vs-green/20 hover:bg-vs-green/35 border border-vs-green/50 text-[11px] font-semibold flex items-center gap-1.5 text-white"
+                      className="px-3 py-1.5 rounded-md bg-vs-green hover:bg-vs-green/85 text-[11px] font-bold flex items-center gap-1.5 text-white shadow-sm"
                       data-testid={`button-card-join-${meta.scheduledCallId}`}
                     >
                       <Icon className="w-3 h-3" /> Join
@@ -1429,7 +1429,7 @@ function ScheduledCallCard({ meta, createdAt, meId, myRole, onJoin }: { meta: Ap
                       href={(meta as any).teamsJoinUrl as string}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="px-3 py-1.5 rounded-md bg-[#5b5fc7]/20 hover:bg-[#5b5fc7]/35 border border-[#5b5fc7]/60 text-[11px] font-semibold flex items-center gap-1.5 text-white"
+                      className="px-3 py-1.5 rounded-md bg-[#5b5fc7] hover:bg-[#4a4ea8] text-[11px] font-bold flex items-center gap-1.5 text-white shadow-sm"
                       data-testid={`button-card-teams-${meta.scheduledCallId}`}
                       title="Join via Microsoft Teams"
                     >
