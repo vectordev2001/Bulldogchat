@@ -121,7 +121,7 @@ export function ScheduleCallDialog({
         kind,
         startAt: start.toISOString(),
         endAt: end.toISOString(),
-        channelId: channelId ?? undefined,
+        channelId: typeof channelId === "number" && channelId > 0 ? channelId : undefined,
         userIds: Array.from(selectedUserIds),
         phones: extraPhones,
         emails: extraEmails,
