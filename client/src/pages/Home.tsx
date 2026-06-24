@@ -521,7 +521,7 @@ export default function Home() {
         const showWorkObjects = !activeDmId && workObjectsOpen;
         if (!showWorkObjects && !membersOpen) return null;
         return (
-          <div className="hidden md:flex md:flex-col">
+          <div className="hidden md:flex md:flex-col h-full min-h-0">
             {showWorkObjects && (
               <WorkObjectPanel
                 channelId={viewChannel.id}

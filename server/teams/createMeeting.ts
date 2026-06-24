@@ -60,10 +60,32 @@ export async function createTeamsMeeting(
     console.log(`[teams] created online meeting id=${meetingId} for organizer=${organizerEmail}`);
     return { joinUrl, meetingId };
   } catch (err) {
-    console.warn(
-      "[teams] createTeamsMeeting failed:",
-      err instanceof Error ? err.message : err,
-    );
+    // The Microsoft Graph SDK wraps errors in shapes where `.message` is
+    // often empty; the diagnostic detail lives in `.statusCode`, `.code`,
+    // `.body`, or in a nested `.response`. Dump the most informative fields
+    // we can find so the failure is debuggable from Render logs.
+    const e: any = err;
+    const detail: Record<string, unknown> = {};
+    if (e?.message) detail.message = String(e.message);
+    if (e?.code) detail.code = String(e.code);
+    if (e?.statusCode != null) detail.statusCode = e.statusCode;
+    if (e?.status != null) detail.status = e.status;
+    if (e?.body) {
+      try {
+        detail.body = typeof e.body === "string" ? e.body.slice(0, 500) : JSON.stringify(e.body).slice(0, 500);
+      } catch { /* ignore */ }
+    }
+    if (e?.response?.data) {
+      try {
+        detail.response = JSON.stringify(e.response.data).slice(0, 500);
+      } catch { /* ignore */ }
+    }
+    if (e?.requestId) detail.requestId = String(e.requestId);
+    if (Object.keys(detail).length === 0) {
+      // Fall back to a stringified dump if none of the well-known fields hit.
+      try { detail.raw = String(err).slice(0, 500); } catch { /* ignore */ }
+    }
+    console.warn("[teams] createTeamsMeeting failed:", JSON.stringify(detail));
     return null;
   }
 }
