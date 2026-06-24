@@ -875,13 +875,28 @@ export function registerScheduledCallRoutes(app: Express) {
     if (endAt.getTime() <= startAt.getTime()) return res.status(400).json({ message: "endAt must be after startAt" });
     if (startAt.getTime() < Date.now() - 60_000) return res.status(400).json({ message: "startAt is in the past" });
 
-    const channelId = body.channelId ? Number(body.channelId) : null;
-    if (channelId) {
-      const ch = storage.getChannel(channelId);
-      if (!ch) return res.status(404).json({ message: "channel not found" });
-      // Permission: only members of the channel can schedule into it.
-      const isMember = storage.isChannelMember(channelId, u.id);
-      if (!isMember && me.role !== "admin") return res.status(403).json({ message: "not a member of that channel" });
+    // Channel is OPTIONAL. If a channelId is provided but the channel is gone
+    // (deleted, stale prop from the client, or never existed), silently fall
+    // back to "no channel" rather than 404-ing the whole creation. The
+    // meeting itself doesn't depend on a channel — the channel only governs
+    // where the in-channel RSVP card gets posted. The 403 (not a member)
+    // check is still strict because that's a real permission violation.
+    let channelId: number | null = null;
+    const rawChannelId = body.channelId;
+    if (rawChannelId !== undefined && rawChannelId !== null && rawChannelId !== "" && rawChannelId !== 0) {
+      const parsed = Number(rawChannelId);
+      if (Number.isFinite(parsed) && parsed > 0) {
+        const ch = storage.getChannel(parsed);
+        if (ch) {
+          const isMember = storage.isChannelMember(parsed, u.id);
+          if (!isMember && me.role !== "admin") {
+            return res.status(403).json({ message: "not a member of that channel" });
+          }
+          channelId = parsed;
+        } else {
+          console.warn(`[scheduled-calls] ignoring stale channelId=${parsed} (channel not found)`);
+        }
+      }
     }
 
     const kind = body.kind === "voice" ? "voice" : "video";
