@@ -610,7 +610,11 @@ async function dispatchReminders() {
     ).all(call.id) as any[];
 
     const secondsUntilStart = call.startAt.getTime() / 1000 - now;
-    const channelUrl = call.channelId ? `/channel/${call.channelId}` : "/";
+    // Hash-route so the Expo mobile shell + web both resolve the SPA route
+    // correctly. Web service worker uses location.href = url which works
+    // with a leading "/" and trailing "#/path"; SPA hash router needs the
+    // "#/" prefix to actually mount the channel view.
+    const channelUrl = call.channelId ? `/#/channel/${call.channelId}` : "/";
 
     for (const row of inviteesRaw) {
       const inv = rowToInvitee(row);
