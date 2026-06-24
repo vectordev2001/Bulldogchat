@@ -54,6 +54,7 @@ interface CreateInput {
   title: string;
   notes: string | null;
   kind: "voice" | "video";
+  provider?: "bulldog" | "both" | "teams";
   startAt: Date;
   endAt: Date;
   inviteeUserIds: number[];
@@ -77,6 +78,7 @@ function rowToScheduledCall(r: any): ScheduledCall {
     reminderSentAt: r.reminder_sent_at ? new Date(r.reminder_sent_at * 1000) : null,
     icsSequence: r.ics_sequence,
     teamsJoinUrl: r.teams_join_url ?? null,
+    provider: (r.provider as "bulldog" | "both" | "teams") ?? "both",
     teamsMeetingId: r.teams_meeting_id ?? null,
     createdAt: new Date(r.created_at * 1000),
     updatedAt: new Date(r.updated_at * 1000),
@@ -108,9 +110,9 @@ function createScheduledCallRow(input: CreateInput): ScheduledCall {
   const tx = rawDb.transaction(() => {
     const ins = rawDb.prepare(`
       INSERT INTO scheduled_calls
-        (org_id, channel_id, organizer_id, title, notes, kind, start_at, end_at,
+        (org_id, channel_id, organizer_id, title, notes, kind, provider, start_at, end_at,
          room_name, status, ics_sequence, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'scheduled', 0, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'scheduled', 0, ?, ?)
     `).run(
       input.orgId,
       input.channelId,
@@ -118,6 +120,7 @@ function createScheduledCallRow(input: CreateInput): ScheduledCall {
       input.title,
       input.notes,
       input.kind,
+      input.provider ?? "both",
       Math.floor(input.startAt.getTime() / 1000),
       Math.floor(input.endAt.getTime() / 1000),
       "_pending_", // placeholder
@@ -786,6 +789,7 @@ async function postScheduledCallCard(call: ScheduledCall, kind: ScheduledCallSys
     inviteeCount: invitees.length,
     joinUrl: placeholderUrl,
     teamsJoinUrl: call.teamsJoinUrl ?? null,
+    provider: (call.provider as "bulldog" | "both" | "teams") ?? "both",
     invitees: inviteeSnapshot,
   };
   const content =
@@ -910,6 +914,10 @@ export function registerScheduledCallRoutes(app: Express) {
     }
 
     const kind = body.kind === "voice" ? "voice" : "video";
+    const provider: "bulldog" | "both" | "teams" =
+      body.provider === "bulldog" || body.provider === "teams" || body.provider === "both"
+        ? body.provider
+        : "both";
     const userIds = Array.isArray(body.userIds)
       ? Array.from(new Set((body.userIds as unknown[]).map((x) => Number(x)).filter((n) => Number.isFinite(n) && n > 0)))
       : [];
@@ -931,6 +939,7 @@ export function registerScheduledCallRoutes(app: Express) {
       title,
       notes: body.notes ? String(body.notes).slice(0, 4000) : null,
       kind,
+      provider,
       startAt,
       endAt,
       inviteeUserIds: userIds,
@@ -957,20 +966,22 @@ export function registerScheduledCallRoutes(app: Express) {
     // continue with the Bulldog-only flow — scheduling must never fail because
     // Teams is unavailable. We do this before dispatch so the link is present
     // in the very first invite email.
-    try {
-      const teams = await createTeamsMeeting({
-        subject: call.title,
-        startUtc: call.startAt,
-        endUtc: call.endAt,
-        organizerEmail: process.env.MS_GRAPH_DEFAULT_ORGANIZER?.trim() || "admin@bulldogops.com",
-      });
-      if (teams) {
-        setTeamsMeeting(call.id, teams.joinUrl, teams.meetingId);
-        call.teamsJoinUrl = teams.joinUrl;
-        call.teamsMeetingId = teams.meetingId;
+    if (call.provider !== "bulldog") {
+      try {
+        const teams = await createTeamsMeeting({
+          subject: call.title,
+          startUtc: call.startAt,
+          endUtc: call.endAt,
+          organizerEmail: process.env.MS_GRAPH_DEFAULT_ORGANIZER?.trim() || "admin@bulldogops.com",
+        });
+        if (teams) {
+          setTeamsMeeting(call.id, teams.joinUrl, teams.meetingId);
+          call.teamsJoinUrl = teams.joinUrl;
+          call.teamsMeetingId = teams.meetingId;
+        }
+      } catch (e) {
+        console.warn("[scheduled-calls] teams meeting create error:", e);
       }
-    } catch (e) {
-      console.warn("[scheduled-calls] teams meeting create error:", e);
     }
 
     // Post an in-channel RSVP card if bound to a channel.

@@ -46,6 +46,7 @@ export function ScheduleCallDialog({
   const [title, setTitle] = useState(defaultTitle ?? "");
   const [notes, setNotes] = useState("");
   const [kind, setKind] = useState<"voice" | "video">("video");
+  const [provider, setProvider] = useState<"bulldog" | "both" | "teams">("both");
   const [startLocal, setStartLocal] = useState<string>("");
   const [durationMin, setDurationMin] = useState<number>(defaultDurationMin ?? 30);
   const [channelId, setChannelId] = useState<number | null>(defaultChannelId ?? null);
@@ -62,6 +63,7 @@ export function ScheduleCallDialog({
     setTitle(defaultTitle ?? "");
     setNotes("");
     setKind("video");
+    setProvider("both");
     // Default to "in 30 minutes" rounded to next 5min, in user's local TZ.
     const d = defaultStartAt ?? new Date(Date.now() + 30 * 60_000);
     const ms = 5 * 60_000;
@@ -119,6 +121,7 @@ export function ScheduleCallDialog({
         title: title.trim(),
         notes: notes.trim() || undefined,
         kind,
+        provider,
         startAt: start.toISOString(),
         endAt: end.toISOString(),
         channelId: typeof channelId === "number" && channelId > 0 ? channelId : undefined,
@@ -211,6 +214,57 @@ export function ScheduleCallDialog({
               />
             </label>
           </div>
+
+          {kind === "video" && (
+            <div className="mt-3">
+              <div className="text-[10px] uppercase tracking-wider text-white/50 mb-1.5 font-semibold">
+                Video provider
+              </div>
+              <div className="flex gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setProvider("bulldog")}
+                  className={`flex-1 px-3 py-2 rounded-md border text-[12px] font-semibold transition-colors ${
+                    provider === "bulldog"
+                      ? "bg-vs-blue/30 border-vs-blue text-white"
+                      : "bg-white/5 border-white/15 text-white/70 hover:bg-white/10"
+                  }`}
+                  data-testid="button-provider-bulldog"
+                >
+                  Bulldog only
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setProvider("both")}
+                  className={`flex-1 px-3 py-2 rounded-md border text-[12px] font-semibold transition-colors ${
+                    provider === "both"
+                      ? "bg-vs-blue/30 border-vs-blue text-white"
+                      : "bg-white/5 border-white/15 text-white/70 hover:bg-white/10"
+                  }`}
+                  data-testid="button-provider-both"
+                >
+                  Both
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setProvider("teams")}
+                  className={`flex-1 px-3 py-2 rounded-md border text-[12px] font-semibold transition-colors ${
+                    provider === "teams"
+                      ? "bg-[#5b5fc7]/30 border-[#5b5fc7] text-white"
+                      : "bg-white/5 border-white/15 text-white/70 hover:bg-white/10"
+                  }`}
+                  data-testid="button-provider-teams"
+                >
+                  Teams
+                </button>
+              </div>
+              <div className="text-[10px] text-white/40 mt-1">
+                {provider === "bulldog" && "Bulldog Meet only — no external links."}
+                {provider === "both" && "Bulldog Meet + parallel Microsoft Teams link."}
+                {provider === "teams" && "Primary: Microsoft Teams. Bulldog link still available as fallback."}
+              </div>
+            </div>
+          )}
 
           {/* Start time */}
           <label className="flex flex-col gap-1">

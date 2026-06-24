@@ -1140,4 +1140,18 @@ export function runMigrations() {
   } catch (e: any) {
     console.warn("[migrate v28] attachments dimensions skipped:", e?.message);
   }
+
+  // v29 (Multi-provider meetings, Tier 2) — add the provider column to
+  // scheduled_calls so an organizer can choose Bulldog only / Both / Teams.
+  // Default "both" matches the implicit behavior before Tier 2 (every meeting
+  // got a Teams link auto-attached). Idempotent: skip if the column exists.
+  try {
+    const scCols = rawDb.prepare(`PRAGMA table_info(scheduled_calls)`).all() as Array<{ name: string }>;
+    if (!scCols.find((c) => c.name === "provider")) {
+      rawDb.exec(`ALTER TABLE scheduled_calls ADD COLUMN provider TEXT NOT NULL DEFAULT 'both';`);
+      console.log("[migrate] v29 added scheduled_calls.provider column");
+    }
+  } catch (e: any) {
+    console.warn("[migrate v29] provider column skipped:", e?.message);
+  }
 }
