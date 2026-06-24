@@ -14,8 +14,14 @@ export interface CreateTeamsMeetingInput {
   startUtc: Date;
   endUtc: Date;
   /** Organizer mailbox the meeting is created under. Defaults to the
-   *  MS_GRAPH_DEFAULT_ORGANIZER env var, falling back to admin@bulldogops.com. */
+   *  MS_GRAPH_DEFAULT_ORGANIZER env var, falling back to admin@bulldogops.com.
+   *  Ignored when MS_GRAPH_DEFAULT_ORGANIZER_ID (a Graph object-id GUID) is set. */
   organizerEmail?: string;
+  /** Organizer Graph object-id (GUID). When set, used in the /users/{id}
+   *  path instead of the email. The GUID path bypasses UPN resolution, which
+   *  can flap on freshly-licensed mailboxes. Defaults to
+   *  MS_GRAPH_DEFAULT_ORGANIZER_ID env var. */
+  organizerId?: string;
 }
 
 export interface TeamsMeeting {
@@ -23,8 +29,24 @@ export interface TeamsMeeting {
   meetingId: string;
 }
 
-function defaultOrganizer(): string {
-  return process.env.MS_GRAPH_DEFAULT_ORGANIZER?.trim() || "admin@bulldogops.com";
+/**
+ * Resolves the organizer path segment for `/users/{id}/onlineMeetings`.
+ * Prefers a Graph object-id (GUID) when available — either passed explicitly
+ * on the input, or via MS_GRAPH_DEFAULT_ORGANIZER_ID. Falls back to the
+ * email (UPN) path, which is what the codebase has historically used.
+ *
+ * Returns the resolved value plus a label for logging.
+ */
+function resolveOrganizer(input: CreateTeamsMeetingInput): { value: string; kind: "id" | "email" } {
+  const idOverride = input.organizerId?.trim();
+  const idEnv = process.env.MS_GRAPH_DEFAULT_ORGANIZER_ID?.trim();
+  const id = idOverride || idEnv;
+  if (id) return { value: id, kind: "id" };
+
+  const emailOverride = input.organizerEmail?.trim();
+  const emailEnv = process.env.MS_GRAPH_DEFAULT_ORGANIZER?.trim();
+  const email = emailOverride || emailEnv || "admin@bulldogops.com";
+  return { value: email, kind: "email" };
 }
 
 /**
@@ -40,7 +62,7 @@ export async function createTeamsMeeting(
     return null;
   }
 
-  const organizerEmail = input.organizerEmail?.trim() || defaultOrganizer();
+  const organizer = resolveOrganizer(input);
   const body = {
     subject: input.subject,
     startDateTime: input.startUtc.toISOString(),
@@ -49,15 +71,19 @@ export async function createTeamsMeeting(
 
   try {
     const res = await client
-      .api(`/users/${encodeURIComponent(organizerEmail)}/onlineMeetings`)
+      .api(`/users/${encodeURIComponent(organizer.value)}/onlineMeetings`)
       .post(body);
     const joinUrl: string | undefined = res?.joinWebUrl ?? res?.joinUrl;
     const meetingId: string | undefined = res?.id;
     if (!joinUrl || !meetingId) {
-      console.warn("[teams] createTeamsMeeting: Graph response missing joinWebUrl/id");
+      console.warn(
+        `[teams] createTeamsMeeting: Graph response missing joinWebUrl/id (organizer.${organizer.kind}=${organizer.value})`,
+      );
       return null;
     }
-    console.log(`[teams] created online meeting id=${meetingId} for organizer=${organizerEmail}`);
+    console.log(
+      `[teams] created online meeting id=${meetingId} for organizer.${organizer.kind}=${organizer.value}`,
+    );
     return { joinUrl, meetingId };
   } catch (err) {
     // The Microsoft Graph SDK wraps errors in shapes where `.message` is
@@ -81,6 +107,9 @@ export async function createTeamsMeeting(
       } catch { /* ignore */ }
     }
     if (e?.requestId) detail.requestId = String(e.requestId);
+    // Always include the resolved organizer so the next 404/403 is one-glance
+    // debuggable — we can immediately tell which mailbox/GUID Graph rejected.
+    detail.organizer = { kind: organizer.kind, value: organizer.value };
     if (Object.keys(detail).length === 0) {
       // Fall back to a stringified dump if none of the well-known fields hit.
       try { detail.raw = String(err).slice(0, 500); } catch { /* ignore */ }

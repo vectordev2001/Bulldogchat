@@ -968,11 +968,13 @@ export function registerScheduledCallRoutes(app: Express) {
     // in the very first invite email.
     if (call.provider !== "bulldog") {
       try {
+        // Organizer resolution (GUID > email > admin@bulldogops.com default)
+        // lives entirely in createTeamsMeeting via MS_GRAPH_DEFAULT_ORGANIZER_ID
+        // and MS_GRAPH_DEFAULT_ORGANIZER env vars — no need to pass overrides.
         const teams = await createTeamsMeeting({
           subject: call.title,
           startUtc: call.startAt,
           endUtc: call.endAt,
-          organizerEmail: process.env.MS_GRAPH_DEFAULT_ORGANIZER?.trim() || "admin@bulldogops.com",
         });
         if (teams) {
           setTeamsMeeting(call.id, teams.joinUrl, teams.meetingId);
