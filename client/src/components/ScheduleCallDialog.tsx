@@ -706,21 +706,56 @@ function MeetingRow({
           )}
         </div>
         {(cancelled ? canDelete : !readOnly) && (
-          <div className="flex items-center gap-1 shrink-0">
-            {!cancelled && call.meetingCode && (
-              <a
-                href={`/m/${call.meetingCode}`}
-                className="px-3 py-1.5 rounded-md bg-vs-green/20 hover:bg-vs-green/35 border border-vs-green/50 text-[11px] font-semibold flex items-center gap-1.5 text-white"
-                data-testid={`button-meeting-join-${call.id}`}
-              >
-                <Video className="w-3 h-3" /> Join
-              </a>
-            )}
+          <div className="flex items-center gap-1.5 shrink-0">
+            {!cancelled && call.meetingCode && (() => {
+              const teamsPrimary = (call as any).provider === "teams" && (call as any).teamsJoinUrl;
+              const bulldogClass = teamsPrimary
+                ? "px-3 py-1.5 rounded-md bg-[#5b5fc7] hover:bg-[#4a4ea8] text-[11px] font-bold flex items-center gap-1.5 text-white shadow-sm"
+                : "px-3 py-1.5 rounded-md bg-vs-green hover:bg-vs-green/85 text-[11px] font-bold flex items-center gap-1.5 text-white shadow-sm";
+              const teamsClass = teamsPrimary
+                ? "px-3 py-1.5 rounded-md bg-vs-green hover:bg-vs-green/85 text-[11px] font-bold flex items-center gap-1.5 text-white shadow-sm"
+                : "px-3 py-1.5 rounded-md bg-[#5b5fc7] hover:bg-[#4a4ea8] text-[11px] font-bold flex items-center gap-1.5 text-white shadow-sm";
+              return (
+                <>
+                  {teamsPrimary && (call as any).teamsJoinUrl && (
+                    <a
+                      href={(call as any).teamsJoinUrl as string}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className={teamsClass}
+                      data-testid={`button-meeting-teams-${call.id}`}
+                      title="Join via Microsoft Teams"
+                    >
+                      <Video className="w-3 h-3" /> Teams
+                    </a>
+                  )}
+                  <a
+                    href={`/m/${call.meetingCode}`}
+                    className={bulldogClass}
+                    data-testid={`button-meeting-join-${call.id}`}
+                  >
+                    <Video className="w-3 h-3" /> {teamsPrimary ? "Bulldog" : "Join"}
+                  </a>
+                  {!teamsPrimary && (call as any).teamsJoinUrl && (
+                    <a
+                      href={(call as any).teamsJoinUrl as string}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className={teamsClass}
+                      data-testid={`button-meeting-teams-${call.id}`}
+                      title="Join via Microsoft Teams"
+                    >
+                      <Video className="w-3 h-3" /> Teams
+                    </a>
+                  )}
+                </>
+              );
+            })()}
             {!cancelled && iAmOrganizer && (
               <button
                 type="button"
                 onClick={onCancel}
-                className="px-2 py-1 rounded-md bg-vs-red/15 hover:bg-vs-red/25 border border-vs-red/40 text-[10px] font-semibold uppercase tracking-wider"
+                className="px-2.5 py-1 rounded-md bg-amber-600 hover:bg-amber-700 text-white text-[10px] font-bold uppercase tracking-wider shadow-sm"
                 data-testid={`button-meeting-cancel-${call.id}`}
               >
                 Cancel
@@ -729,7 +764,7 @@ function MeetingRow({
             {!cancelled && (
               <a
                 href={`/api/scheduled-calls/${call.id}/ics`}
-                className="px-2 py-1 rounded-md bg-[hsl(220_50%_18%)] hover:bg-[hsl(220_50%_22%)] border border-[hsl(220_40%_25%)] text-[10px] font-semibold uppercase tracking-wider"
+                className="px-2.5 py-1 rounded-md bg-[hsl(220_50%_30%)] hover:bg-[hsl(220_50%_36%)] text-white text-[10px] font-bold uppercase tracking-wider shadow-sm"
                 data-testid={`link-meeting-ics-${call.id}`}
               >
                 .ics
@@ -740,10 +775,10 @@ function MeetingRow({
                 type="button"
                 onClick={onDelete}
                 title="Permanently delete this meeting"
-                className="p-1 rounded-md bg-vs-red/15 hover:bg-vs-red/30 border border-vs-red/40 text-vs-red"
+                className="px-2 py-1 rounded-md bg-vs-red hover:bg-vs-red/85 text-white text-[10px] font-bold uppercase tracking-wider flex items-center gap-1 shadow-sm"
                 data-testid={`button-meeting-delete-${call.id}`}
               >
-                <Trash2 className="w-3 h-3" />
+                <Trash2 className="w-3 h-3" /> Delete
               </button>
             )}
           </div>
