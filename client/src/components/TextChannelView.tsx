@@ -1387,27 +1387,56 @@ function ScheduledCallCard({ meta, createdAt, meId, myRole, onJoin }: { meta: Ap
             <CalendarIcon className="w-3 h-3 text-[hsl(var(--vs-text-subtle))]" />
             <span className="text-[11px] text-[hsl(var(--vs-text-muted))]">{whenLabel}</span>
             <div className="ml-auto flex items-center gap-1.5">
-              {onJoin && !cancelled && (
-                <button
-                  type="button"
-                  onClick={() => onJoin?.()}
-                  className="px-3 py-1.5 rounded-md bg-vs-green/20 hover:bg-vs-green/35 border border-vs-green/50 text-[11px] font-semibold flex items-center gap-1.5 text-white"
-                  data-testid={`button-card-join-${meta.scheduledCallId}`}
-                >
-                  <Icon className="w-3 h-3" /> Join
-                </button>
-              )}
-              {!cancelled && (meta as any).teamsJoinUrl && (
-                <a
-                  href={(meta as any).teamsJoinUrl as string}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="px-3 py-1.5 rounded-md bg-[#5b5fc7]/20 hover:bg-[#5b5fc7]/35 border border-[#5b5fc7]/60 text-[11px] font-semibold flex items-center gap-1.5 text-white"
-                  data-testid={`button-card-teams-${meta.scheduledCallId}`}
-                  title="Join via Microsoft Teams"
-                >
-                  <Video className="w-3 h-3" /> Teams
-                </a>
+              {((meta as any).provider === "teams") ? (
+                <>
+                  {!cancelled && (meta as any).teamsJoinUrl && (
+                    <a
+                      href={(meta as any).teamsJoinUrl as string}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="px-3 py-1.5 rounded-md bg-vs-green/20 hover:bg-vs-green/35 border border-vs-green/50 text-[11px] font-semibold flex items-center gap-1.5 text-white"
+                      data-testid={`button-card-teams-${meta.scheduledCallId}`}
+                      title="Join via Microsoft Teams"
+                    >
+                      <Video className="w-3 h-3" /> Teams
+                    </a>
+                  )}
+                  {onJoin && !cancelled && (
+                    <button
+                      type="button"
+                      onClick={() => onJoin?.()}
+                      className="px-3 py-1.5 rounded-md bg-[#5b5fc7]/20 hover:bg-[#5b5fc7]/35 border border-[#5b5fc7]/60 text-[11px] font-semibold flex items-center gap-1.5 text-white"
+                      data-testid={`button-card-join-${meta.scheduledCallId}`}
+                    >
+                      <Icon className="w-3 h-3" /> Bulldog
+                    </button>
+                  )}
+                </>
+              ) : (
+                <>
+                  {onJoin && !cancelled && (
+                    <button
+                      type="button"
+                      onClick={() => onJoin?.()}
+                      className="px-3 py-1.5 rounded-md bg-vs-green/20 hover:bg-vs-green/35 border border-vs-green/50 text-[11px] font-semibold flex items-center gap-1.5 text-white"
+                      data-testid={`button-card-join-${meta.scheduledCallId}`}
+                    >
+                      <Icon className="w-3 h-3" /> Join
+                    </button>
+                  )}
+                  {!cancelled && (meta as any).teamsJoinUrl && (
+                    <a
+                      href={(meta as any).teamsJoinUrl as string}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="px-3 py-1.5 rounded-md bg-[#5b5fc7]/20 hover:bg-[#5b5fc7]/35 border border-[#5b5fc7]/60 text-[11px] font-semibold flex items-center gap-1.5 text-white"
+                      data-testid={`button-card-teams-${meta.scheduledCallId}`}
+                      title="Join via Microsoft Teams"
+                    >
+                      <Video className="w-3 h-3" /> Teams
+                    </a>
+                  )}
+                </>
               )}
               {canDelete && !cancelled && (
                 <ActionPill

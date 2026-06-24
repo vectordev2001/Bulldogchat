@@ -253,6 +253,7 @@ export interface ScheduledCallSystemMessageMeta {
   inviteeCount: number;
   joinUrl: string;          // absolute, already token-bearing for /call-join
   teamsJoinUrl?: string | null;
+  provider?: "bulldog" | "both" | "teams";
   // Snapshot invitee roster at card-post time; live data is refetched by FE.
   invitees?: Array<{
     id: number;
@@ -495,6 +496,11 @@ export const scheduledCalls = sqliteTable("scheduled_calls", {
   // nullable: dev/standalone environments without M365 credentials simply
   // run the Bulldog-only flow and leave these unset.
   teamsJoinUrl: text("teams_join_url"),
+  // Which video provider(s) to attach. "bulldog" = Bulldog Meet only,
+  // "both" = Bulldog + parallel Teams meeting, "teams" = Teams only (the
+  // Bulldog link still exists as a fallback but is de-emphasized in UI).
+  // Default "both" so existing rows behave like the current implicit policy.
+  provider: text("provider").default("both").notNull(),
   teamsMeetingId: text("teams_meeting_id"),
   // Unified meetings model — nullable FK to the canonical meeting row.
   meetingId: text("meeting_id").references(() => meetings.id),
@@ -502,6 +508,7 @@ export const scheduledCalls = sqliteTable("scheduled_calls", {
   updatedAt: integer("updated_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
 });
 export type ScheduledCall = typeof scheduledCalls.$inferSelect;
+export type MeetingProvider = "bulldog" | "both" | "teams";
 
 export const rsvpResponses = ["pending", "yes", "no", "maybe"] as const;
 export type RsvpResponse = typeof rsvpResponses[number];
@@ -539,6 +546,7 @@ export const insertScheduledCallSchema = createInsertSchema(scheduledCalls).omit
   status: true,
   roomName: true,
   teamsJoinUrl: true,
+  provider: true,
   teamsMeetingId: true,
 });
 
