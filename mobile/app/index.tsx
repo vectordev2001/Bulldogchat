@@ -202,19 +202,48 @@ export default function MobileShell() {
           | { url?: string; channelId?: number; messageId?: number }
           | undefined;
         if (!data || !webRef.current) return;
-        const target =
-          typeof data.url === "string"
-            ? data.url
-            : data.channelId
-            ? `/#/channel/${data.channelId}${
-                data.messageId ? `?msg=${data.messageId}` : ""
-              }`
-            : null;
+        // Compute target. The chat SPA uses wouter's useHashLocation so all
+        // in-app routes live under the URL fragment (e.g. /#/channel/111).
+        // The server historically sent path-style URLs ("/channel/111"),
+        // which navigates the shell to a real path and renders blank because
+        // the hash router sees an empty hash. Normalize any "/foo" or "foo"
+        // target into "/#/foo" so the SPA actually routes.
+        let target: string | null = null;
+        if (typeof data.url === "string" && data.url.length > 0) {
+          target = data.url;
+        } else if (data.channelId) {
+          target = `/channel/${data.channelId}${
+            data.messageId ? `?msg=${data.messageId}` : ""
+          }`;
+        }
         if (!target) return;
+        // Absolute URLs (http(s)://) pass through unchanged. Anything else
+        // gets coerced into a hash route on the current origin.
+        const isAbsolute = /^https?:\/\//i.test(target);
+        const hashTarget = isAbsolute
+          ? target
+          : target.startsWith("#/")
+          ? `/${target}`
+          : target.startsWith("/#/")
+          ? target
+          : target.startsWith("/")
+          ? `/#${target}`
+          : `/#/${target}`;
         webRef.current.injectJavaScript(`
           try {
-            if (window.location.hash !== ${JSON.stringify(target)}) {
-              window.location.href = ${JSON.stringify(target)};
+            var t = ${JSON.stringify(hashTarget)};
+            if (${JSON.stringify(isAbsolute)}) {
+              window.location.href = t;
+            } else {
+              // Same-origin hash navigation — set hash directly when on the
+              // right origin so the SPA picks it up without a full reload.
+              var here = window.location;
+              var nextHash = t.replace(/^.*?#/, '#');
+              if (here.pathname === '/' && here.hash !== nextHash) {
+                here.hash = nextHash;
+              } else if (here.hash !== nextHash) {
+                here.href = t;
+              }
             }
             window.dispatchEvent(new CustomEvent('vc:notification-tap', {
               detail: ${JSON.stringify(data)}
