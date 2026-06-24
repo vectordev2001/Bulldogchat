@@ -368,16 +368,21 @@ function renderRsvpConfirmationPage(p: {
   response: RsvpResponse;
   icsUrl: string;
   meetingsUrl: string;
+  teamsJoinUrl?: string | null;
 }): string {
   const headline =
     p.response === "yes" ? "✓ You're marked as attending" :
     p.response === "no" ? "✓ You're marked as declined" :
     "✓ You're marked as maybe";
+  const teamsBtn = p.teamsJoinUrl
+    ? `<a class="btn teams" href="${escHtml(p.teamsJoinUrl)}" style="background:#5b5fc7;color:#fff;border-color:#5b5fc7">Join via Teams</a>`
+    : "";
   return rsvpPageShell(`
     <h1>${escHtml(headline)}</h1>
     <div class="meeting">${escHtml(p.title)}</div>
     <div class="when">${escHtml(p.whenLabel)}</div>
     <div class="actions">
+      ${teamsBtn}
       <a class="btn" href="${escHtml(p.icsUrl)}">Add to calendar</a>
       <a class="btn primary" href="${escHtml(p.meetingsUrl)}">View in Bulldog</a>
     </div>`);
@@ -780,6 +785,7 @@ async function postScheduledCallCard(call: ScheduledCall, kind: ScheduledCallSys
     organizerId: call.organizerId,
     inviteeCount: invitees.length,
     joinUrl: placeholderUrl,
+    teamsJoinUrl: call.teamsJoinUrl ?? null,
     invitees: inviteeSnapshot,
   };
   const content =
@@ -1254,6 +1260,7 @@ export function registerScheduledCallRoutes(app: Express) {
       response: response as RsvpResponse,
       icsUrl,
       meetingsUrl,
+      teamsJoinUrl: call.teamsJoinUrl ?? null,
     }));
   });
 

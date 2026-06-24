@@ -252,6 +252,7 @@ export interface ScheduledCallSystemMessageMeta {
   organizerId: number;
   inviteeCount: number;
   joinUrl: string;          // absolute, already token-bearing for /call-join
+  teamsJoinUrl?: string | null;
   // Snapshot invitee roster at card-post time; live data is refetched by FE.
   invitees?: Array<{
     id: number;
