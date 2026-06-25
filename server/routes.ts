@@ -837,7 +837,57 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
 
   // List members of a private channel (admin/creator visibility, but here
   // we allow any project member who can see the channel to read the roster).
+  // Effective audience of the channel — i.e. everyone the chat would actually
+  // reach if someone posted in it. This expands scope semantics:
+  //
+  //   global    -> every member of the parent project (the company workspace)
+  //   entity    -> every project member whose user.title matches channel.entityId
+  //   team      -> every project member whose user.role matches channel.teamRole
+  //   private   -> only the explicit rows in channel_members
+  //   dm        -> only the explicit rows in channel_members
+  //
+  // Any explicit channel_members rows are *additive grants* on top of the
+  // scope-derived set (e.g. a non-team-role user can be granted access to a
+  // team-scoped channel by being added explicitly), so we union them in for
+  // every scope. Returns sanitized ApiUser[]. Used by ChannelCallDialog,
+  // ScheduleCallDialog, and the channel members popover so they all agree
+  // on "who is actually in this channel".
   app.get("/api/channels/:id/members", requireAuth, (req, res) => {
+    const u = (req as AuthedRequest).user;
+    const channelId = Number(req.params.id);
+    const access = userCanAccessChannel(u.id, u.orgId, channelId);
+    if (!access || !access.channel || !access.project) {
+      return res.status(404).json({ message: "Not found" });
+    }
+    const channel = access.channel;
+    const explicitIds = new Set(storage.listChannelMemberIds(channelId));
+    const projectMembers = storage.listUsersByOrg(u.orgId).filter(
+      (m) => storage.isProjectMember(access.project!.id, m.id) && m.status !== "deactivated",
+    );
+    const scope = (channel.scope ?? "global") as "global" | "entity" | "team" | "private" | "dm";
+    const audienceIds = new Set<number>(explicitIds);
+    if (scope === "global") {
+      for (const m of projectMembers) audienceIds.add(m.id);
+    } else if (scope === "entity" && channel.entityId) {
+      const want = channel.entityId.toLowerCase();
+      for (const m of projectMembers) {
+        if ((m.title ?? "").toLowerCase() === want) audienceIds.add(m.id);
+      }
+    } else if (scope === "team" && channel.teamRole) {
+      for (const m of projectMembers) {
+        if (m.role === channel.teamRole) audienceIds.add(m.id);
+      }
+    }
+    // private + dm: explicit-only (already in audienceIds via the seed above).
+    res.json(storage.listUsersByIds([...audienceIds]).map(sanitize));
+  });
+
+  // Explicit-grants-only members (the rows actually in the channel_members
+  // table). Used by the admin "Manage channel members" view where we need to
+  // show what's been explicitly added, separate from the scope-derived
+  // audience. ChannelCallDialog / ScheduleCallDialog use the audience
+  // endpoint above instead.
+  app.get("/api/channels/:id/explicit-members", requireAuth, (req, res) => {
     const u = (req as AuthedRequest).user;
     const channelId = Number(req.params.id);
     const access = userCanAccessChannel(u.id, u.orgId, channelId);
