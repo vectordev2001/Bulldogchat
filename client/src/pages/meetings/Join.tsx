@@ -321,12 +321,45 @@ export default function Join() {
     audioTrackRef.current = null;
   }
 
+  /**
+   * Hand off the prejoin mic/cam tracks to the Room route via the meeting
+   * context. Unlike stopPreview(), this keeps the underlying
+   * MediaStreamTracks alive and transfers ownership — the Room route
+   * publishes them directly to LiveKit, avoiding a second getUserMedia
+   * call that would happen OUTSIDE the click-gesture window on iOS.
+   *
+   * Honours the user's prejoin mute/unmute state by applying it to the
+   * LiveKit track wrappers before handoff (they're already at the right
+   * state from toggleMic/toggleCam, but call here defensively).
+   */
+  function handoffPreview() {
+    stopMeter();
+    // Detach the local <video> preview but DO NOT stop tracks — Room owns them now.
+    const vt = videoTrackRef.current;
+    const at = audioTrackRef.current;
+    if (vt && videoRef.current) vt.detach(videoRef.current);
+    // Mirror user's prejoin toggle state onto the tracks so Room sees the
+    // right mute/unmute. mute() doesn't stop the track — it only sets the
+    // RTP send to silent/black.
+    if (vt) { if (camOn) vt.unmute(); else vt.mute(); }
+    if (at) { if (micOn) at.unmute(); else at.mute(); }
+    m.prejoinTracksRef.current = { audio: at, video: vt };
+    // Clear local refs so the unmount cleanup in the effect above doesn't
+    // re-stop the tracks Room now owns.
+    videoTrackRef.current = null;
+    audioTrackRef.current = null;
+  }
+
   // Finalize a join from a token payload: stash result + navigate into the room.
   const finalizeJoin = (
     p: { token: string; ws_url: string; roomName: string; identity: string },
     name: string,
   ) => {
-    stopPreview();
+    // Reflect the prejoin toggle state in the meeting store so the Room
+    // route knows whether to publish in muted state.
+    m.setMicEnabled(micOn);
+    m.setCamEnabled(camOn);
+    handoffPreview();
     m.setJoinResult({
       token: p.token,
       wsUrl: p.ws_url,

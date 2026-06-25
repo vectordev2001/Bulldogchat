@@ -1,6 +1,24 @@
-import { createContext, useContext, useState, type ReactNode } from "react";
+import { createContext, useContext, useRef, useState, type ReactNode, type MutableRefObject } from "react";
+import type { LocalAudioTrack, LocalVideoTrack } from "livekit-client";
 
 export type Origin = "teams" | "zoom" | "meet" | "bulldog" | "direct";
+
+/**
+ * Tracks acquired during the prejoin lobby. Stashed here so the Room route
+ * can publish them DIRECTLY instead of asking LiveKit to call getUserMedia
+ * again — the second call happens inside a microtask-deferred useEffect,
+ * outside the click-gesture window, which on iOS WebKit returns a frozen
+ * camera and silent mic until the user manually toggles.
+ *
+ * The Room route takes ownership: it publishes the tracks and is responsible
+ * for stopping them on disconnect. We use refs (not state) so reading them
+ * doesn't trigger re-renders and so setting them never schedules another
+ * render cycle that would push us past the gesture boundary.
+ */
+export interface PrejoinTracks {
+  audio: LocalAudioTrack | null;
+  video: LocalVideoTrack | null;
+}
 
 export interface JoinResult {
   token: string;
@@ -26,6 +44,13 @@ export interface MeetingState {
   setMicEnabled: (v: boolean) => void;
   camEnabled: boolean;
   setCamEnabled: (v: boolean) => void;
+
+  /**
+   * Tracks captured in the prejoin lobby. Read once by the Room route on
+   * mount, then cleared. Survives the Join → Room navigation without
+   * losing the gesture context that iOS WebKit needs.
+   */
+  prejoinTracksRef: MutableRefObject<PrejoinTracks>;
 
   token: string | null;
   wsUrl: string | null;
@@ -64,6 +89,8 @@ export function MeetingProvider({ children }: { children: ReactNode }) {
   const [participantCount, setParticipantCount] = useState(0);
   const [lastDuration, setLastDuration] = useState(0);
 
+  const prejoinTracksRef = useRef<PrejoinTracks>({ audio: null, video: null });
+
   const setJoinResult = (r: JoinResult) => {
     setToken(r.token);
     setWsUrl(r.wsUrl);
@@ -96,6 +123,7 @@ export function MeetingProvider({ children }: { children: ReactNode }) {
         connectedAt, setConnectedAt,
         participantCount, setParticipantCount,
         lastDuration, setLastDuration,
+        prejoinTracksRef,
       }}
     >
       {children}
