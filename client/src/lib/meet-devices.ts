@@ -95,6 +95,14 @@ export function blurSupported(): boolean {
     (navigator.platform === "MacIntel" && (navigator.maxTouchPoints ?? 0) > 1);
   if (isIOS) return false;
 
+  // Microsoft Edge: canvas.captureStream() does not reliably emit periodic
+  // keyframes from the composited VBG canvas, so remote subscribers (e.g. a
+  // Mac peer) freeze on the first frame after the local user changes their
+  // background. Disable VBG on Edge until we ship a keyframe-forcing fix.
+  // Detect via the "Edg/" UA token (Chromium-based Edge); legacy EdgeHTML
+  // ("Edge/") is no longer supported by livekit-client either.
+  if (/Edg\//.test(ua)) return false;
+
   try {
     const canvas = document.createElement("canvas");
     const hasCapture =
@@ -104,4 +112,10 @@ export function blurSupported(): boolean {
   } catch {
     return false;
   }
+}
+
+/** True when running in Microsoft Edge (Chromium). */
+export function isEdge(): boolean {
+  if (typeof navigator === "undefined") return false;
+  return /Edg\//.test(navigator.userAgent || "");
 }
