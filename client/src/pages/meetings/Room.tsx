@@ -15,7 +15,15 @@ import {
   isTrackReference,
   type TrackReferenceOrPlaceholder,
 } from "@livekit/components-react";
-import { Track, ConnectionQuality, LocalVideoTrack, type Participant, type Room as LkRoom } from "livekit-client";
+import {
+  Track,
+  ConnectionQuality,
+  LocalVideoTrack,
+  VideoPresets,
+  type Participant,
+  type Room as LkRoom,
+  type RoomOptions,
+} from "livekit-client";
 import "@livekit/components-styles";
 import {
   Mic, MicOff, Video, VideoOff, MonitorUp, Hand, MessageSquare, Users, Sparkles,
@@ -34,6 +42,8 @@ import {
   type BgSelection,
 } from "@/components/call/VirtualBackgroundPicker";
 import { MeetSettingsModal } from "@/components/call/MeetSettingsModal";
+import { DeviceMenu } from "@/components/call/DeviceMenu";
+import { SharingFloatingBar } from "@/components/call/SharingFloatingBar";
 import { blurSupported, loadDevicePrefs, saveDevicePrefs, type DevicePrefs } from "@/lib/meet-devices";
 
 const REACTIONS = ["👍", "❤️", "😂", "🎉", "👏"];
@@ -50,6 +60,34 @@ interface LobbyKnock {
   displayName: string;
   createdAt: number;
 }
+
+// Room-level LiveKit options shared by every participant.
+//
+// - `adaptiveStream`: subscriber-side; pause/resize tracks based on what's
+//   actually visible. Lowers bandwidth and prevents a 1×1 tile from
+//   subscribing to full-resolution remote video.
+// - `dynacast`: publisher-side; if no subscriber is asking for a simulcast
+//   layer, the SFU tells the publisher to stop sending it. Critical for
+//   mixed-power calls (Mac + Dell + phone) so the weaker peers don't get
+//   blasted with HD encodes they can't render.
+// - `publishDefaults.simulcast`: enable per-layer encodes so receivers can
+//   pick L/M/H independently. `videoCodec: 'vp9'` is supported on Chrome,
+//   Edge, Firefox, and Safari 16+; livekit-client transparently falls back
+//   to VP8 when the negotiated codec list excludes it (e.g. older Safari).
+// - `videoCaptureDefaults.resolution`: cap publisher capture at 720p so a
+//   Dell webcam in a 4K mode doesn't push a 30Mbps HD layer that strangles
+//   the SFU; users can opt into HD later via the devices modal.
+const MEETING_ROOM_OPTIONS: RoomOptions = {
+  adaptiveStream: true,
+  dynacast: true,
+  publishDefaults: {
+    simulcast: true,
+    videoCodec: "vp9",
+  },
+  videoCaptureDefaults: {
+    resolution: VideoPresets.h720.resolution,
+  },
+};
 
 export default function Room() {
   const [, params] = useRoute("/r/:code");
@@ -89,6 +127,7 @@ export default function Room() {
       connect={true}
       video={false}
       audio={false}
+      options={MEETING_ROOM_OPTIONS}
       onConnected={() => m.setConnectedAt(Date.now())}
       onDisconnected={() => navigate(`/end/${code}`)}
       onError={(err) => console.error("LiveKit error:", err)}
@@ -608,12 +647,34 @@ function BulldogMeetingUI({ code }: { code: string }) {
       {/* BOTTOM CONTROL BAR */}
       <div className="shrink-0 px-3 pb-4 pt-2 sm:px-4">
         <div className="mx-auto flex max-w-3xl flex-wrap items-center justify-center gap-1.5 rounded-2xl bg-[hsl(220_16%_12%)] px-3 py-2.5 shadow-lg ring-1 ring-white/10">
-          <BarBtn testid="bar-mic" active={micOn} danger={!micOn} onClick={toggleMic} label={micOn ? "Mute" : "Unmute"}>
-            {micOn ? <Mic size={18} /> : <MicOff size={18} />}
-          </BarBtn>
-          <BarBtn testid="bar-cam" active={camOn} danger={!camOn} onClick={toggleCam} label={camOn ? "Stop video" : "Start video"}>
-            {camOn ? <Video size={18} /> : <VideoOff size={18} />}
-          </BarBtn>
+          {/* Mic + caret split-button (Teams-style). The caret opens a compact
+              popover to switch between available microphones without leaving
+              the call. The gear button on the right still shows the full
+              Devices modal with camera+speaker as well. */}
+          <div className="relative flex items-center">
+            <BarBtn testid="bar-mic" active={micOn} danger={!micOn} onClick={toggleMic} label={micOn ? "Mute" : "Unmute"}>
+              {micOn ? <Mic size={18} /> : <MicOff size={18} />}
+            </BarBtn>
+            <div className="absolute -right-1.5 -top-1.5">
+              <DeviceMenu
+                kind="audioInput"
+                prefs={devicePrefs}
+                onPick={(deviceId) => onDeviceChange("audioInput", deviceId)}
+              />
+            </div>
+          </div>
+          <div className="relative flex items-center">
+            <BarBtn testid="bar-cam" active={camOn} danger={!camOn} onClick={toggleCam} label={camOn ? "Stop video" : "Start video"}>
+              {camOn ? <Video size={18} /> : <VideoOff size={18} />}
+            </BarBtn>
+            <div className="absolute -right-1.5 -top-1.5">
+              <DeviceMenu
+                kind="videoInput"
+                prefs={devicePrefs}
+                onPick={(deviceId) => onDeviceChange("videoInput", deviceId)}
+              />
+            </div>
+          </div>
           <BarBtn
             testid="bar-share"
             active={sharing}
@@ -649,7 +710,10 @@ function BulldogMeetingUI({ code }: { code: string }) {
             </AnimatePresence>
           </div>
 
-          <BarBtn testid="bar-settings" active={settingsOpen} onClick={() => setSettingsOpen(true)} label="Settings">
+          {/* Full Devices modal: mic + camera + speaker in one place. Now
+              labeled 'Devices' so users find it without thinking it's the
+              browser/account settings. */}
+          <BarBtn testid="bar-settings" active={settingsOpen} onClick={() => setSettingsOpen(true)} label="Devices">
             <Settings size={18} />
           </BarBtn>
 
@@ -743,6 +807,19 @@ function BulldogMeetingUI({ code }: { code: string }) {
           prefs={devicePrefs}
           onChange={onDeviceChange}
           onClose={() => setSettingsOpen(false)}
+        />
+      )}
+
+      {/* While the user is screen-sharing, the picker / shared app usually
+          covers the Bulldog tab. Render a draggable always-visible floating
+          bar with the essential controls so they don't have to alt-tab back. */}
+      {sharing && (
+        <SharingFloatingBar
+          micOn={micOn}
+          camOn={camOn}
+          onToggleMic={toggleMic}
+          onToggleCam={toggleCam}
+          onStopShare={toggleShare}
         />
       )}
     </div>

@@ -51,6 +51,11 @@ export function ScheduleCallDialog({
   const [durationMin, setDurationMin] = useState<number>(defaultDurationMin ?? 30);
   const [channelId, setChannelId] = useState<number | null>(defaultChannelId ?? null);
   const [selectedUserIds, setSelectedUserIds] = useState<Set<number>>(new Set());
+  // Track which channel we already pre-populated invitees from so that toggling
+  // the channel picker on/off doesn't keep re-adding the same members the user
+  // already manually removed. We treat the *first* time we see a channelId as
+  // the auto-fill moment; after that the user owns the list.
+  const [autofilledFromChannelId, setAutofilledFromChannelId] = useState<number | null>(null);
   const [extraPhones, setExtraPhones] = useState<string[]>([]);
   const [extraEmails, setExtraEmails] = useState<string[]>([]);
   const [phoneDraft, setPhoneDraft] = useState("");
@@ -72,6 +77,7 @@ export function ScheduleCallDialog({
     setDurationMin(defaultDurationMin ?? 30);
     setChannelId(defaultChannelId ?? null);
     setSelectedUserIds(new Set());
+    setAutofilledFromChannelId(null);
     setExtraPhones([]);
     setExtraEmails([]);
     setPhoneDraft("");
@@ -87,6 +93,38 @@ export function ScheduleCallDialog({
       .filter((m) => !term || m.name.toLowerCase().includes(term))
       .sort((a, b) => a.name.localeCompare(b.name));
   }, [orgMembers, q, me.id]);
+
+  // When the user picks (or arrives with) a channel, pre-select the channel's
+  // members as invitees. The user can deselect anyone; we only auto-add the
+  // *first* time we see a given channelId in this dialog session so flipping
+  // the channel picker doesn't fight the user's manual edits.
+  //
+  // Server already filters out the current user from invitees logic, but we
+  // also drop `me.id` here because the picker UI hides yourself anyway.
+  const membersQuery = useQuery<ApiUser[]>({
+    queryKey: ["/api/channels", channelId, "members"],
+    queryFn: () => apiRequest("GET", `/api/channels/${channelId}/members`),
+    enabled: open && typeof channelId === "number" && channelId > 0,
+    staleTime: 30_000,
+  });
+
+  useEffect(() => {
+    if (!open) return;
+    if (typeof channelId !== "number" || channelId <= 0) return;
+    if (autofilledFromChannelId === channelId) return;
+    const members = membersQuery.data;
+    if (!Array.isArray(members) || members.length === 0) return;
+    setSelectedUserIds((prev) => {
+      const next = new Set(prev);
+      for (const member of members) {
+        if (member && member.id && member.id !== me.id && !member.deactivated) {
+          next.add(member.id);
+        }
+      }
+      return next;
+    });
+    setAutofilledFromChannelId(channelId);
+  }, [open, channelId, membersQuery.data, autofilledFromChannelId, me.id]);
 
   const toggleUser = (id: number) => {
     setSelectedUserIds((prev) => {

@@ -27,6 +27,7 @@ import {
   type BgSelection,
 } from "@/components/call/VirtualBackgroundPicker";
 import { MeetSettingsModal } from "@/components/call/MeetSettingsModal";
+import { DeviceMenu } from "@/components/call/DeviceMenu";
 import { blurSupported, loadDevicePrefs, saveDevicePrefs, type DevicePrefs } from "@/lib/meet-devices";
 
 interface MeetingMeta {
@@ -594,22 +595,40 @@ export default function Join() {
 
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-2">
-              <ControlBtn
-                testid="button-toggle-mic"
-                tone={micOn ? "neutral" : "danger"}
-                onClick={toggleMic}
-                label={micOn ? "Mute" : "Unmute"}
-              >
-                {micOn ? <Mic size={18} /> : <MicOff size={18} />}
-              </ControlBtn>
-              <ControlBtn
-                testid="button-toggle-cam"
-                tone={camOn ? "neutral" : "danger"}
-                onClick={toggleCam}
-                label={camOn ? "Stop video" : "Start video"}
-              >
-                {camOn ? <Video size={18} /> : <VideoOff size={18} />}
-              </ControlBtn>
+              <div className="relative flex items-center">
+                <ControlBtn
+                  testid="button-toggle-mic"
+                  tone={micOn ? "neutral" : "danger"}
+                  onClick={toggleMic}
+                  label={micOn ? "Mute" : "Unmute"}
+                >
+                  {micOn ? <Mic size={18} /> : <MicOff size={18} />}
+                </ControlBtn>
+                <div className="absolute -right-1.5 -top-1.5">
+                  <DeviceMenu
+                    kind="audioInput"
+                    prefs={devicePrefs}
+                    onPick={(d) => onDeviceChange("audioInput", d)}
+                  />
+                </div>
+              </div>
+              <div className="relative flex items-center">
+                <ControlBtn
+                  testid="button-toggle-cam"
+                  tone={camOn ? "neutral" : "danger"}
+                  onClick={toggleCam}
+                  label={camOn ? "Stop video" : "Start video"}
+                >
+                  {camOn ? <Video size={18} /> : <VideoOff size={18} />}
+                </ControlBtn>
+                <div className="absolute -right-1.5 -top-1.5">
+                  <DeviceMenu
+                    kind="videoInput"
+                    prefs={devicePrefs}
+                    onPick={(d) => onDeviceChange("videoInput", d)}
+                  />
+                </div>
+              </div>
               <div className="relative">
                 <ControlBtn
                   testid="button-toggle-blur"
@@ -637,7 +656,7 @@ export default function Join() {
                 testid="button-settings"
                 tone="neutral"
                 onClick={() => setSettingsOpen(true)}
-                label="Settings"
+                label="Devices"
               >
                 <Settings size={18} />
               </ControlBtn>
