@@ -207,9 +207,17 @@
        and home indicator (bottom) never overlap UI. Border-box means
        these padding values SHRINK the content area instead of adding
        to body's overall height, so #root + everything inside it remain
-       within the visible viewport on iPhone PWA. */
-    padding-top: env(safe-area-inset-top);
-    padding-bottom: env(safe-area-inset-bottom);
+       within the visible viewport on iPhone PWA.
+
+       On iOS 18 the floating-pill tab bar participates in our native
+       `additionalSafeAreaInsets`, but CSS env(safe-area-inset-bottom)
+       only returns the OS home-indicator inset. The native
+       WebTabViewController bridges the resolved native inset into
+       `--bulldog-safe-bottom`, so we take the MAX of the two. On web
+       (or pre-iOS 18 native) `--bulldog-safe-bottom` is unset and the
+       fallback of 0px keeps behaviour identical. */
+    padding-top: max(env(safe-area-inset-top), var(--bulldog-safe-top, 0px));
+    padding-bottom: max(env(safe-area-inset-bottom), var(--bulldog-safe-bottom, 0px));
     padding-left: env(safe-area-inset-left);
     padding-right: env(safe-area-inset-right);
     overscroll-behavior: none;
