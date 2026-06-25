@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { Mic, MicOff, Video, VideoOff, MonitorOff, ArrowLeftFromLine } from "lucide-react";
+import { Mic, MicOff, Video, VideoOff, MonitorOff, ArrowLeftFromLine, Pointer, Highlighter, Eraser } from "lucide-react";
+
+export type SharingAnnotationTool = "off" | "laser" | "highlighter";
 
 /**
  * Floating control bar that stays visible while the user is screen-sharing.
@@ -34,12 +36,24 @@ export function SharingFloatingBar({
   onToggleMic,
   onToggleCam,
   onStopShare,
+  annotationsAvailable,
+  tool,
+  onSetTool,
+  onClearAnnotations,
 }: {
   micOn: boolean;
   camOn: boolean;
   onToggleMic: () => void;
   onToggleCam: () => void;
   onStopShare: () => void;
+  /** Whether the current browser supports the annotation canvas pipeline. */
+  annotationsAvailable?: boolean;
+  /** Current annotation tool (laser / highlighter / off). */
+  tool?: SharingAnnotationTool;
+  /** Toggle / pick an annotation tool. Pass "off" to disable. */
+  onSetTool?: (tool: SharingAnnotationTool) => void;
+  /** Wipe all highlighter strokes. */
+  onClearAnnotations?: () => void;
 }) {
   // Initial position: top-right with a small inset. The bar uses translate
   // for movement so re-renders don't fight the drag.
@@ -154,6 +168,40 @@ export function SharingFloatingBar({
       >
         <MonitorOff size={16} />
       </FloatBtn>
+
+      {/* Annotation tools. Only render when the browser supports the canvas
+          pipeline — on Edge / older browsers we fall back to a plain share
+          and these controls would be no-ops. */}
+      {annotationsAvailable && onSetTool && (
+        <>
+          <span aria-hidden className="mx-0.5 h-5 w-px bg-white/15" />
+          <FloatBtn
+            testid="floating-laser"
+            active={tool === "laser"}
+            onClick={() => onSetTool(tool === "laser" ? "off" : "laser")}
+            label={tool === "laser" ? "Disable laser pointer" : "Laser pointer"}
+          >
+            <Pointer size={16} />
+          </FloatBtn>
+          <FloatBtn
+            testid="floating-highlighter"
+            active={tool === "highlighter"}
+            onClick={() => onSetTool(tool === "highlighter" ? "off" : "highlighter")}
+            label={tool === "highlighter" ? "Disable highlighter" : "Highlighter"}
+          >
+            <Highlighter size={16} />
+          </FloatBtn>
+          {onClearAnnotations && (
+            <FloatBtn
+              testid="floating-clear-annotations"
+              onClick={onClearAnnotations}
+              label="Clear annotations"
+            >
+              <Eraser size={16} />
+            </FloatBtn>
+          )}
+        </>
+      )}
       <FloatBtn
         testid="floating-back"
         onClick={onBackToMeeting}
@@ -178,13 +226,22 @@ function FloatBtn({
   label,
   testid,
   danger,
+  active,
 }: {
   children: React.ReactNode;
   onClick: () => void;
   label: string;
   testid: string;
   danger?: boolean;
+  active?: boolean;
 }) {
+  // Resolve the visual variant. `danger` wins over `active` so the stop-share
+  // button stays red regardless of any other state.
+  const variant = danger
+    ? "bg-red-500/90 text-white hover:bg-red-500"
+    : active
+      ? "bg-primary text-primary-foreground hover:bg-primary/90"
+      : "bg-white/10 text-white hover:bg-white/20";
   return (
     <button
       type="button"
@@ -192,11 +249,8 @@ function FloatBtn({
       onClick={onClick}
       aria-label={label}
       title={label}
-      className={`flex h-8 w-8 items-center justify-center rounded-full transition ${
-        danger
-          ? "bg-red-500/90 text-white hover:bg-red-500"
-          : "bg-white/10 text-white hover:bg-white/20"
-      }`}
+      aria-pressed={active ? true : undefined}
+      className={`flex h-8 w-8 items-center justify-center rounded-full transition ${variant}`}
     >
       {children}
     </button>

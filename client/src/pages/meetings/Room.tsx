@@ -43,7 +43,8 @@ import {
 } from "@/components/call/VirtualBackgroundPicker";
 import { MeetSettingsModal } from "@/components/call/MeetSettingsModal";
 import { DeviceMenu } from "@/components/call/DeviceMenu";
-import { SharingFloatingBar } from "@/components/call/SharingFloatingBar";
+import { SharingFloatingBar, type SharingAnnotationTool } from "@/components/call/SharingFloatingBar";
+import { ScreenShareAnnotator, annotationsSupported } from "@/lib/screen-share-annotator";
 import { blurSupported, loadDevicePrefs, saveDevicePrefs, type DevicePrefs } from "@/lib/meet-devices";
 
 const REACTIONS = ["👍", "❤️", "😂", "🎉", "👏"];
@@ -270,6 +271,16 @@ function BulldogMeetingUI({ code }: { code: string }) {
   const camOn = localParticipant?.isCameraEnabled ?? false;
   const [handRaised, setHandRaised] = useState(false);
   const [sharing, setSharing] = useState(false);
+
+  // Annotation pipeline state. The annotator lives only while we're sharing
+  // through the canvas pipeline (Chromium/Firefox). On Edge we fall back to
+  // a plain LiveKit share and these stay null.
+  const annotatorRef = useRef<ScreenShareAnnotator | null>(null);
+  const sharingPubRef = useRef<LocalVideoTrack | null>(null);
+  const [annTool, setAnnTool] = useState<SharingAnnotationTool>("off");
+  // We snapshot this once per share session so the toolbar doesn't flicker
+  // if the annotator is torn down mid-render.
+  const [annAvailable, setAnnAvailable] = useState(false);
 
   // Background effects + device settings.
   const canBlur = useMemo(() => blurSupported(), []);
@@ -503,21 +514,141 @@ function BulldogMeetingUI({ code }: { code: string }) {
   const toggleMic = () => localParticipant?.setMicrophoneEnabled(!micOn);
   const toggleCam = () => localParticipant?.setCameraEnabled(!camOn);
 
+  // Stop helper used by both manual toggle and the native "Stop sharing" bar.
+  // Tears down the annotator + unpublishes the manual track, then resets UI.
+  const stopSharing = useCallback(async () => {
+    const lp = localParticipant;
+    const pub = sharingPubRef.current;
+    if (lp && pub) {
+      try { await lp.unpublishTrack(pub, true); } catch { /* ignore */ }
+    }
+    sharingPubRef.current = null;
+    if (annotatorRef.current) {
+      try { annotatorRef.current.stop(); } catch { /* ignore */ }
+      annotatorRef.current = null;
+    }
+    // If LiveKit owns the track (fallback path), let it stop it.
+    try { await lp?.setScreenShareEnabled(false); } catch { /* ignore */ }
+    setSharing(false);
+    setAnnTool("off");
+    setAnnAvailable(false);
+  }, [localParticipant]);
+
   const toggleShare = async () => {
+    if (sharing) {
+      await stopSharing();
+      return;
+    }
     if (remoteScreenShare) {
       toast({ title: "Someone is already sharing", description: "Only one screen share at a time." });
       return;
     }
+    const lp = localParticipant;
+    if (!lp) return;
+
+    // Edge / older browsers: canvas.captureStream is unreliable, so we skip
+    // the annotation pipeline entirely and let LiveKit do its native flow.
+    if (!annotationsSupported()) {
+      try {
+        await lp.setScreenShareEnabled(true);
+        setSharing(true);
+        setAnnAvailable(false);
+        toast({ title: "Screen share started" });
+      } catch {
+        toast({ title: "Screen share cancelled" });
+        setSharing(false);
+      }
+      return;
+    }
+
+    // Annotation-capable path. We acquire the display media ourselves so we
+    // can wrap it in a canvas, then publish the canvas output through LiveKit.
     try {
-      const next = !sharing;
-      await localParticipant?.setScreenShareEnabled(next);
-      setSharing(next);
-      if (next) toast({ title: "Screen share started" });
-    } catch {
-      toast({ title: "Screen share cancelled" });
+      const raw = await navigator.mediaDevices.getDisplayMedia({
+        video: { frameRate: 30 },
+        audio: false,
+      });
+      const annotator = new ScreenShareAnnotator(raw);
+      annotator.onTrackEnded = () => {
+        // The user clicked the browser's native "Stop sharing" bar.
+        void stopSharing();
+      };
+      annotator.start();
+      const lkTrack = new LocalVideoTrack(annotator.outputTrack);
+      await lp.publishTrack(lkTrack, {
+        source: Track.Source.ScreenShare,
+        name: "screen_share",
+      });
+      annotatorRef.current = annotator;
+      sharingPubRef.current = lkTrack;
+      setSharing(true);
+      setAnnAvailable(true);
+      toast({ title: "Screen share started" });
+    } catch (err) {
+      // User cancelled the picker, or the annotator failed to initialize.
+      // Either way: clean up anything we partially set up.
+      if (annotatorRef.current) {
+        try { annotatorRef.current.stop(); } catch { /* ignore */ }
+        annotatorRef.current = null;
+      }
+      sharingPubRef.current = null;
       setSharing(false);
+      setAnnAvailable(false);
+      const cancelled = (err as DOMException | undefined)?.name === "NotAllowedError";
+      toast({ title: cancelled ? "Screen share cancelled" : "Screen share failed" });
     }
   };
+
+  // Push tool selection into the annotator whenever it changes.
+  useEffect(() => {
+    annotatorRef.current?.setTool(annTool);
+  }, [annTool]);
+
+  // Forward pointer movement (and highlighter drag) into the annotator using
+  // normalized [0..1] coords relative to the viewport. We bind on window so
+  // we still receive moves when the cursor is over child elements (LiveKit's
+  // own DOM, the floating bar, etc.). The annotator ignores cursor input
+  // when the tool is "off".
+  useEffect(() => {
+    if (!sharing || annTool === "off" || !annotatorRef.current) return;
+    const ann = annotatorRef.current;
+    const onMove = (e: PointerEvent) => {
+      const nx = e.clientX / Math.max(1, window.innerWidth);
+      const ny = e.clientY / Math.max(1, window.innerHeight);
+      ann.setCursor(nx, ny);
+    };
+    const onDown = (e: PointerEvent) => {
+      if (annTool !== "highlighter") return;
+      // Skip clicks that land on the floating toolbar so users can press
+      // buttons (Clear / tool toggle) without starting a stroke.
+      const t = e.target as HTMLElement | null;
+      if (t?.closest('[data-testid="sharing-floating-bar"]')) return;
+      ann.beginStroke();
+    };
+    const onUp = () => {
+      if (annTool === "highlighter") ann.endStroke();
+    };
+    window.addEventListener("pointermove", onMove, { passive: true });
+    window.addEventListener("pointerdown", onDown);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerdown", onDown);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+    };
+  }, [sharing, annTool]);
+
+  // Defensive: if the user navigates away while sharing, release the tracks.
+  useEffect(() => {
+    return () => {
+      if (annotatorRef.current) {
+        try { annotatorRef.current.stop(); } catch { /* ignore */ }
+        annotatorRef.current = null;
+      }
+    };
+  }, []);
 
   const toggleHand = async () => {
     const next = !handRaised;
@@ -820,6 +951,10 @@ function BulldogMeetingUI({ code }: { code: string }) {
           onToggleMic={toggleMic}
           onToggleCam={toggleCam}
           onStopShare={toggleShare}
+          annotationsAvailable={annAvailable}
+          tool={annTool}
+          onSetTool={setAnnTool}
+          onClearAnnotations={() => annotatorRef.current?.clearStrokes()}
         />
       )}
     </div>
