@@ -218,6 +218,37 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers, me
     }
   }, [messages.length, channel.id]);
 
+  // Scroll-affordance state. Shows a floating "jump to latest" chevron when
+  // the user is scrolled meaningfully above the bottom of the message list.
+  // Doubles as a discoverability hint on iPhone PWA where the page sometimes
+  // loads with the message list scrolled high and it isn't obvious the area
+  // is scrollable — the bouncing chevron makes it obvious.
+  const [showScrollHint, setShowScrollHint] = useState(false);
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const compute = () => {
+      const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+      // 200px gives a comfortable threshold — incidental scroll on a long
+      // list of messages near the bottom doesn't trigger the hint.
+      setShowScrollHint(distanceFromBottom > 200);
+    };
+    compute();
+    el.addEventListener("scroll", compute, { passive: true });
+    // Recompute when window resizes (keyboard show/hide on iOS changes clientHeight).
+    window.addEventListener("resize", compute);
+    return () => {
+      el.removeEventListener("scroll", compute);
+      window.removeEventListener("resize", compute);
+    };
+  }, [channel.id, messages.length]);
+
+  const scrollToLatest = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+  }, []);
+
   useEffect(() => { taRef.current?.focus(); }, [channel.id]);
 
   // Mention autocomplete: detect @… at cursor
@@ -651,14 +682,44 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers, me
         </AnimatePresence>
       </div>
 
+      {/* Floating "jump to latest" chevron. Anchored absolutely just above
+          the composer; visible when the user has scrolled meaningfully above
+          the bottom of the message list. Also serves as a discoverability
+          hint on iPhone where the message area sometimes loads scrolled
+          high — the gentle bounce signals the area IS scrollable. */}
+      {showScrollHint && (
+        <button
+          type="button"
+          onClick={scrollToLatest}
+          aria-label="Scroll to latest messages"
+          data-testid="button-scroll-to-latest"
+          className="absolute left-1/2 -translate-x-1/2 z-10 bg-secondary/90 backdrop-blur-sm border border-border rounded-full shadow-lg px-3 py-1.5 flex items-center gap-1.5 text-xs text-[hsl(var(--vs-text))] hover:bg-secondary transition-colors animate-bounce"
+          // Sit just above the composer wrapper. The composer's own
+          // paddingBottom honours the floating-tab-bar inset, so anchoring
+          // to bottom:100% of the composer keeps this clear too.
+          style={{ bottom: "calc(4.5rem + max(env(safe-area-inset-bottom), var(--bulldog-safe-bottom, 0px)))" }}
+        >
+          <ChevronDown className="w-3.5 h-3.5" />
+          <span>Jump to latest</span>
+        </button>
+      )}
+
       {/* Composer. On iOS Safari/PWA the body has safe-area-inset-bottom
           padding, but mobile Safari's bottom toolbar can still overlap the
           composer when it shows/hides. We add an additional env-based bottom
           padding so the message box is never clipped by the home indicator
-          or Safari chrome. */}
+          or Safari chrome.
+
+          On the iOS 18 native shell, the floating-pill tab bar's inset is
+          NOT included in env(safe-area-inset-bottom); the native
+          WebTabViewController forwards it via --bulldog-safe-bottom. We take
+          the max so the composer always clears whichever is taller. */}
       <div
         className="px-4 pt-2 shrink-0"
-        style={{ paddingBottom: "max(1rem, env(safe-area-inset-bottom))" }}
+        style={{
+          paddingBottom:
+            "max(1rem, env(safe-area-inset-bottom), var(--bulldog-safe-bottom, 0px))",
+        }}
       >
         {pendingAtts.length > 0 && (
           <div className="mb-2 flex flex-wrap gap-2" data-testid="row-pending-attachments">
