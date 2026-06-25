@@ -44,6 +44,9 @@ import {
   getNote,
   publicNoteShape,
   getClerkConfigSummary,
+  getSummaryRecipientCandidates,
+  sendSummaryEmails,
+  skipSummaryEmails,
 } from "./meeting-clerk";
 import express from "express";
 
@@ -811,6 +814,55 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     const access = userCanAccessChannel(u.id, u.orgId, note.channel_id);
     if (!access) return res.status(404).json({ message: "Channel not found" });
     res.json(publicNoteShape(note));
+  });
+
+  // Phase 2.3 — transcript recipient selection. The clerk lands the note in
+  // 'awaiting_recipients' instead of fan-out-emailing every attendee. The FE
+  // calls these two endpoints to (a) read the candidate list and (b) commit
+  // a Send (subset of attendees) or Skip decision.
+  app.get("/api/meeting-notes/:id/recipients", requireAuth, (req, res) => {
+    const u = (req as AuthedRequest).user;
+    const noteId = Number(req.params.id);
+    if (!Number.isFinite(noteId)) return res.status(400).json({ message: "Invalid note id" });
+    const note = getNote(noteId);
+    if (!note) return res.status(404).json({ message: "Note not found" });
+    const access = userCanAccessChannel(u.id, u.orgId, note.channel_id);
+    if (!access) return res.status(404).json({ message: "Channel not found" });
+    res.json({ candidates: getSummaryRecipientCandidates(noteId) });
+  });
+
+  // Send (or skip) the transcript email. Only the user who started the clerk
+  // or an org admin may decide. Body: { recipientUserIds: number[] } to send,
+  // or { skip: true } to record "don't email anyone".
+  app.post("/api/meeting-notes/:id/send-summary", requireAuth, async (req, res) => {
+    const u = (req as AuthedRequest).user;
+    const noteId = Number(req.params.id);
+    if (!Number.isFinite(noteId)) return res.status(400).json({ message: "Invalid note id" });
+    const note = getNote(noteId);
+    if (!note) return res.status(404).json({ message: "Note not found" });
+    const access = userCanAccessChannel(u.id, u.orgId, note.channel_id);
+    if (!access) return res.status(404).json({ message: "Channel not found" });
+
+    const isStarter = note.started_by_user_id === u.id;
+    const isAdmin = u.role === "admin";
+    if (!isStarter && !isAdmin) {
+      return res.status(403).json({ message: "Only the clerk's starter or an admin can pick recipients" });
+    }
+
+    try {
+      const body = (req.body ?? {}) as { recipientUserIds?: number[]; skip?: boolean };
+      if (body.skip === true) {
+        const result = skipSummaryEmails(noteId, u.id);
+        return res.json(result);
+      }
+      const ids = Array.isArray(body.recipientUserIds)
+        ? body.recipientUserIds.filter((n: unknown) => typeof n === "number" && Number.isFinite(n))
+        : [];
+      const result = await sendSummaryEmails(noteId, ids as number[], u.id);
+      return res.json(result);
+    } catch (err) {
+      res.status(500).json({ message: (err as Error).message || "Failed to send summary" });
+    }
   });
 
   // Phase 1.9.20 — delete a meeting note. The author of the note (the user

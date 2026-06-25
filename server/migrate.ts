@@ -1154,4 +1154,21 @@ export function runMigrations() {
   } catch (e: any) {
     console.warn("[migrate v29] provider column skipped:", e?.message);
   }
+
+  // v30 (Phase 2.3) — recipient selection on AI-clerk summaries. Previously
+  // the clerk fan-out-emailed every attendee at stop unconditionally. Now the
+  // host picks recipients via the UI; this column persists that decision so
+  // re-renders + audit reads can show "sent to X, Y" or "skipped". Null on
+  // older rows (those followed the legacy behaviour). The new
+  // 'awaiting_recipients' status fits into the existing TEXT status column
+  // without a schema change — the enum is application-enforced.
+  try {
+    const mnCols = rawDb.prepare(`PRAGMA table_info(meeting_notes)`).all() as Array<{ name: string }>;
+    if (!mnCols.find((c) => c.name === "recipient_selection_json")) {
+      rawDb.exec(`ALTER TABLE meeting_notes ADD COLUMN recipient_selection_json TEXT;`);
+      console.log("[migrate] v30 added meeting_notes.recipient_selection_json column");
+    }
+  } catch (e: any) {
+    console.warn("[migrate v30] recipient_selection_json column skipped:", e?.message);
+  }
 }
