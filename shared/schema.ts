@@ -384,6 +384,11 @@ export const meetingNoteStatuses = [
   "summarizing",   // calling Claude with the transcript
   "rendering",     // generating PDF
   "uploading",     // pushing to Synology WebDAV
+  // Summary is generated + PDF filed, but waiting for the host to pick which
+  // attendees should receive the email transcript. Resolved by POSTing to
+  // /api/meeting-notes/:id/send-summary (sets status -> 'uploaded' after the
+  // emails fan out, or marks 'uploaded' with no email send if skipped).
+  "awaiting_recipients",
   "uploaded",      // PDF safely stored on Synology, notes available in chat
   "failed",        // any step failed; error_message has detail
 ] as const;
@@ -394,6 +399,17 @@ export interface MeetingNoteAttendee {
   email: string;
   name: string;
   joinedAt?: number;
+}
+
+export interface MeetingNoteRecipientSelection {
+  status: "pending" | "sent" | "skipped";
+  // userIds chosen by the host. Empty when status='skipped'.
+  sentToUserIds: number[];
+  // Epoch ms when the host clicked Send/Skip. Absent while still pending.
+  decidedAt?: number;
+  // The host who made the call (defaults to the clerk's starter if no UI
+  // interaction — e.g. legacy clients posting straight through).
+  decidedByUserId?: number;
 }
 
 export const meetingNotes = sqliteTable("meeting_notes", {
@@ -407,6 +423,12 @@ export const meetingNotes = sqliteTable("meeting_notes", {
   transcriptText: text("transcript_text").notNull().default(""),
   summaryText: text("summary_text"),
   attendeesJson: text("attendees_json", { mode: "json" }).$type<MeetingNoteAttendee[] | null>(),
+  // Phase 2.3 — recipient selection. When the clerk stops, instead of emailing
+  // every attendee unconditionally, the host picks recipients in the UI. This
+  // column records that decision: { status: 'pending' | 'sent' | 'skipped',
+  // sentToUserIds: number[], sentAt: number, decidedByUserId: number }.
+  // Null on rows older than v30 — those used the legacy fan-out-to-all.
+  recipientSelectionJson: text("recipient_selection_json", { mode: "json" }).$type<MeetingNoteRecipientSelection | null>(),
   synologyRemotePath: text("synology_remote_path"),
   synologyStatus: text("synology_status"),
   synologyReason: text("synology_reason"),

@@ -11,9 +11,11 @@
 // Here we just own the live capture lifecycle.
 
 import { useEffect, useRef, useState, useCallback } from "react";
-import { Bot, Square, Loader2, AlertTriangle } from "lucide-react";
+import { Bot, Square, Loader2, AlertTriangle, Mail } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useMutation, useQuery } from "@tanstack/react-query";
+import { useAuth } from "@/lib/auth";
+import { TranscriptRecipientDialog } from "@/components/TranscriptRecipientDialog";
 
 interface Props {
   channelId: number;
@@ -38,22 +40,34 @@ interface ClerkConfig {
 interface NoteRow {
   id: number;
   channelId: number;
+  startedByUserId: number;
   status:
     | "recording"
     | "transcribing"
     | "summarizing"
     | "rendering"
     | "uploading"
+    | "awaiting_recipients"
     | "uploaded"
     | "failed";
   title?: string | null;
   errorMessage?: string | null;
   synologyStatus?: string | null;
+  recipientSelection?: {
+    status: "pending" | "sent" | "skipped";
+    sentToUserIds: number[];
+  } | null;
 }
 
 export function MeetingClerkButton({ channelId, canControl, roomName, compact }: Props) {
+  const { user } = useAuth();
   const [error, setError] = useState<string | null>(null);
   const [activeNoteId, setActiveNoteId] = useState<number | null>(null);
+  // Recipient picker state. We auto-open when the latest note is in
+  // 'awaiting_recipients' for the current user; dismissedNoteIds tracks
+  // dialogs the user has manually closed so we don't re-pop them on each poll.
+  const [recipientPickerNoteId, setRecipientPickerNoteId] = useState<number | null>(null);
+  const [dismissedNoteIds, setDismissedNoteIds] = useState<Set<number>>(new Set());
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -68,6 +82,30 @@ export function MeetingClerkButton({ channelId, canControl, roomName, compact }:
   const activeFromServer = (notesQ.data ?? []).find(n =>
     ["recording", "transcribing", "summarizing", "rendering", "uploading"].includes(n.status),
   );
+
+  // The newest note awaiting recipient selection where the current user is
+  // the clerk's starter. Only the starter sees the picker. Admins can decide
+  // via the API but we don't auto-pop a dialog at them.
+  const awaitingMine = (notesQ.data ?? []).find(n =>
+    n.status === "awaiting_recipients"
+    && user?.id != null
+    && n.startedByUserId === user.id
+    && (!n.recipientSelection || n.recipientSelection.status === "pending"),
+  );
+
+  // Open the picker whenever an awaiting-mine note appears and the user
+  // hasn't dismissed it yet. Closing the dialog adds the noteId to the
+  // dismissed set so we don't fight the user across polls.
+  useEffect(() => {
+    if (!awaitingMine) {
+      if (recipientPickerNoteId !== null) setRecipientPickerNoteId(null);
+      return;
+    }
+    if (dismissedNoteIds.has(awaitingMine.id)) return;
+    if (recipientPickerNoteId !== awaitingMine.id) {
+      setRecipientPickerNoteId(awaitingMine.id);
+    }
+  }, [awaitingMine?.id, dismissedNoteIds, recipientPickerNoteId]);
 
   // If the server says a session is live but we don't have a local recorder,
   // we still expose a "Stop" button so the user isn't stuck.
@@ -227,7 +265,35 @@ export function MeetingClerkButton({ channelId, canControl, roomName, compact }:
   const isRecording = !!activeNoteId && activeFromServer?.status === "recording";
   const isProcessing = !!activeFromServer && ["transcribing", "summarizing", "rendering", "uploading"].includes(activeFromServer.status);
 
-  if (!canControl && !isRecording && !isProcessing) {
+  // Recipient-picker side-channel. Rendered alongside every branch below so
+  // the dialog can stay mounted (and dismissable) regardless of which clerk
+  // status the button is currently rendering.
+  const pickerNote = recipientPickerNoteId
+    ? (notesQ.data ?? []).find(n => n.id === recipientPickerNoteId) ?? null
+    : null;
+  const dialogElement = pickerNote ? (
+    <TranscriptRecipientDialog
+      noteId={pickerNote.id}
+      title={pickerNote.title ?? null}
+      channelId={channelId}
+      open={true}
+      onClose={() => {
+        setRecipientPickerNoteId(null);
+        setDismissedNoteIds(prev => {
+          const next = new Set(prev);
+          next.add(pickerNote.id);
+          return next;
+        });
+      }}
+    />
+  ) : null;
+
+  // "Send transcript" reopener — surfaces when the user dismissed the auto
+  // popup but hasn't yet made a decision. Lets them get back to the picker
+  // without having to wait for another clerk run.
+  const pickerReopenNote = awaitingMine && dismissedNoteIds.has(awaitingMine.id) ? awaitingMine : null;
+
+  if (!canControl && !isRecording && !isProcessing && !dialogElement && !pickerReopenNote) {
     // Hide entirely for users who can't control and there's nothing happening.
     return null;
   }
@@ -268,20 +334,35 @@ export function MeetingClerkButton({ channelId, canControl, roomName, compact }:
     }
     if (canControl) {
       return (
-        <button
-          type="button"
-          onClick={() => startMutation.mutate()}
-          disabled={startMutation.isPending}
-          className={`${baseClass} text-[hsl(0_0%_80%)] hover:bg-[hsl(220_50%_20%)] hover:text-vs-blue-light`}
-          title={cfgWarning ? "AI clerk (some integrations not configured — pipeline will still run)" : "Start AI clerk — records, transcribes, summarizes, files notes to Synology"}
-          data-testid="button-start-clerk"
-        >
-          {startMutation.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : <Bot className="w-5 h-5" />}
-          <span className="text-[10px] font-medium">Clerk</span>
-        </button>
+        <>
+          <button
+            type="button"
+            onClick={() => startMutation.mutate()}
+            disabled={startMutation.isPending}
+            className={`${baseClass} text-[hsl(0_0%_80%)] hover:bg-[hsl(220_50%_20%)] hover:text-vs-blue-light`}
+            title={cfgWarning ? "AI clerk (some integrations not configured — pipeline will still run)" : "Start AI clerk — records, transcribes, summarizes, files notes to Synology"}
+            data-testid="button-start-clerk"
+          >
+            {startMutation.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : <Bot className="w-5 h-5" />}
+            <span className="text-[10px] font-medium">Clerk</span>
+          </button>
+          {pickerReopenNote && (
+            <button
+              type="button"
+              onClick={() => setRecipientPickerNoteId(pickerReopenNote.id)}
+              className={`${baseClass} text-vs-blue-light hover:bg-[hsl(220_50%_20%)]`}
+              title="Pick who gets the AI transcript by email"
+              data-testid="button-pick-transcript-recipients"
+            >
+              <Mail className="w-5 h-5" />
+              <span className="text-[10px] font-medium">Send notes</span>
+            </button>
+          )}
+          {dialogElement}
+        </>
       );
     }
-    return null;
+    return dialogElement;
   }
 
   return (
@@ -318,6 +399,17 @@ export function MeetingClerkButton({ channelId, canControl, roomName, compact }:
           Clerk
         </button>
       ) : null}
+      {pickerReopenNote && !isRecording && !isProcessing && (
+        <button
+          type="button"
+          onClick={() => setRecipientPickerNoteId(pickerReopenNote.id)}
+          className="px-2 py-1 rounded-md text-xs bg-vs-blue/10 border border-vs-blue/40 text-vs-blue-light hover:bg-vs-blue/20 flex items-center gap-1.5 whitespace-nowrap"
+          title="Pick who gets the AI transcript by email"
+          data-testid="button-pick-transcript-recipients"
+        >
+          <Mail className="w-3 h-3" /> Send notes
+        </button>
+      )}
       {error && (
         <div
           className="flex items-center gap-1 text-[10px] text-[hsl(var(--vs-accent))] max-w-[180px] truncate"
@@ -327,6 +419,7 @@ export function MeetingClerkButton({ channelId, canControl, roomName, compact }:
           <span>{error}</span>
         </div>
       )}
+      {dialogElement}
     </div>
   );
 }

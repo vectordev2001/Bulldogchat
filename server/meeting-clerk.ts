@@ -94,7 +94,31 @@ interface MeetingNoteRow {
   updated_at: number;
   room_name: string | null;
   participant_user_ids_json: string | null;
+  // v30 — host's pick of who to email the summary to. Null = legacy (pre-v30)
+  // rows that used auto-fan-out, OR brand-new rows still mid-pipeline.
+  recipient_selection_json: string | null;
 }
+
+interface RecipientSelection {
+  status: "pending" | "sent" | "skipped";
+  sentToUserIds: number[];
+  decidedAt?: number;
+  decidedByUserId?: number;
+}
+
+// Email payload retained in-memory between the post-stop pipeline (which
+// builds the summary HTML/text) and the host's later "Send to selected" call.
+// On a server restart we lose this and fall back to reconstructing from the
+// persisted row in sendSummaryEmails() — same inputs are still available.
+interface PendingEmailPayload {
+  attendees: Array<{ name: string; email: string }>;
+  title: string;
+  markdown: string;
+  channelName: string;
+  durationSec: number;
+  contractAppUrl: string | null;
+}
+const pendingEmailPayloads = new Map<number, PendingEmailPayload>();
 
 function nowMs(): number { return Date.now(); }
 
@@ -308,21 +332,27 @@ export async function stopClerk(noteId: number): Promise<{ ok: boolean; status: 
       // The summary card + email are the primary user-facing deliverables and
       // succeed independently of Synology. A NAS upload failure should NOT mark
       // the whole note "failed" — by this point the summary has already been
-      // generated. Keep the note in the success ("uploaded") state regardless;
-      // the Synology outcome is recorded in synology_status/synology_reason for
-      // debugging and the UI can surface it as a separate, non-fatal warning.
+      // generated. The note now lands in 'awaiting_recipients' rather than
+      // 'uploaded': the host has to pick recipients via the FE before the
+      // email actually goes out. The channel card still fires unconditionally
+      // (channel members already have access).
+      const pendingSelection: RecipientSelection = {
+        status: "pending",
+        sentToUserIds: [],
+      };
       updateNote(noteId, {
-        status: "uploaded",
+        status: "awaiting_recipients",
         synology_status: upload.status,
         synology_reason: upload.reason || null,
         synology_remote_path: upload.remotePath || null,
         duration_seconds: durationSec,
         error_message: null,
+        recipient_selection_json: JSON.stringify(pendingSelection),
       });
 
-      // 6) Notify: post a summary card to the channel and email attendees.
-      // Both steps are independently wrapped so one failure never kills the
-      // other, and neither blocks the (already-finished) status update.
+      // 6) Notify: post the summary card to the channel right away. Channel
+      // members can already see the note in the chat; email fan-out is the
+      // privacy-sensitive step and is gated on the host's selection below.
       await postSummaryToChannel({
         noteId,
         channelId: row.channel_id,
@@ -334,7 +364,10 @@ export async function stopClerk(noteId: number): Promise<{ ok: boolean; status: 
         pdfPath: upload.remotePath || null,
       });
 
-      await emailAttendeesSummary({
+      // Stash the email payload so resolveSummaryEmails() can fire later.
+      // We persist via JSON on the row instead of in-memory so a server
+      // restart doesn't lose the pending send.
+      pendingEmailPayloads.set(noteId, {
         attendees,
         title: summary.title,
         markdown: summary.markdown,
@@ -515,6 +548,10 @@ export function publicNoteShape(row: MeetingNoteRow) {
   if (row.attendees_json) {
     try { attendees = JSON.parse(row.attendees_json); } catch { attendees = []; }
   }
+  let recipientSelection: RecipientSelection | null = null;
+  if (row.recipient_selection_json) {
+    try { recipientSelection = JSON.parse(row.recipient_selection_json); } catch { recipientSelection = null; }
+  }
   return {
     id: row.id,
     channelId: row.channel_id,
@@ -525,6 +562,7 @@ export function publicNoteShape(row: MeetingNoteRow) {
     title: row.title,
     summaryMarkdown: row.summary_text,
     attendees,
+    recipientSelection,
     synologyStatus: row.synology_status,
     synologyRemotePath: row.synology_remote_path,
     synologyReason: row.synology_reason,
@@ -532,4 +570,185 @@ export function publicNoteShape(row: MeetingNoteRow) {
     durationSeconds: row.duration_seconds,
     errorMessage: row.error_message,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Recipient selection — host picks who gets the email summary at meeting end.
+// ---------------------------------------------------------------------------
+
+/**
+ * Candidate recipients for the host to choose from. Returns the union of
+ * tracked call participants + the channel-member fallback. Each row carries
+ * enough for the UI: userId, name, email, and a `present` flag indicating
+ * whether they were actually in the call (vs. a channel member who never
+ * joined). The UI pre-checks `present=true` rows.
+ */
+export function getSummaryRecipientCandidates(noteId: number): Array<{
+  userId: number;
+  name: string;
+  email: string;
+  present: boolean;
+}> {
+  const row = getNoteRow(noteId);
+  if (!row) return [];
+
+  const presentIds = new Set<number>();
+  if (row.participant_user_ids_json) {
+    try {
+      const parsed = JSON.parse(row.participant_user_ids_json) as number[];
+      if (Array.isArray(parsed)) for (const id of parsed) presentIds.add(id);
+    } catch { /* ignore */ }
+  }
+  presentIds.add(row.started_by_user_id);
+
+  // Channel members are offered too (not pre-checked) so the host can add
+  // someone who was invited but didn't actually join.
+  const channelMemberIds = new Set<number>(storage.listChannelMemberIds(row.channel_id));
+
+  const all = new Set<number>();
+  presentIds.forEach((id) => all.add(id));
+  channelMemberIds.forEach((id) => all.add(id));
+  const out: Array<{ userId: number; name: string; email: string; present: boolean }> = [];
+  const allIds: number[] = [];
+  all.forEach((id) => allIds.push(id));
+  for (const id of allIds) {
+    const u = storage.getUser(id);
+    if (!u || !u.email) continue;
+    out.push({
+      userId: id,
+      name: u.name || u.email,
+      email: u.email,
+      present: presentIds.has(id),
+    });
+  }
+  out.sort((a, b) => {
+    if (a.present !== b.present) return a.present ? -1 : 1;
+    return a.name.localeCompare(b.name);
+  });
+  return out;
+}
+
+/**
+ * Reconstruct the email payload from the persisted note row when the
+ * in-memory cache is empty (e.g. server restart between stopClerk and the
+ * host clicking Send). Returns null if the row is too incomplete to email.
+ */
+function reconstructEmailPayload(row: MeetingNoteRow): PendingEmailPayload | null {
+  if (!row.summary_text || !row.title) return null;
+  let attendees: Array<{ name: string; email: string }> = [];
+  if (row.attendees_json) {
+    try {
+      const parsed = JSON.parse(row.attendees_json);
+      if (Array.isArray(parsed)) attendees = parsed.filter((a: any) => a?.email);
+    } catch { /* ignore */ }
+  }
+  const channel = storage.getChannel(row.channel_id);
+  const channelName = channel?.name || `channel-${row.channel_id}`;
+  const contractAppUrl = (channel as any)?.linkedContract?.appUrl || null;
+  return {
+    attendees,
+    title: row.title,
+    markdown: row.summary_text,
+    channelName,
+    durationSec: row.duration_seconds ?? 0,
+    contractAppUrl,
+  };
+}
+
+/**
+ * Host's decision: email the summary to the picked user ids. Looks up each
+ * user's email from the canonical users table (NOT the attendees_json
+ * snapshot) so a stale snapshot can't leak to the wrong address. Idempotent:
+ * a second call after status=='sent' is a no-op.
+ */
+export async function sendSummaryEmails(
+  noteId: number,
+  recipientUserIds: number[],
+  decidedByUserId: number,
+): Promise<{ ok: boolean; status: string; delivered?: number; reason?: string }> {
+  const row = getNoteRow(noteId);
+  if (!row) return { ok: false, status: "not_found", reason: "note not found" };
+  if (row.status !== "awaiting_recipients" && row.status !== "uploaded") {
+    return { ok: false, status: row.status, reason: `note not ready (status=${row.status})` };
+  }
+  let existing: RecipientSelection | null = null;
+  if (row.recipient_selection_json) {
+    try { existing = JSON.parse(row.recipient_selection_json) as RecipientSelection; } catch { /* ignore */ }
+  }
+  if (existing?.status === "sent" || existing?.status === "skipped") {
+    return { ok: true, status: row.status, reason: `already ${existing.status}` };
+  }
+
+  const uniqueIds = Array.from(new Set(recipientUserIds.filter(n => Number.isFinite(n))));
+  const resolved: Array<{ userId: number; name: string; email: string }> = [];
+  for (const id of uniqueIds) {
+    const u = storage.getUser(id);
+    if (u?.email) resolved.push({ userId: id, name: u.name || u.email, email: u.email });
+  }
+  if (resolved.length === 0) {
+    return skipSummaryEmails(noteId, decidedByUserId);
+  }
+
+  let payload = pendingEmailPayloads.get(noteId) ?? null;
+  if (!payload) payload = reconstructEmailPayload(row);
+  if (!payload) {
+    return { ok: false, status: row.status, reason: "summary payload unavailable" };
+  }
+
+  await emailAttendeesSummary({
+    attendees: resolved.map(r => ({ name: r.name, email: r.email })),
+    title: payload.title,
+    markdown: payload.markdown,
+    channelName: payload.channelName,
+    durationSec: payload.durationSec,
+    contractAppUrl: payload.contractAppUrl,
+  });
+
+  const selection: RecipientSelection = {
+    status: "sent",
+    sentToUserIds: resolved.map(r => r.userId),
+    decidedAt: nowMs(),
+    decidedByUserId,
+  };
+  updateNote(noteId, {
+    status: "uploaded",
+    recipient_selection_json: JSON.stringify(selection),
+  });
+  pendingEmailPayloads.delete(noteId);
+
+  return { ok: true, status: "uploaded", delivered: resolved.length };
+}
+
+/**
+ * Host's decision: do NOT send the email at all. Flips the note to
+ * 'uploaded' with selection.status='skipped' so the UI stops nagging.
+ */
+export function skipSummaryEmails(
+  noteId: number,
+  decidedByUserId: number,
+): { ok: boolean; status: string; reason?: string } {
+  const row = getNoteRow(noteId);
+  if (!row) return { ok: false, status: "not_found", reason: "note not found" };
+  if (row.status !== "awaiting_recipients" && row.status !== "uploaded") {
+    return { ok: false, status: row.status, reason: `note not ready (status=${row.status})` };
+  }
+  let existing: RecipientSelection | null = null;
+  if (row.recipient_selection_json) {
+    try { existing = JSON.parse(row.recipient_selection_json) as RecipientSelection; } catch { /* ignore */ }
+  }
+  if (existing?.status === "sent" || existing?.status === "skipped") {
+    return { ok: true, status: row.status, reason: `already ${existing.status}` };
+  }
+  const selection: RecipientSelection = {
+    status: "skipped",
+    sentToUserIds: [],
+    decidedAt: nowMs(),
+    decidedByUserId,
+  };
+  updateNote(noteId, {
+    status: "uploaded",
+    recipient_selection_json: JSON.stringify(selection),
+  });
+  pendingEmailPayloads.delete(noteId);
+  return { ok: true, status: "uploaded" };
 }
