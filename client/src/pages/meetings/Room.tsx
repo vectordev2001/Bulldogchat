@@ -72,13 +72,23 @@ export default function Room() {
     );
   }
 
+  // CRITICAL: We do NOT pass `video` / `audio` to <LiveKitRoom>. Those props
+  // make the room call setCameraEnabled/setMicrophoneEnabled internally,
+  // which triggers a fresh getUserMedia() inside a microtask — outside the
+  // click-gesture window from the Join button. On iOS WebKit, the resulting
+  // tracks come back frozen/silent until the user manually toggles.
+  //
+  // Instead, the prejoin route hands off its already-acquired LocalAudioTrack
+  // and LocalVideoTrack via m.prejoinTracksRef, and we publish them directly
+  // (see BulldogMeetingUI). If no prejoin tracks exist (e.g. user landed on
+  // /r/<code> directly), we fall back to setMicrophone/CameraEnabled.
   return (
     <LiveKitRoom
       serverUrl={m.wsUrl}
       token={m.token}
       connect={true}
-      video={m.camEnabled}
-      audio={m.micEnabled}
+      video={false}
+      audio={false}
       onConnected={() => m.setConnectedAt(Date.now())}
       onDisconnected={() => navigate(`/end/${code}`)}
       onError={(err) => console.error("LiveKit error:", err)}
@@ -242,23 +252,82 @@ function BulldogMeetingUI({ code }: { code: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [room]);
 
-  // Fix 3 — Publish mic/cam immediately on room connect using the prejoin
-  // prefs. The LiveKitRoom audio/video props request tracks but may not
-  // publish them before the first render cycle on some browsers; explicitly
-  // enabling here ensures the mic is live without a manual toggle.
+  // Publish mic/cam on room connect. STRONGLY PREFER the prejoin tracks
+  // handed off via m.prejoinTracksRef — publishTrack on an already-acquired
+  // LocalAudioTrack/LocalVideoTrack does NOT re-invoke getUserMedia, so it
+  // preserves the click-gesture context iOS WebKit requires.
+  //
+  // Fallback path (no prejoin tracks): user navigated directly to /r/<code>.
+  // Use setMicrophone/CameraEnabled; iOS may need a manual toggle in that
+  // case, but that's the rarer flow.
   useEffect(() => {
     if (!localParticipant) return;
+    const handed = m.prejoinTracksRef.current;
+    // Take ownership exactly once — clear refs so a re-mount of this
+    // component (e.g. Strict Mode double-invoke in dev) doesn't try to
+    // publish the same track twice.
+    m.prejoinTracksRef.current = { audio: null, video: null };
+
     const prefs = loadDevicePrefs();
-    void localParticipant.setMicrophoneEnabled(m.micEnabled, {
-      echoCancellation: true,
-      noiseSuppression: true,
-      autoGainControl: true,
-      ...(prefs.audioInput ? { deviceId: prefs.audioInput } : {}),
-    }).catch(() => { /* best-effort */ });
-    void localParticipant.setCameraEnabled(m.camEnabled, {
-      ...(prefs.videoInput ? { deviceId: prefs.videoInput } : {}),
-      resolution: { width: 1280, height: 720, frameRate: 30 },
-    }).catch(() => { /* best-effort */ });
+    let cancelled = false;
+
+    (async () => {
+      // ---- Audio ----
+      if (handed.audio) {
+        try {
+          await localParticipant.publishTrack(handed.audio);
+          // Apply mute state — setMicrophoneEnabled on an already-published
+          // track only flips the enabled flag; no new getUserMedia.
+          if (!cancelled) {
+            await localParticipant.setMicrophoneEnabled(m.micEnabled);
+          }
+        } catch (e) {
+          console.error("[meet] failed to publish prejoin mic:", e);
+          // Last-resort fallback if publish fails.
+          if (!cancelled) {
+            void localParticipant.setMicrophoneEnabled(m.micEnabled, {
+              echoCancellation: true,
+              noiseSuppression: true,
+              autoGainControl: true,
+              ...(prefs.audioInput ? { deviceId: prefs.audioInput } : {}),
+            }).catch(() => { /* best-effort */ });
+          }
+        }
+      } else {
+        // No prejoin handoff — fall back to the old behaviour.
+        void localParticipant.setMicrophoneEnabled(m.micEnabled, {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+          ...(prefs.audioInput ? { deviceId: prefs.audioInput } : {}),
+        }).catch(() => { /* best-effort */ });
+      }
+
+      // ---- Video ----
+      if (handed.video) {
+        try {
+          await localParticipant.publishTrack(handed.video);
+          if (!cancelled) {
+            await localParticipant.setCameraEnabled(m.camEnabled);
+          }
+        } catch (e) {
+          console.error("[meet] failed to publish prejoin camera:", e);
+          if (!cancelled) {
+            void localParticipant.setCameraEnabled(m.camEnabled, {
+              ...(prefs.videoInput ? { deviceId: prefs.videoInput } : {}),
+              resolution: { width: 1280, height: 720, frameRate: 30 },
+            }).catch(() => { /* best-effort */ });
+          }
+        }
+      } else {
+        void localParticipant.setCameraEnabled(m.camEnabled, {
+          ...(prefs.videoInput ? { deviceId: prefs.videoInput } : {}),
+          resolution: { width: 1280, height: 720, frameRate: 30 },
+        }).catch(() => { /* best-effort */ });
+      }
+    })();
+
+    return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [!!localParticipant]);
 
