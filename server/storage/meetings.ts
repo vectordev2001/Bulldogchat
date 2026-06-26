@@ -1,5 +1,5 @@
 import { nanoid } from "nanoid";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, desc, eq, isNull } from "drizzle-orm";
 import { db } from "../db";
 import { storage } from "../storage";
 import { generateMeetingCode } from "../meetings/codes";
@@ -272,6 +272,36 @@ export function addSummaryRecipient(input: {
       addedAt: new Date(),
     })
     .run();
+}
+
+/**
+ * Returns the most recent non-ended channel huddle for the given channel, if
+ * any. Used by the huddle start endpoint to dedupe back-to-back rings: when a
+ * user drops and re-clicks the start button, we hand them back into the same
+ * LiveKit room instead of minting a new one (which would silently fragment
+ * the call).
+ *
+ * "Active" here means status in ('scheduled', 'active') — i.e. anything the
+ * host hasn't explicitly ended. We deliberately do NOT inspect LiveKit
+ * participant counts: an empty-but-not-ended huddle is still the canonical
+ * room people should rejoin.
+ */
+export function getActiveHuddleForChannel(channelId: number): Meeting | undefined {
+  // We can't express OR(status='scheduled', status='active') cleanly with the
+  // typed enum in a single Drizzle filter without extra imports, so just
+  // exclude the terminal status. There is no other terminal value today.
+  const rows = db
+    .select()
+    .from(meetings)
+    .where(
+      and(
+        eq(meetings.channelId, channelId),
+        eq(meetings.kind, "channel_huddle"),
+      ),
+    )
+    .orderBy(desc(meetings.createdAt))
+    .all();
+  return rows.find((m) => m.status !== "ended");
 }
 
 type LinkableTable = "direct_calls" | "scheduled_calls" | "livekit_rooms" | "recordings" | "meeting_notes";
