@@ -134,6 +134,28 @@ export class ScreenShareAnnotator {
     return t;
   }
 
+  /**
+   * What kind of surface the user picked in the browser's share dialog:
+   *   - "monitor" — entire screen
+   *   - "window"  — a single app window
+   *   - "browser" — a browser tab
+   *   - null      — the browser didn't expose it (older Safari, etc.)
+   *
+   * Room.tsx reads this to decide whether to auto-open the Document PiP
+   * toolbar (only worth doing for full-monitor shares).
+   */
+  get displaySurface(): "monitor" | "window" | "browser" | null {
+    const track = this.raw.getVideoTracks()[0];
+    if (!track) return null;
+    // getSettings() includes displaySurface on Chromium/Firefox; some older
+    // builds expose it under getCapabilities() instead.
+    type DisplaySettings = MediaTrackSettings & { displaySurface?: string };
+    const s = (track.getSettings?.() as DisplaySettings | undefined) ?? {};
+    const surf = s.displaySurface;
+    if (surf === "monitor" || surf === "window" || surf === "browser") return surf;
+    return null;
+  }
+
   /** Start the render loop. Idempotent. */
   start(): void {
     if (this.running) return;
