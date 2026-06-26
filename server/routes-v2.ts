@@ -8,6 +8,7 @@ import sharp from "sharp";
 import { storage, sanitize } from "./storage";
 import { getStorageBackend } from "./storage-files";
 import { hashPassword, requireAuth, requireRole, requireCap, AuthedRequest } from "./auth";
+import { canSeeChannel as mtCanSeeChannel } from "./multitenant-access";
 import { can } from "@shared/permissions";
 import { rawDb } from "./db";
 import type { WireMessage } from "./events";
@@ -192,7 +193,14 @@ export function registerV2Routes(app: Express) {
         const ch = storage.getChannel(msg.channelId);
         if (ch) {
           const proj = storage.getProject(ch.projectId);
-          if (proj && proj.orgId === u.orgId && storage.isProjectMember(proj.id, u.id)) allowed = true;
+          if (
+            proj &&
+            proj.orgId === u.orgId &&
+            storage.isProjectMember(proj.id, u.id) &&
+            mtCanSeeChannel((req as AuthedRequest).access, ch.projectId, ch.regionId ?? null)
+          ) {
+            allowed = true;
+          }
         }
       }
     }
@@ -236,6 +244,9 @@ export function registerV2Routes(app: Express) {
     if (!ch) return res.status(404).json({ message: "Not found" });
     const proj = storage.getProject(ch.projectId);
     if (!proj || proj.orgId !== u.orgId || !storage.isProjectMember(proj.id, u.id)) {
+      return res.status(404).json({ message: "Not found" });
+    }
+    if (!mtCanSeeChannel((req as AuthedRequest).access, ch.projectId, ch.regionId ?? null)) {
       return res.status(404).json({ message: "Not found" });
     }
     const replies = storage.listReplies(id);
@@ -283,13 +294,17 @@ export function registerV2Routes(app: Express) {
     const toDate = req.query.to_date ? new Date(String(req.query.to_date)) : undefined;
     const limit = req.query.limit ? Math.min(Number(req.query.limit), 200) : 50;
 
-    // Channels user can access (from project memberships)
+    // Channels user can access (from project memberships + region grants)
+    const access = (req as AuthedRequest).access;
     const accessibleProjects = storage.listProjectsForUser(u.id);
     const allChannels: number[] = [];
     for (const p of accessibleProjects) {
       const chs = storage.listChannelsByProject(p.id);
       for (const c of chs) {
-        if (c.type === "text") allChannels.push(c.id);
+        if (c.type !== "text") continue;
+        // Region-scoped channels: filter against the caller's grants.
+        if (!mtCanSeeChannel(access, c.projectId, c.regionId ?? null)) continue;
+        allChannels.push(c.id);
       }
     }
     let chIds = allChannels;

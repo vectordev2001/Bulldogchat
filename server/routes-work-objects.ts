@@ -26,6 +26,7 @@
 import type { Express, Request, Response } from "express";
 import { storage, sanitize } from "./storage";
 import { requireAuth, requireCap, AuthedRequest } from "./auth";
+import { canSeeChannel as mtCanSeeChannel, gateProjectById } from "./multitenant-access";
 import { can } from "@shared/permissions";
 import { broadcastWorkObjectEvent } from "./system-messages";
 import {
@@ -164,6 +165,9 @@ export function registerWorkObjectRoutes(app: Express) {
       if (!proj || proj.orgId !== u.orgId) return res.status(400).json({ message: "Company not found" });
       if (!storage.isProjectMember(pid, u.id) && u.role !== "admin") {
         return res.status(403).json({ message: "Not a member of this company" });
+      }
+      if (!gateProjectById((req as AuthedRequest).access, pid)) {
+        return res.status(404).json({ message: "Company not found" });
       }
       projectId = pid;
     }
@@ -416,6 +420,7 @@ export function registerWorkObjectRoutes(app: Express) {
     if (!channel) return res.status(404).json({ message: "Channel not found" });
     const project = storage.getProject(channel.projectId);
     if (!project || project.orgId !== u.orgId) return res.status(404).json({ message: "Channel not found" });
+    if (!mtCanSeeChannel((req as AuthedRequest).access, channel.projectId, channel.regionId ?? null)) return res.status(404).json({ message: "Channel not found" });
     if (!storage.isProjectMember(project.id, u.id)) return res.status(403).json({ message: "Not a project member" });
     const user = storage.getUser(u.id);
     if (!user || !storage.userCanSeeChannel(channel, user)) return res.status(403).json({ message: "Not allowed" });
@@ -433,6 +438,7 @@ export function registerWorkObjectRoutes(app: Express) {
     if (!channel) return res.status(404).json({ message: "Channel not found" });
     const project = storage.getProject(channel.projectId);
     if (!project || project.orgId !== u.orgId) return res.status(404).json({ message: "Channel not found" });
+    if (!mtCanSeeChannel((req as AuthedRequest).access, channel.projectId, channel.regionId ?? null)) return res.status(404).json({ message: "Channel not found" });
     if (!storage.isProjectMember(project.id, u.id)) return res.status(403).json({ message: "Not a project member" });
 
     const { workObjectId, ref, linkType } = (req.body ?? {}) as { workObjectId?: number; ref?: string; linkType?: "primary" | "secondary" };
@@ -477,6 +483,7 @@ export function registerWorkObjectRoutes(app: Express) {
     if (!channel) return res.status(404).json({ message: "Channel not found" });
     const project = storage.getProject(channel.projectId);
     if (!project || project.orgId !== u.orgId) return res.status(404).json({ message: "Channel not found" });
+    if (!mtCanSeeChannel((req as AuthedRequest).access, channel.projectId, channel.regionId ?? null)) return res.status(404).json({ message: "Channel not found" });
     const wo = storage.getWorkObject(woId);
     if (!wo || wo.orgId !== u.orgId) return res.status(404).json({ message: "Job not found" });
     storage.unlinkWorkObjectFromChannel(woId, channelId);

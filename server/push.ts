@@ -1,6 +1,8 @@
 import webpush from "web-push";
 import { storage } from "./storage";
 import { sendExpoNotificationToUsers } from "./expo-push";
+import { rawDb } from "./db";
+import { canSeeChannel, computeAccess } from "./multitenant-access";
 
 let configured = false;
 
@@ -35,8 +37,39 @@ export interface PushPayload {
   badge?: string;
 }
 
-export async function sendNotificationToUsers(userIds: number[], payload: PushPayload) {
+export async function sendNotificationToUsers(
+  userIds: number[],
+  payload: PushPayload,
+  opts?: { channelId?: number },
+) {
   if (userIds.length === 0) return;
+
+  // Multi-tenant access gate: when MULTITENANT_MODE is on and the caller
+  // supplied a source channelId, drop any recipient who can't see that
+  // channel. Prevents push notifications from leaking across tenants if
+  // legacy membership rows (project_members, channel_members) somehow
+  // include users without a matching user_project_regions grant.
+  if (process.env.MULTITENANT_MODE === "1" && opts?.channelId) {
+    try {
+      const ch = rawDb
+        .prepare(`SELECT project_id AS projectId, region_id AS regionId FROM channels WHERE id = ?`)
+        .get(opts.channelId) as { projectId: number; regionId: number | null } | undefined;
+      if (ch) {
+        const targets = storage.listUsersByIds(userIds);
+        const roleByUser = new Map(targets.map(u => [u.id, u.role]));
+        userIds = userIds.filter(id => {
+          // Map chat role -> auth global role for access compute. Same
+          // mapping used in auth.ts buildAccessForUser.
+          const role = roleByUser.get(id) === "admin" ? "super_admin" : null;
+          const access = computeAccess(id, role);
+          return canSeeChannel(access, ch.projectId, ch.regionId);
+        });
+        if (userIds.length === 0) return;
+      }
+    } catch (e) {
+      console.warn("[push] multitenant gate failed, falling back to caller-supplied list:", e);
+    }
+  }
 
   // Phase 1.9 DND gating: respect recipient presence. Users in "busy" (red
   // dot) explicitly asked not to be pinged — skip both web push and Expo.

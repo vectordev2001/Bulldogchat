@@ -30,6 +30,12 @@ export interface BulldogUser {
   department: string | null;
   /** E.164 phone number, optional — used for SIP dial-out invites. */
   phone?: string | null;
+  /** Phase 2.0 unified global role. May be "super_admin" which collapses to admin in `role`. */
+  globalRole?: "user" | "manager" | "admin" | "super_admin";
+  /** Phase 2.0 access grants. Empty/missing → no Suite access. */
+  grants?: Array<{ companyId: string; locationId: string | null }>;
+  /** Phase 2.0 per-company role overrides. */
+  roleOverrides?: Array<{ companyId: string; role: "user" | "manager" | "admin" }>;
 }
 
 declare module "express-serve-static-core" {
@@ -106,6 +112,9 @@ export function bulldogAuth(options: AuthOptions): RequestHandler {
         role?: string;
         department?: string | null;
         phone?: string | null;
+        globalRole?: "user" | "manager" | "admin" | "super_admin";
+        grants?: Array<{ companyId: string; locationId: string | null }>;
+        roleOverrides?: Array<{ companyId: string; role: "user" | "manager" | "admin" }>;
       };
       if (!claims.sub || !claims.email || !claims.role) {
         if (options.optional) return next();
@@ -121,6 +130,9 @@ export function bulldogAuth(options: AuthOptions): RequestHandler {
         role: claims.role,
         department: claims.department ?? null,
         phone: claims.phone ?? null,
+        globalRole: claims.globalRole,
+        grants: claims.grants ?? [],
+        roleOverrides: claims.roleOverrides ?? [],
       };
       next();
     } catch (err) {

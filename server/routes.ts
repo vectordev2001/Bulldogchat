@@ -14,6 +14,7 @@ import { setupWebPush, pushConfigured, getPublicVapidKey, sendNotificationToUser
 import { runMigrations } from "./migrate";
 import { runSeed } from "./seed";
 import { runMultiTenantSeed } from "./seed-multitenant";
+import { canSeeChannel as mtCanSeeChannel, type AccessSnapshot } from "./multitenant-access";
 import { registerV2Routes, parseMentions } from "./routes-v2";
 import { registerWorkObjectRoutes } from "./routes-work-objects";
 import { registerIntegrationRoutes } from "./routes-integrations";
@@ -128,12 +129,18 @@ function parseMessageMeta(raw: unknown): unknown {
 }
 
 // Make sure the requesting user belongs to the project (either project member or admin within org)
-function userCanAccessProject(userId: number, orgId: number, projectId: number): boolean {
+function userCanAccessProject(userId: number, orgId: number, projectId: number, access?: AccessSnapshot): boolean {
   const project = storage.getProject(projectId);
   if (!project || project.orgId !== orgId) return false;
-  return storage.isProjectMember(projectId, userId);
+  if (!storage.isProjectMember(projectId, userId)) return false;
+  // Multi-tenant Option A: in addition to the project_members check, the
+  // caller must hold a live grant on this project. project_members rows
+  // are populated by mirrorUserGrants, so this is usually a no-op, but it
+  // catches stale memberships and the legacy demo data path.
+  if (access && !access.isSuperAdmin && !access.projectIds.has(projectId)) return false;
+  return true;
 }
-function userCanAccessChannel(userId: number, orgId: number, channelId: number): { channel: ReturnType<typeof storage.getChannel>; project: ReturnType<typeof storage.getProject> } | null {
+function userCanAccessChannel(userId: number, orgId: number, channelId: number, access?: AccessSnapshot): { channel: ReturnType<typeof storage.getChannel>; project: ReturnType<typeof storage.getProject> } | null {
   const channel = storage.getChannel(channelId);
   if (!channel) return null;
   const project = storage.getProject(channel.projectId);
@@ -142,6 +149,10 @@ function userCanAccessChannel(userId: number, orgId: number, channelId: number):
   const user = storage.getUser(userId);
   if (!user) return null;
   if (!storage.userCanSeeChannel(channel, user)) return null;
+  // Multi-tenant Option A: enforce region-scoped visibility. mtCanSeeChannel
+  // also short-circuits to true for super_admin and for company-wide
+  // channels (regionId=NULL).
+  if (access && !mtCanSeeChannel(access, channel.projectId, channel.regionId ?? null)) return null;
   return { channel, project };
 }
 
@@ -455,21 +466,21 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
   app.get("/api/projects/:id", requireAuth, (req, res) => {
     const u = (req as AuthedRequest).user;
     const id = Number(req.params.id);
-    if (!userCanAccessProject(u.id, u.orgId, id)) return res.status(404).json({ message: "Not found" });
+    if (!userCanAccessProject(u.id, u.orgId, id, (req as AuthedRequest).access)) return res.status(404).json({ message: "Not found" });
     res.json(storage.getProject(id));
   });
 
   app.get("/api/projects/:id/members", requireAuth, (req, res) => {
     const u = (req as AuthedRequest).user;
     const id = Number(req.params.id);
-    if (!userCanAccessProject(u.id, u.orgId, id)) return res.status(404).json({ message: "Not found" });
+    if (!userCanAccessProject(u.id, u.orgId, id, (req as AuthedRequest).access)) return res.status(404).json({ message: "Not found" });
     res.json(storage.listProjectMembers(id).map(sanitize));
   });
 
   app.get("/api/projects/:id/channels", requireAuth, (req, res) => {
     const u = (req as AuthedRequest).user;
     const id = Number(req.params.id);
-    if (!userCanAccessProject(u.id, u.orgId, id)) return res.status(404).json({ message: "Not found" });
+    if (!userCanAccessProject(u.id, u.orgId, id, (req as AuthedRequest).access)) return res.status(404).json({ message: "Not found" });
     // Scope-aware list: admins see everything; others only see channels they
     // are permitted by scope (global / matching entity / matching team-role /
     // private membership).
@@ -479,7 +490,7 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
   app.post("/api/projects/:id/channels", requireAuth, requireCap(can.chat.createChannel), (req, res) => {
     const u = (req as AuthedRequest).user;
     const id = Number(req.params.id);
-    if (!userCanAccessProject(u.id, u.orgId, id)) return res.status(404).json({ message: "Not found" });
+    if (!userCanAccessProject(u.id, u.orgId, id, (req as AuthedRequest).access)) return res.status(404).json({ message: "Not found" });
     const parsed = channelCreateSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: parsed.error.issues[0]?.message ?? "Invalid input" });
     // Phase 1.8: if the caller wants to nest this channel under a Job
@@ -557,7 +568,7 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     if (!Number.isFinite(channelId)) return res.status(400).json({ message: "Invalid channel id" });
     const ch = storage.getChannel(channelId);
     if (!ch) return res.status(404).json({ message: "Channel not found" });
-    const access = userCanAccessChannel(u.id, u.orgId, channelId);
+    const access = userCanAccessChannel(u.id, u.orgId, channelId, (req as AuthedRequest).access);
     if (!access) return res.status(404).json({ message: "Channel not found" });
     // Empty body — detach.
     if (!req.body || Object.keys(req.body).length === 0) {
@@ -639,7 +650,7 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     const u = (req as AuthedRequest).user;
     const channelId = Number(req.params.channelId);
     if (!Number.isFinite(channelId)) return res.status(400).json({ message: "Invalid channel id" });
-    const access = userCanAccessChannel(u.id, u.orgId, channelId);
+    const access = userCanAccessChannel(u.id, u.orgId, channelId, (req as AuthedRequest).access);
     if (!access) return res.status(404).json({ message: "Channel not found" });
     const ch = storage.getChannel(channelId);
     const rawPdfUrl = (ch?.linkedContract as { pdfUrl?: string | null } | null | undefined)?.pdfUrl;
@@ -723,7 +734,7 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     const u = (req as AuthedRequest).user;
     const channelId = Number(req.params.id);
     if (!Number.isFinite(channelId)) return res.status(400).json({ message: "Invalid channel id" });
-    const access = userCanAccessChannel(u.id, u.orgId, channelId);
+    const access = userCanAccessChannel(u.id, u.orgId, channelId, (req as AuthedRequest).access);
     if (!access || !access.channel) return res.status(404).json({ message: "Channel not found" });
     // Accept optional roomName from the client so we can poll actual call
     // participants rather than falling back to the full channel roster.
@@ -767,7 +778,7 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
       if (!Number.isFinite(noteId)) return res.status(400).json({ message: "Invalid note id" });
       const note = getNote(noteId);
       if (!note) return res.status(404).json({ message: "Note not found" });
-      const access = userCanAccessChannel(u.id, u.orgId, note.channel_id);
+      const access = userCanAccessChannel(u.id, u.orgId, note.channel_id, (req as AuthedRequest).access);
       if (!access) return res.status(404).json({ message: "Channel not found" });
       const buf: Buffer | undefined = Buffer.isBuffer(req.body) ? (req.body as Buffer) : undefined;
       if (!buf || buf.length === 0) return res.status(400).json({ message: "No audio bytes" });
@@ -783,7 +794,7 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     if (!Number.isFinite(noteId)) return res.status(400).json({ message: "Invalid note id" });
     const note = getNote(noteId);
     if (!note) return res.status(404).json({ message: "Note not found" });
-    const access = userCanAccessChannel(u.id, u.orgId, note.channel_id);
+    const access = userCanAccessChannel(u.id, u.orgId, note.channel_id, (req as AuthedRequest).access);
     if (!access) return res.status(404).json({ message: "Channel not found" });
     try {
       const result = await stopClerk(noteId);
@@ -813,7 +824,7 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     const u = (req as AuthedRequest).user;
     const channelId = Number(req.params.id);
     if (!Number.isFinite(channelId)) return res.status(400).json({ message: "Invalid channel id" });
-    const access = userCanAccessChannel(u.id, u.orgId, channelId);
+    const access = userCanAccessChannel(u.id, u.orgId, channelId, (req as AuthedRequest).access);
     if (!access) return res.status(404).json({ message: "Channel not found" });
     const rows = listNotesForChannel(channelId);
     res.json(rows.map(publicNoteShape));
@@ -825,7 +836,7 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     if (!Number.isFinite(noteId)) return res.status(400).json({ message: "Invalid note id" });
     const note = getNote(noteId);
     if (!note) return res.status(404).json({ message: "Note not found" });
-    const access = userCanAccessChannel(u.id, u.orgId, note.channel_id);
+    const access = userCanAccessChannel(u.id, u.orgId, note.channel_id, (req as AuthedRequest).access);
     if (!access) return res.status(404).json({ message: "Channel not found" });
     res.json(publicNoteShape(note));
   });
@@ -840,7 +851,7 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     if (!Number.isFinite(noteId)) return res.status(400).json({ message: "Invalid note id" });
     const note = getNote(noteId);
     if (!note) return res.status(404).json({ message: "Note not found" });
-    const access = userCanAccessChannel(u.id, u.orgId, note.channel_id);
+    const access = userCanAccessChannel(u.id, u.orgId, note.channel_id, (req as AuthedRequest).access);
     if (!access) return res.status(404).json({ message: "Channel not found" });
     res.json({ candidates: getSummaryRecipientCandidates(noteId) });
   });
@@ -854,7 +865,7 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     if (!Number.isFinite(noteId)) return res.status(400).json({ message: "Invalid note id" });
     const note = getNote(noteId);
     if (!note) return res.status(404).json({ message: "Note not found" });
-    const access = userCanAccessChannel(u.id, u.orgId, note.channel_id);
+    const access = userCanAccessChannel(u.id, u.orgId, note.channel_id, (req as AuthedRequest).access);
     if (!access) return res.status(404).json({ message: "Channel not found" });
 
     const isStarter = note.started_by_user_id === u.id;
@@ -889,7 +900,7 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     if (!Number.isFinite(noteId)) return res.status(400).json({ message: "Invalid note id" });
     const note = getNote(noteId);
     if (!note) return res.status(404).json({ message: "Note not found" });
-    const access = userCanAccessChannel(u.id, u.orgId, note.channel_id);
+    const access = userCanAccessChannel(u.id, u.orgId, note.channel_id, (req as AuthedRequest).access);
     if (!access) return res.status(404).json({ message: "Channel not found" });
     const isAuthor = note.started_by_user_id === u.id;
     const isAdmin = u.role === "admin";
@@ -921,7 +932,7 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
   app.get("/api/channels/:id/members", requireAuth, (req, res) => {
     const u = (req as AuthedRequest).user;
     const channelId = Number(req.params.id);
-    const access = userCanAccessChannel(u.id, u.orgId, channelId);
+    const access = userCanAccessChannel(u.id, u.orgId, channelId, (req as AuthedRequest).access);
     if (!access || !access.channel || !access.project) {
       return res.status(404).json({ message: "Not found" });
     }
@@ -956,7 +967,7 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
   app.get("/api/channels/:id/explicit-members", requireAuth, (req, res) => {
     const u = (req as AuthedRequest).user;
     const channelId = Number(req.params.id);
-    const access = userCanAccessChannel(u.id, u.orgId, channelId);
+    const access = userCanAccessChannel(u.id, u.orgId, channelId, (req as AuthedRequest).access);
     if (!access) return res.status(404).json({ message: "Not found" });
     const ids = storage.listChannelMemberIds(channelId);
     res.json(storage.listUsersByIds(ids).map(sanitize));
@@ -967,7 +978,7 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
   app.post("/api/channels/:id/members", requireAuth, requireCap(can.chat.manageChannelMembers), (req, res) => {
     const u = (req as AuthedRequest).user;
     const channelId = Number(req.params.id);
-    const access = userCanAccessChannel(u.id, u.orgId, channelId);
+    const access = userCanAccessChannel(u.id, u.orgId, channelId, (req as AuthedRequest).access);
     if (!access || !access.channel) return res.status(404).json({ message: "Not found" });
     // Any scope can have explicit members — they serve as extra grants on
     // top of the scope's built-in visibility (entity/team/global).
@@ -1006,7 +1017,7 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     const u = (req as AuthedRequest).user;
     const channelId = Number(req.params.id);
     const targetId = Number(req.params.userId);
-    const access = userCanAccessChannel(u.id, u.orgId, channelId);
+    const access = userCanAccessChannel(u.id, u.orgId, channelId, (req as AuthedRequest).access);
     if (!access || !access.channel) return res.status(404).json({ message: "Not found" });
     if (u.role !== "admin" && targetId !== u.id) {
       return res.status(403).json({ message: "Only admins can remove other members" });
@@ -1145,7 +1156,7 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     const u = (req as AuthedRequest).user;
     const channelId = Number(req.params.id);
     if (!Number.isFinite(channelId)) return res.status(400).json({ message: "bad id" });
-    const access = userCanAccessChannel(u.id, u.orgId, channelId);
+    const access = userCanAccessChannel(u.id, u.orgId, channelId, (req as AuthedRequest).access);
     if (!access) return res.status(404).json({ message: "Not found" });
     return res.json({ ...access.channel, projectId: access.project!.id });
   });
@@ -1264,7 +1275,7 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
   app.get("/api/channels/:id/messages", requireAuth, async (req, res) => {
     const u = (req as AuthedRequest).user;
     const channelId = Number(req.params.id);
-    const access = userCanAccessChannel(u.id, u.orgId, channelId);
+    const access = userCanAccessChannel(u.id, u.orgId, channelId, (req as AuthedRequest).access);
     if (!access) return res.status(404).json({ message: "Not found" });
     const before = req.query.before ? Number(req.query.before) : undefined;
     const limit = req.query.limit ? Number(req.query.limit) : 50;
@@ -1322,7 +1333,7 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
   app.post("/api/channels/:id/messages", requireAuth, async (req, res) => {
     const u = (req as AuthedRequest).user;
     const channelId = Number(req.params.id);
-    const access = userCanAccessChannel(u.id, u.orgId, channelId);
+    const access = userCanAccessChannel(u.id, u.orgId, channelId, (req as AuthedRequest).access);
     if (!access) return res.status(404).json({ message: "Not found" });
     if (access.channel?.type === "voice") return res.status(400).json({ message: "Cannot post text to a voice channel" });
     const parsed = sendMessageSchema.safeParse(req.body);
@@ -1393,12 +1404,16 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
             ? `${u.name}` // 1:1 DM: just the sender's name
             : `${u.name} in ${audience.filter(m => m.id !== u.id).map(m => m.name.split(" ")[0]).slice(0, 3).join(", ")}`)
         : `#${access.channel!.name} · ${access.project!.name}`;
-      void sendNotificationToUsers(Array.from(recipientIds), {
-        title,
-        body: isDm ? parsed.data.content.slice(0, 140) : `${u.name}: ${parsed.data.content.slice(0, 140)}`,
-        url: isDm ? `/#/dms/${channelId}/m/${msg.id}` : `/#/channels/${channelId}/m/${msg.id}`,
-        tag: isDm ? `dm-${channelId}` : `channel-${channelId}`,
-      });
+      void sendNotificationToUsers(
+        Array.from(recipientIds),
+        {
+          title,
+          body: isDm ? parsed.data.content.slice(0, 140) : `${u.name}: ${parsed.data.content.slice(0, 140)}`,
+          url: isDm ? `/#/dms/${channelId}/m/${msg.id}` : `/#/channels/${channelId}/m/${msg.id}`,
+          tag: isDm ? `dm-${channelId}` : `channel-${channelId}`,
+        },
+        { channelId },
+      );
     }
 
     res.json(wire);
@@ -1449,7 +1464,7 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
   app.delete("/api/channels/:id/messages", requireAuth, requireCap(can.chat.clearChannel), (req, res) => {
     const u = (req as AuthedRequest).user;
     const channelId = Number(req.params.id);
-    const access = userCanAccessChannel(u.id, u.orgId, channelId);
+    const access = userCanAccessChannel(u.id, u.orgId, channelId, (req as AuthedRequest).access);
     if (!access) return res.status(404).json({ message: "Not found" });
     const { ids } = storage.tombstoneChannelMessages(channelId, u.id);
     for (const id of ids) {
@@ -1687,7 +1702,7 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
   app.post("/api/channels/:id/voice/token", requireAuth, async (req, res) => {
     const u = (req as AuthedRequest).user;
     const channelId = Number(req.params.id);
-    const access = userCanAccessChannel(u.id, u.orgId, channelId);
+    const access = userCanAccessChannel(u.id, u.orgId, channelId, (req as AuthedRequest).access);
     if (!access) return res.status(404).json({ message: "Not found" });
     if (access.channel?.type !== "voice") return res.status(400).json({ message: "Not a voice channel" });
 
@@ -1710,7 +1725,7 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
   app.post("/api/channels/:id/invite", requireAuth, async (req, res) => {
     const u = (req as AuthedRequest).user;
     const channelId = Number(req.params.id);
-    const access = userCanAccessChannel(u.id, u.orgId, channelId);
+    const access = userCanAccessChannel(u.id, u.orgId, channelId, (req as AuthedRequest).access);
     if (!access) return res.status(404).json({ message: "Not found" });
 
     const rawUserIds: unknown = req.body?.userIds;
@@ -1807,7 +1822,7 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
   app.post("/api/channels/:id/dial-absent", requireAuth, requireCap(can.chat.createChannel), async (req, res) => {
     const u = (req as AuthedRequest).user;
     const channelId = Number(req.params.id);
-    const access = userCanAccessChannel(u.id, u.orgId, channelId);
+    const access = userCanAccessChannel(u.id, u.orgId, channelId, (req as AuthedRequest).access);
     if (!access) return res.status(404).json({ message: "Not found" });
     if (!sipConfigured()) {
       return res.status(503).json({ message: "SIP not configured — cannot dial phones" });
@@ -1880,7 +1895,7 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
   app.post("/api/channels/:id/dial-number", requireAuth, requireCap(can.chat.createChannel), async (req, res) => {
     const u = (req as AuthedRequest).user;
     const channelId = Number(req.params.id);
-    const access = userCanAccessChannel(u.id, u.orgId, channelId);
+    const access = userCanAccessChannel(u.id, u.orgId, channelId, (req as AuthedRequest).access);
     if (!access) return res.status(404).json({ message: "Not found" });
     if (!sipConfigured()) {
       return res.status(503).json({ message: "SIP not configured — cannot dial phones" });
@@ -2078,7 +2093,7 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
       smsInviteeIds.length === 0 &&
       smsPhoneNumbers.length === 0;
 
-    const access = userCanAccessChannel(u.id, u.orgId, channelId);
+    const access = userCanAccessChannel(u.id, u.orgId, channelId, (req as AuthedRequest).access);
     if (!access) return res.status(404).json({ message: "Channel not found" });
 
     if (!livekitConfigured()) {
@@ -2783,7 +2798,8 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
         "X-Accel-Buffering": "no",
       });
       res.write(`event: hello\ndata: ${JSON.stringify({ userId: uid })}\n\n`);
-      const sub = { userId: uid, orgId: user.orgId, res };
+      const { buildAccessForUser } = await import("./auth");
+      const sub = { userId: uid, orgId: user.orgId, res, access: buildAccessForUser(user) };
       addSubscriber(sub);
       req.on("close", () => removeSubscriber(sub));
     });

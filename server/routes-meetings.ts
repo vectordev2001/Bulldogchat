@@ -2,6 +2,7 @@ import type { Express, Request, Response } from "express";
 import { z } from "zod";
 import { nanoid } from "nanoid";
 import { requireAuth, tryAuth, AuthedRequest } from "./auth";
+import { gateChannelById } from "./multitenant-access";
 import { livekitConfigured, mintLivekitToken } from "./livekit";
 import {
   createMeeting,
@@ -149,11 +150,17 @@ export function registerMeetingRoutes(app: Express) {
     }
     const body = parsed.data;
 
-    // If a channel is supplied, the caller must be able to see it.
+    // If a channel is supplied, the caller must be able to see it. We check
+    // both channel membership AND the multi-tenant region scope so a user
+    // with PNW-only access can't host a meeting on a Southwest channel.
     if (body.channelId != null) {
       const isMember = storage.isChannelMember(body.channelId, u.id);
       if (!isMember && u.role !== "admin") {
         return res.status(403).json({ message: "Not a member of that channel" });
+      }
+      const gated = gateChannelById((req as unknown as AuthedRequest).access, body.channelId);
+      if (!gated) {
+        return res.status(404).json({ message: "Channel not found" });
       }
     }
 
