@@ -33,7 +33,7 @@ function escapeHtml(s: string): string {
 }
 import { registerScheduledCallRoutes, startReminderLoop } from "./scheduled-calls";
 import { registerMeetingRoutes } from "./routes-meetings";
-import { createMeeting as createMeetingRow, linkExistingCallToMeeting, getMeetingById, type CreateMeetingInput } from "./storage/meetings";
+import { createMeeting as createMeetingRow, linkExistingCallToMeeting, getMeetingById, getActiveHuddleForChannel, type CreateMeetingInput } from "./storage/meetings";
 import { syncDeactivatedFromAuth } from "./users-sync";
 import {
   startClerk,
@@ -2071,26 +2071,42 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
       return res.status(503).json({ message: "Calling unavailable: LiveKit not configured" });
     }
 
-    // One shared LiveKit room for the whole group call. We tie it to the
+    // Reuse an existing active huddle on this channel if one is open. This is
+    // the dropped-then-rejoin fix: if Josh's connection blips and he re-taps
+    // the huddle button, we want him back in the SAME LiveKit room as anyone
+    // still on the call — not a fresh ghost room that fragments the meeting.
+    // We only reuse rooms < 6h old to avoid clinging to a stale row if the
+    // host never explicitly ended (e.g. browser closed mid-call).
+    const SIX_HOURS_MS = 6 * 60 * 60 * 1000;
+    const existingHuddle = getActiveHuddleForChannel(channelId);
+    const reuseExisting =
+      !!existingHuddle &&
+      Date.now() - new Date(existingHuddle.createdAt).getTime() < SIX_HOURS_MS;
+
+    // One shared LiveKit room for the whole group call. If we're reusing an
+    // existing huddle, point at its room name; otherwise tie a new one to the
     // channel id + epoch so back-to-back group calls don't collide.
-    const groupRoomName = `group-channel-${channelId}-${Date.now()}`;
+    const groupRoomName = reuseExisting
+      ? existingHuddle!.livekitRoomName
+      : `group-channel-${channelId}-${Date.now()}`;
 
     // Unified meetings model — one meeting for the whole group call, bound to
-    // the channel. The per-invitee direct_call rows below carry the ringing
-    // state; this meeting is the durable identity. Best-effort.
-    // rowId -1: group calls have no pre-created livekit_rooms row, so the
-    // meeting just owns the room name (no back-link needed).
-    const huddleMeetingId = linkCallToMeeting("livekit_rooms", -1, {
-      orgId: u.orgId,
-      kind: "channel_huddle",
-      hostUserId: u.id,
-      channelId,
-      allowGuests: true,
-      livekitRoomName: groupRoomName,
-      title: access.channel?.name ? `#${access.channel.name} call` : "Channel call",
-      status: "active",
-      startedAt: new Date(),
-    });
+    // the channel. On reuse we keep the existing meeting row (so the huddle
+    // code/link stays stable). Otherwise we mint a fresh one. The per-invitee
+    // direct_call rows below carry the ringing state regardless.
+    const huddleMeetingId = reuseExisting
+      ? existingHuddle!.id
+      : linkCallToMeeting("livekit_rooms", -1, {
+          orgId: u.orgId,
+          kind: "channel_huddle",
+          hostUserId: u.id,
+          channelId,
+          allowGuests: true,
+          livekitRoomName: groupRoomName,
+          title: access.channel?.name ? `#${access.channel.name} call` : "Channel call",
+          status: "active",
+          startedAt: new Date(),
+        });
     // The huddle's shareable code/link, surfaced in the response so the client
     // can post a join card into the channel. Best-effort: a null meetingId
     // (createMeeting failed) just omits the link rather than failing the call.
