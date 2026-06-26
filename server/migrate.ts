@@ -1171,4 +1171,95 @@ export function runMigrations() {
   } catch (e: any) {
     console.warn("[migrate v30] recipient_selection_json column skipped:", e?.message);
   }
+
+  // v31 (Multi-tenant Option A) — add the three multi-tenant tables and
+  // channels.region_id. Idempotent: every CREATE/ALTER is guarded.
+  try {
+    rawDb.exec(`
+      CREATE TABLE IF NOT EXISTS project_auth_company (
+        project_id INTEGER PRIMARY KEY REFERENCES projects(id),
+        auth_company_id TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS regions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER NOT NULL REFERENCES projects(id),
+        code TEXT NOT NULL,
+        name TEXT NOT NULL,
+        position INTEGER NOT NULL DEFAULT 0,
+        auth_location_id TEXT,
+        created_at INTEGER NOT NULL
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS regions_project_code_uidx
+        ON regions(project_id, code);
+      CREATE INDEX IF NOT EXISTS regions_project_idx ON regions(project_id);
+      CREATE TABLE IF NOT EXISTS user_project_regions (
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        project_id INTEGER NOT NULL REFERENCES projects(id),
+        region_id INTEGER REFERENCES regions(id),
+        granted_at INTEGER NOT NULL,
+        PRIMARY KEY (user_id, project_id, region_id)
+      );
+      CREATE INDEX IF NOT EXISTS upr_user_idx ON user_project_regions(user_id);
+      CREATE INDEX IF NOT EXISTS upr_project_idx ON user_project_regions(project_id);
+    `);
+    const chanCols = rawDb.prepare(`PRAGMA table_info(channels)`).all() as Array<{ name: string }>;
+    if (!chanCols.find((c) => c.name === "region_id")) {
+      rawDb.exec(`ALTER TABLE channels ADD COLUMN region_id INTEGER REFERENCES regions(id);`);
+      console.log("[migrate] v31 added channels.region_id column");
+    }
+    rawDb.exec(`CREATE INDEX IF NOT EXISTS channels_region_idx ON channels(region_id);`);
+    console.log("[migrate] v31 multi-tenant tables ensured");
+  } catch (e: any) {
+    console.warn("[migrate v31] multi-tenant tables skipped:", e?.message);
+  }
+
+  // v31 — OPT-IN destructive wipe. Set MULTITENANT_WIPE_ON_BOOT=1 in the
+  // service env, deploy once, then unset (and re-deploy) so subsequent
+  // boots don't re-wipe. Preserves nothing except the empty tables.
+  if (process.env.MULTITENANT_WIPE_ON_BOOT === "1") {
+    try {
+      const tables = [
+        // Order matters: children before parents to avoid FK noise.
+        "meeting_summary_recipients",
+        "meeting_participants",
+        "meetings",
+        "livekit_rooms",
+        "recordings",
+        "meeting_notes",
+        "scheduled_call_invitees",
+        "scheduled_calls",
+        "direct_calls",
+        "work_object_activity",
+        "work_object_channel_links",
+        "work_objects",
+        "message_mentions",
+        "reactions",
+        "read_receipts",
+        "attachments",
+        "messages",
+        "channel_members",
+        "channels",
+        "project_members",
+        "user_project_regions",
+        "regions",
+        "project_auth_company",
+        "invites",
+        "projects",
+        "push_subscriptions",
+        "expo_push_tokens",
+        "sessions",
+        "users",
+        "organizations",
+      ];
+      for (const t of tables) {
+        try { rawDb.exec(`DELETE FROM ${t};`); }
+        catch (e: any) { console.warn(`[wipe] ${t}:`, e?.message); }
+      }
+      // Reset autoincrement counters so reseeded ids are 1..N again.
+      try { rawDb.exec(`DELETE FROM sqlite_sequence;`); } catch (_) { /* may not exist */ }
+      console.log("[migrate] v31 MULTITENANT_WIPE_ON_BOOT=1 — all chat data wiped");
+    } catch (e: any) {
+      console.warn("[migrate v31] wipe failed:", e?.message);
+    }
+  }
 }

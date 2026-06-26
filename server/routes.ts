@@ -13,6 +13,7 @@ import { generateLivekitToken, livekitConfigured, listRoomParticipantIdentities 
 import { setupWebPush, pushConfigured, getPublicVapidKey, sendNotificationToUsers } from "./push";
 import { runMigrations } from "./migrate";
 import { runSeed } from "./seed";
+import { runMultiTenantSeed } from "./seed-multitenant";
 import { registerV2Routes, parseMentions } from "./routes-v2";
 import { registerWorkObjectRoutes } from "./routes-work-objects";
 import { registerIntegrationRoutes } from "./routes-integrations";
@@ -147,7 +148,20 @@ function userCanAccessChannel(userId: number, orgId: number, channelId: number):
 // ─────────────────── ROUTES ───────────────────
 export async function registerRoutes(_httpServer: Server, app: Express) {
   runMigrations();
-  await runSeed();
+  // Multi-tenant Option A mode — gated by MULTITENANT_MODE=1. When set, we
+  // run the Bulldog Suite seed (4 companies × 6 regions) instead of the
+  // legacy single-tenant Vector Services demo. The legacy seed is bypassed
+  // entirely so it can't race against the multi-tenant tree.
+  if (process.env.MULTITENANT_MODE === "1") {
+    try {
+      await runMultiTenantSeed();
+    } catch (e: any) {
+      console.error("[boot] multi-tenant seed failed:", e?.message ?? e);
+      throw e;
+    }
+  } else {
+    await runSeed();
+  }
   setupWebPush();
 
   // Bulldog SSO bridge — if request has bulldog_access JWT cookie but no
