@@ -448,7 +448,11 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     // and the company switcher are fully populated). Non-admins see only
     // the companies they're a member of via project_members.
     const projects = storage.listProjectsForUserInOrg(u.id, u.orgId);
-    res.json(projects);
+    // Phase 3: attach authCompanyId so the UI / test harness can map
+    // chat-project ↔ bulldog-auth company without an extra round-trip.
+    const links = rawDb.prepare("SELECT project_id, auth_company_id FROM project_auth_company").all() as { project_id: number; auth_company_id: string }[];
+    const linkMap = new Map(links.map(l => [l.project_id, l.auth_company_id]));
+    res.json(projects.map(p => ({ ...p, authCompanyId: linkMap.get(p.id) ?? null })));
   });
 
   app.post("/api/projects", requireAuth, requireCap(can.chat.createProject), (req, res) => {
