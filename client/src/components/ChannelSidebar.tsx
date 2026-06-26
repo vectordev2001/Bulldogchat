@@ -1,4 +1,4 @@
-import { Hash, ChevronDown, ChevronRight, Plus, Mic, MicOff, Headphones, Settings, Search, Shield, ShieldCheck, Globe, Building2, Users, Lock, ClipboardList, Briefcase, AlertTriangle, FileEdit, MapPin, UserCog, ArrowRightLeft, Trash2, Calendar } from "lucide-react";
+import { Hash, ChevronDown, ChevronRight, Plus, Mic, MicOff, Headphones, Settings, Search, Shield, ShieldCheck, Globe, Building2, Users, Lock, ClipboardList, Briefcase, AlertTriangle, FileEdit, MapPin, UserCog, ArrowRightLeft, Trash2, Calendar, Check } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useLocation } from "wouter";
 import { useState, useMemo, useEffect } from "react";
@@ -155,6 +155,80 @@ export function ChannelSidebar({
   // channels on first load; persists across re-renders within the session.
   const [openRegions, setOpenRegions] = useState<Record<number, boolean>>({});
 
+  // Phase 5 — region picker. One active region at a time per company,
+  // with an "All regions" choice that restores the unfiltered view.
+  // Selection persists per-(user, project) in localStorage so the user's
+  // active region survives refresh and company switches. `null` means
+  // "All regions".
+  const regionStorageKey = `bulldog-chat:active-region:${me.id}:${project.id}`;
+  const [activeRegionId, setActiveRegionId] = useState<number | null>(() => {
+    try {
+      const raw = localStorage.getItem(regionStorageKey);
+      if (!raw) return null;
+      if (raw === "all") return null;
+      const n = parseInt(raw, 10);
+      return Number.isFinite(n) ? n : null;
+    } catch {
+      return null;
+    }
+  });
+  // Reload persisted region when the active company changes — the
+  // storage key includes the project id so each company remembers its
+  // own last-active region independently.
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(regionStorageKey);
+      if (!raw || raw === "all") {
+        setActiveRegionId(null);
+      } else {
+        const n = parseInt(raw, 10);
+        setActiveRegionId(Number.isFinite(n) ? n : null);
+      }
+    } catch {
+      setActiveRegionId(null);
+    }
+  }, [regionStorageKey]);
+  // If the persisted region is no longer in this user's grant list (e.g.
+  // they lost access), fall back to "All regions" so the sidebar never
+  // points at a region the server won't return data for.
+  useEffect(() => {
+    if (activeRegionId == null) return;
+    if (regions.length === 0) return;
+    if (!regions.some((r) => r.id === activeRegionId)) {
+      setActiveRegionId(null);
+      try {
+        localStorage.setItem(regionStorageKey, "all");
+      } catch {
+        /* ignore quota */
+      }
+    }
+  }, [regions, activeRegionId, regionStorageKey]);
+  const setActiveRegion = (id: number | null) => {
+    setActiveRegionId(id);
+    try {
+      localStorage.setItem(regionStorageKey, id == null ? "all" : String(id));
+    } catch {
+      /* ignore quota */
+    }
+  };
+  const [regionMenuOpen, setRegionMenuOpen] = useState(false);
+  // Dismiss region menu on outside click / Escape — matches the channel /
+  // job context menus' UX so the chrome feels consistent.
+  useEffect(() => {
+    if (!regionMenuOpen) return;
+    const dismiss = () => setRegionMenuOpen(false);
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") dismiss(); };
+    window.addEventListener("click", dismiss);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("click", dismiss);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [regionMenuOpen]);
+  const activeRegion = activeRegionId == null
+    ? null
+    : regions.find((r) => r.id === activeRegionId) ?? null;
+
   const q = search.toLowerCase();
   const matchText = (c: ApiChannel) => c.name.toLowerCase().includes(q);
   const filteredCompanyWide = companyWideChannels.filter(matchText);
@@ -214,6 +288,60 @@ export function ChannelSidebar({
           </button>
         )}
       </div>
+
+      {/* Phase 5 — region picker. Sits just under the company header so
+          users always know which region they're filtered to. Hidden when
+          the user has access to fewer than two regions on this company
+          (nothing to switch between). "All regions" restores the original
+          unfiltered view. */}
+      {regions.length >= 2 && (
+        <div className="px-3 pt-3 relative">
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); setRegionMenuOpen((v) => !v); }}
+            className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md border border-input bg-background hover:bg-[hsl(var(--vs-accent-soft))] transition-colors text-left"
+            data-testid="button-region-picker"
+            title="Switch active region"
+            aria-haspopup="listbox"
+            aria-expanded={regionMenuOpen}
+          >
+            <MapPin className="w-3.5 h-3.5 shrink-0 text-vs-accent" />
+            <div className="min-w-0 flex-1">
+              <div className="text-[9px] uppercase tracking-[0.16em] font-bold text-[hsl(var(--vs-text-subtle))]">Region</div>
+              <div className="text-xs font-medium text-[hsl(var(--vs-text))] truncate" data-testid="text-active-region">
+                {activeRegion ? `${activeRegion.code} · ${activeRegion.name}` : "All regions"}
+              </div>
+            </div>
+            <ChevronDown className={`w-3.5 h-3.5 shrink-0 text-[hsl(var(--vs-text-subtle))] transition-transform ${regionMenuOpen ? "rotate-180" : ""}`} />
+          </button>
+          {regionMenuOpen && (
+            <div
+              role="listbox"
+              data-testid="menu-region-picker"
+              onClick={(e) => e.stopPropagation()}
+              className="absolute left-3 right-3 top-[calc(100%+0.25rem)] z-30 max-h-72 overflow-y-auto rounded-md border border-popover-border bg-popover shadow-2xl py-1"
+            >
+              <RegionMenuItem
+                label="All regions"
+                sublabel={`Show every region in ${project.name}`}
+                active={activeRegionId == null}
+                onClick={() => { setActiveRegion(null); setRegionMenuOpen(false); }}
+                testid="menu-item-region-all"
+              />
+              <div className="h-px bg-border my-1" />
+              {regions.map((r) => (
+                <RegionMenuItem
+                  key={r.id}
+                  label={`${r.code} · ${r.name}`}
+                  active={r.id === activeRegionId}
+                  onClick={() => { setActiveRegion(r.id); setRegionMenuOpen(false); }}
+                  testid={`menu-item-region-${r.id}`}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="px-3 pt-3">
         <div className="relative">
@@ -313,8 +441,14 @@ export function ChannelSidebar({
 
         {/* Multi-tenant: per-region groups. Each region is its own
             collapsible section. Hidden during search when empty so the
-            sidebar collapses to just the matching companies. */}
-        {regions.map((reg) => {
+            sidebar collapses to just the matching companies.
+            Phase 5: filtered by the region picker. When a specific
+            region is active we only render that one; "All regions"
+            falls back to the original behavior of showing every region
+            the user has a grant for. */}
+        {regions
+          .filter((r) => activeRegionId == null || r.id === activeRegionId)
+          .map((reg) => {
           const open = openRegions[reg.id] ?? true;
           const regionChannels = (byRegion.get(reg.id) ?? []).filter(matchText);
           if (q && regionChannels.length === 0) return null;
@@ -522,6 +656,34 @@ export function ChannelSidebar({
         />
       )}
     </aside>
+  );
+}
+
+function RegionMenuItem({
+  label, sublabel, active, onClick, testid,
+}: { label: string; sublabel?: string; active: boolean; onClick: () => void; testid?: string }) {
+  return (
+    <button
+      type="button"
+      role="option"
+      aria-selected={active}
+      onClick={onClick}
+      data-testid={testid}
+      className={[
+        "w-full flex items-center gap-2 px-3 py-1.5 text-left text-sm transition-colors",
+        active
+          ? "bg-[hsl(var(--vs-accent-soft))] text-[hsl(var(--vs-accent))]"
+          : "text-popover-foreground hover:bg-accent",
+      ].join(" ")}
+    >
+      <span className="min-w-0 flex-1">
+        <span className="block truncate font-medium">{label}</span>
+        {sublabel && (
+          <span className="block truncate text-[10px] text-[hsl(var(--vs-text-subtle))]">{sublabel}</span>
+        )}
+      </span>
+      {active && <Check className="w-3.5 h-3.5 shrink-0" />}
+    </button>
   );
 }
 
