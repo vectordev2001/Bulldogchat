@@ -281,6 +281,10 @@ function BulldogMeetingUI({ code }: { code: string }) {
   // We snapshot this once per share session so the toolbar doesn't flicker
   // if the annotator is torn down mid-render.
   const [annAvailable, setAnnAvailable] = useState(false);
+  // What kind of surface the user picked in the share dialog ("monitor" =
+  // entire screen). We thread this into SharingFloatingBar so it knows
+  // whether to auto-open the Document PiP toolbar.
+  const [shareSurface, setShareSurface] = useState<"monitor" | "window" | "browser" | null>(null);
 
   // Background effects + device settings.
   const canBlur = useMemo(() => blurSupported(), []);
@@ -532,6 +536,7 @@ function BulldogMeetingUI({ code }: { code: string }) {
     setSharing(false);
     setAnnTool("off");
     setAnnAvailable(false);
+    setShareSurface(null);
   }, [localParticipant]);
 
   const toggleShare = async () => {
@@ -553,6 +558,21 @@ function BulldogMeetingUI({ code }: { code: string }) {
         await lp.setScreenShareEnabled(true);
         setSharing(true);
         setAnnAvailable(false);
+        // We don't own the raw track in the fallback path, but we can read
+        // the displaySurface off the LiveKit-published screen-share track.
+        try {
+          const pub = lp.getTrackPublication(Track.Source.ScreenShare);
+          const raw = pub?.track?.mediaStreamTrack;
+          type DS = MediaTrackSettings & { displaySurface?: string };
+          const s = (raw?.getSettings?.() as DS | undefined)?.displaySurface;
+          if (s === "monitor" || s === "window" || s === "browser") {
+            setShareSurface(s);
+          } else {
+            setShareSurface(null);
+          }
+        } catch {
+          setShareSurface(null);
+        }
         toast({ title: "Screen share started" });
       } catch {
         toast({ title: "Screen share cancelled" });
@@ -583,6 +603,7 @@ function BulldogMeetingUI({ code }: { code: string }) {
       sharingPubRef.current = lkTrack;
       setSharing(true);
       setAnnAvailable(true);
+      setShareSurface(annotator.displaySurface);
       toast({ title: "Screen share started" });
     } catch (err) {
       // User cancelled the picker, or the annotator failed to initialize.
@@ -955,6 +976,7 @@ function BulldogMeetingUI({ code }: { code: string }) {
           tool={annTool}
           onSetTool={setAnnTool}
           onClearAnnotations={() => annotatorRef.current?.clearStrokes()}
+          displaySurface={shareSurface}
         />
       )}
     </div>
