@@ -986,21 +986,38 @@ class DatabaseStorage implements IStorage {
     return db.update(projects).set(patch).where(eq(projects.id, id)).returning().get();
   }
   deleteProjectCascade(projectId: number) {
-    // Cascade delete: messages, channels, members, project
-    const chs = db.select().from(channels).where(eq(channels.projectId, projectId)).all();
-    for (const c of chs) {
-      const msgs = db.select({ id: messages.id }).from(messages).where(eq(messages.channelId, c.id)).all();
-      for (const m of msgs) {
-        db.delete(reactions).where(eq(reactions.messageId, m.id)).run();
-        db.delete(messageMentions).where(eq(messageMentions.messageId, m.id)).run();
+    // Phase 3: extended cascade that covers every table that can hold a
+    // reference back to this project or its channels. Uses the existing
+    // deleteChannelCascade for per-channel teardown so we don't have to
+    // duplicate the safeRun chain here.
+    const safeRun = (sql: string, ...params: any[]) => {
+      try { rawDb.prepare(sql).run(...params); } catch (e: any) {
+        if (!/no such (table|column)/i.test(String(e?.message))) throw e;
       }
-      db.delete(messages).where(eq(messages.channelId, c.id)).run();
-      db.delete(readReceipts).where(eq(readReceipts.channelId, c.id)).run();
-      db.delete(recordings).where(eq(recordings.channelId, c.id)).run();
+    };
+    // 1. Tear down every channel (cascades messages, members, recordings,
+    //    livekit_rooms, meetings, scheduled_calls, etc.).
+    const chs = db.select({ id: channels.id }).from(channels).where(eq(channels.projectId, projectId)).all();
+    for (const c of chs) {
+      this.deleteChannelCascade(c.id);
     }
-    db.delete(channels).where(eq(channels.projectId, projectId)).run();
+    // 2. Work objects (jobs) under this project, with their own cascade.
+    try {
+      const woRows = rawDb.prepare(`SELECT id FROM work_objects WHERE project_id = ?`).all(projectId) as Array<{ id: number }>;
+      for (const { id } of woRows) {
+        this.deleteWorkObjectCascade(id);
+      }
+    } catch (e: any) {
+      if (!/no such (table|column)/i.test(String(e?.message))) throw e;
+    }
+    // 3. Multi-tenant rows that point at this project.
+    safeRun(`DELETE FROM user_project_regions WHERE project_id = ?`, projectId);
+    safeRun(`DELETE FROM regions WHERE project_id = ?`, projectId);
+    safeRun(`DELETE FROM project_auth_company WHERE project_id = ?`, projectId);
+    // 4. Legacy / membership rows.
     db.delete(projectMembers).where(eq(projectMembers.projectId, projectId)).run();
     db.delete(invites).where(eq(invites.projectId, projectId)).run();
+    // 5. Finally the project row itself.
     db.delete(projects).where(eq(projects.id, projectId)).run();
   }
   // Cascade-delete a single channel and all its dependent rows. Optional
