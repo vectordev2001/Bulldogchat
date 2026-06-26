@@ -2,9 +2,9 @@ import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import type { ApiChannel, ApiUser, ChannelScope, ChannelType, UserRole } from "@/types/api";
+import type { ApiChannel, ApiUser, ApiRegion, ChannelScope, ChannelType, UserRole } from "@/types/api";
 import { isManagerish } from "@/types/api";
-import { Loader2, Hash, Globe, Building2, Users, Lock, Briefcase, Plus, X, FileText } from "lucide-react";
+import { Loader2, Hash, Globe, Building2, Users, Lock, Briefcase, Plus, X, FileText, MapPin } from "lucide-react";
 
 interface ApiJob {
   id: number;
@@ -64,6 +64,8 @@ export function CreateChannelDialog({ open, onClose, projectId, me, onCreated, d
   const [workObjectId, setWorkObjectId] = useState<string>(
     defaultWorkObjectId != null ? String(defaultWorkObjectId) : "",
   );
+  // Multi-tenant Option A: optional region scope. Empty = company-wide channel.
+  const [regionId, setRegionId] = useState<string>("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -95,6 +97,7 @@ export function CreateChannelDialog({ open, onClose, projectId, me, onCreated, d
       setTeamRole("user");
       setMemberIds(new Set());
       setWorkObjectId(defaultWorkObjectId != null ? String(defaultWorkObjectId) : "");
+      setRegionId("");
       setError(null);
       setLoading(false);
       setNewJobOpen(false);
@@ -125,6 +128,15 @@ export function CreateChannelDialog({ open, onClose, projectId, me, onCreated, d
   const jobsQ = useQuery<ApiJob[]>({
     queryKey: ["/api/work-objects", { projectId }],
     queryFn: () => apiRequest<ApiJob[]>("GET", `/api/work-objects?projectId=${projectId}`),
+    enabled: open,
+  });
+
+  // Multi-tenant: regions the user can see in this company. Server filters
+  // to only regions the creator has a grant for, so we render the options
+  // directly.
+  const regionsQ = useQuery<ApiRegion[]>({
+    queryKey: ["/api/projects", projectId, "regions"],
+    queryFn: () => apiRequest<ApiRegion[]>("GET", `/api/projects/${projectId}/regions`),
     enabled: open,
   });
 
@@ -209,6 +221,7 @@ export function CreateChannelDialog({ open, onClose, projectId, me, onCreated, d
       // on top of the visibility rule.
       if (memberIds.size > 0) body.memberIds = Array.from(memberIds);
       if (workObjectId) body.workObjectId = Number(workObjectId);
+      if (regionId) body.regionId = Number(regionId);
       // Phase 1.9.3 — nest a contract reference if the user picked one.
       // Server validates the shape and adds attachedByUserId/attachedAt.
       if (linkedContractId) {
@@ -282,6 +295,32 @@ export function CreateChannelDialog({ open, onClose, projectId, me, onCreated, d
             data-testid="input-channel-topic"
             maxLength={500}
           />
+
+          {/* Multi-tenant: optional region scope. Empty = company-wide
+              channel visible to anyone with any grant on this company.
+              Picking a region restricts visibility to users with a matching
+              (project, region) grant. Region list is filtered server-side
+              to what the creator can see. */}
+          <div className="space-y-1.5">
+            <label className="flex items-center gap-2 text-xs text-[hsl(0_0%_55%)]">
+              <MapPin className="h-3.5 w-3.5" />
+              Region (optional)
+            </label>
+            <select
+              value={regionId}
+              onChange={(e) => setRegionId(e.target.value)}
+              className="w-full rounded-md border border-[hsl(0_0%_18%)] bg-[hsl(0_0%_8%)] px-3 py-2 text-sm text-white"
+              data-testid="select-region"
+              disabled={regionsQ.isLoading}
+            >
+              <option value="">— Company-wide (no region)</option>
+              {(regionsQ.data ?? []).map(r => (
+                <option key={r.id} value={String(r.id)}>
+                  {r.code} · {r.name}
+                </option>
+              ))}
+            </select>
+          </div>
 
           {/* Optional job nesting. Leaving this blank keeps the channel as a
               company-wide channel; picking a job nests it under that job in

@@ -7,7 +7,7 @@ import { Avatar } from "./Avatar";
 import { ManageMembersDialog } from "./ManageMembersDialog";
 import { MoveChannelDialog } from "./MoveChannelDialog";
 import { DmSection } from "./DmSection";
-import type { ApiChannel, ApiProject, ApiUser } from "@/types/api";
+import type { ApiChannel, ApiProject, ApiUser, ApiRegion } from "@/types/api";
 
 // Phase 1.8: minimal job shape we need to nest channels under jobs in the
 // sidebar. Full shape lives on the right-rail / list dialog.
@@ -104,26 +104,46 @@ export function ChannelSidebar({
     [jobsQ.data, project.id],
   );
 
-  // Phase 1.9: unified channels. All company-global channels (text + legacy
-  // voice) render in one flat list — every channel can chat AND start a
-  // call, so the old text/voice split is just visual noise. We keep the
-  // `type` column on the data for back-compat but ignore it for grouping.
-  const { globalChannels, byJob } = useMemo(() => {
-    const global: ApiChannel[] = [];
-    const map = new Map<number, ApiChannel[]>();
+  // Multi-tenant Option A: regions for this company. Server returns only the
+  // regions the user has at least one grant for (or all for a whole-project
+  // / super-admin grant), so we render them directly.
+  const regionsQ = useQuery<ApiRegion[]>({
+    queryKey: ["/api/projects", project.id, "regions"],
+    queryFn: async () => {
+      const r = await fetch(`/api/projects/${project.id}/regions`, { credentials: "include" });
+      if (!r.ok) return [];
+      return r.json();
+    },
+  });
+  const regions = regionsQ.data ?? [];
+
+  // Phase 1.9 + multi-tenant: split channels into (a) company-wide
+  // (regionId=NULL, workObjectId=NULL), (b) per-region groups, and (c)
+  // job-nested groups. Channels with a regionId render under their region.
+  const { companyWideChannels, byRegion, byJob } = useMemo(() => {
+    const companyWide: ApiChannel[] = [];
+    const region = new Map<number, ApiChannel[]>();
+    const job = new Map<number, ApiChannel[]>();
     for (const c of channels) {
-      if (c.workObjectId == null) {
-        global.push(c);
-      } else {
-        const arr = map.get(c.workObjectId) ?? [];
+      if (c.workObjectId != null) {
+        const arr = job.get(c.workObjectId) ?? [];
         arr.push(c);
-        map.set(c.workObjectId, arr);
+        job.set(c.workObjectId, arr);
+        continue;
       }
+      if (c.regionId != null) {
+        const arr = region.get(c.regionId) ?? [];
+        arr.push(c);
+        region.set(c.regionId, arr);
+        continue;
+      }
+      companyWide.push(c);
     }
     const sortFn = (a: ApiChannel, b: ApiChannel) => a.position - b.position || a.id - b.id;
-    global.sort(sortFn);
-    for (const arr of map.values()) arr.sort(sortFn);
-    return { globalChannels: global, byJob: map };
+    companyWide.sort(sortFn);
+    for (const arr of region.values()) arr.sort(sortFn);
+    for (const arr of job.values()) arr.sort(sortFn);
+    return { companyWideChannels: companyWide, byRegion: region, byJob: job };
   }, [channels]);
 
   const [textOpen, setTextOpen] = useState(true);
@@ -131,9 +151,13 @@ export function ChannelSidebar({
   const [openJobs, setOpenJobs] = useState<Record<number, boolean>>({});
   const [search, setSearch] = useState("");
 
+  // Per-region open/closed state. Default to open so users see their
+  // channels on first load; persists across re-renders within the session.
+  const [openRegions, setOpenRegions] = useState<Record<number, boolean>>({});
+
   const q = search.toLowerCase();
   const matchText = (c: ApiChannel) => c.name.toLowerCase().includes(q);
-  const filteredGlobalChannels = globalChannels.filter(matchText);
+  const filteredCompanyWide = companyWideChannels.filter(matchText);
   // A job is visible while searching if its ref/title matches OR any of its
   // channels match. This way typing "safety" reveals both the safety job
   // and channels named #safety-* under unrelated jobs.
@@ -271,10 +295,9 @@ export function ChannelSidebar({
           })}
         </Section>
 
-        {/* Company-global channels (#general, #announcements). Rendered
-            below Jobs so they don't push the active job off-screen. */}
-        <Section label="Channels" open={textOpen} onToggle={() => setTextOpen(!textOpen)} onAdd={canCreateChannel ? onCreateChannel : undefined}>
-          {textOpen && filteredGlobalChannels.map((c) => (
+        {/* Company-wide channels (regionId=NULL, e.g. #announcements). */}
+        <Section label="Company-wide" open={textOpen} onToggle={() => setTextOpen(!textOpen)} onAdd={canCreateChannel ? onCreateChannel : undefined}>
+          {textOpen && filteredCompanyWide.map((c) => (
             <ChannelRow
               key={c.id}
               channel={c}
@@ -283,10 +306,43 @@ export function ChannelSidebar({
               onContextMenu={isAdmin ? (x, y) => setCtxMenu({ channel: c, x, y }) : undefined}
             />
           ))}
-          {textOpen && filteredGlobalChannels.length === 0 && (
+          {textOpen && filteredCompanyWide.length === 0 && (
             <div className="px-2 py-1.5 text-[11px] text-[hsl(var(--vs-text-subtle))]">No matching channels.</div>
           )}
         </Section>
+
+        {/* Multi-tenant: per-region groups. Each region is its own
+            collapsible section. Hidden during search when empty so the
+            sidebar collapses to just the matching companies. */}
+        {regions.map((reg) => {
+          const open = openRegions[reg.id] ?? true;
+          const regionChannels = (byRegion.get(reg.id) ?? []).filter(matchText);
+          if (q && regionChannels.length === 0) return null;
+          return (
+            <Section
+              key={reg.id}
+              label={`${reg.code} · ${reg.name}`}
+              open={open}
+              onToggle={() => setOpenRegions(s => ({ ...s, [reg.id]: !open }))}
+              onAdd={canCreateChannel ? onCreateChannel : undefined}
+              addTitle={`New channel in ${reg.name}`}
+            >
+              {open && regionChannels.map((c) => (
+                <ChannelRow
+                  key={c.id}
+                  channel={c}
+                  active={c.id === activeChannelId}
+                  onClick={() => onSelectChannel(c.id)}
+                  onContextMenu={isAdmin ? (x, y) => setCtxMenu({ channel: c, x, y }) : undefined}
+                  regionBadge={reg.code}
+                />
+              ))}
+              {open && regionChannels.length === 0 && (
+                <div className="px-2 py-1.5 text-[11px] text-[hsl(var(--vs-text-subtle))]">No channels in this region.</div>
+              )}
+            </Section>
+          );
+        })}
 
         {/* Company-scoped Jobs launcher — opens the dialog filtered to the
             current company. The dialog reads the active company from props. */}
@@ -563,8 +619,8 @@ function JobGroup({
 }
 
 function ChannelRow({
-  channel, active, onClick, onContextMenu,
-}: { channel: ApiChannel; active: boolean; onClick: () => void; onContextMenu?: (x: number, y: number) => void }) {
+  channel, active, onClick, onContextMenu, regionBadge,
+}: { channel: ApiChannel; active: boolean; onClick: () => void; onContextMenu?: (x: number, y: number) => void; regionBadge?: string }) {
   // Phase 1.9: every channel renders with the # icon. The phone/video
   // buttons live in the channel header (TextChannelView).
   const Icon = Hash;
@@ -593,9 +649,18 @@ function ChannelRow({
       {active && <span className="absolute left-0 top-1.5 bottom-1.5 w-[3px] rounded-r-full bg-vs-accent" />}
       <Icon className={`w-4 h-4 shrink-0 ${active ? "text-vs-accent" : "text-[hsl(var(--vs-text-subtle))]"}`} />
       <span className="truncate font-medium">{channel.name}</span>
+      {regionBadge && (
+        <span
+          className="ml-auto inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold tracking-wider bg-[hsl(var(--vs-accent-soft))] text-vs-accent shrink-0"
+          title={`Region: ${regionBadge}`}
+          aria-label={`Region ${regionBadge}`}
+        >
+          {regionBadge}
+        </span>
+      )}
       {scope !== "global" && (
         <ScopeIcon
-          className="w-3 h-3 shrink-0 ml-auto text-[hsl(var(--vs-text-subtle))] group-hover:text-[hsl(var(--vs-text-muted))]"
+          className={`w-3 h-3 shrink-0 ${regionBadge ? "" : "ml-auto"} text-[hsl(var(--vs-text-subtle))] group-hover:text-[hsl(var(--vs-text-muted))]`}
           aria-label={scopeTitle}
         />
       )}

@@ -15,6 +15,7 @@ import { runMigrations } from "./migrate";
 import { runSeed } from "./seed";
 import { runMultiTenantSeed } from "./seed-multitenant";
 import { canSeeChannel as mtCanSeeChannel, type AccessSnapshot } from "./multitenant-access";
+import { rawDb } from "./db";
 import { registerV2Routes, parseMentions } from "./routes-v2";
 import { registerWorkObjectRoutes } from "./routes-work-objects";
 import { registerIntegrationRoutes } from "./routes-integrations";
@@ -479,12 +480,36 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
 
   app.get("/api/projects/:id/channels", requireAuth, (req, res) => {
     const u = (req as AuthedRequest).user;
+    const access = (req as AuthedRequest).access;
     const id = Number(req.params.id);
-    if (!userCanAccessProject(u.id, u.orgId, id, (req as AuthedRequest).access)) return res.status(404).json({ message: "Not found" });
+    if (!userCanAccessProject(u.id, u.orgId, id, access)) return res.status(404).json({ message: "Not found" });
     // Scope-aware list: admins see everything; others only see channels they
     // are permitted by scope (global / matching entity / matching team-role /
-    // private membership).
-    res.json(storage.listChannelsForUserInProject(id, u.id));
+    // private membership). Then layer multi-tenant region filtering on top.
+    let list = storage.listChannelsForUserInProject(id, u.id);
+    if (access) {
+      list = list.filter(c => mtCanSeeChannel(access, c.projectId, c.regionId ?? null));
+    }
+    res.json(list);
+  });
+
+  // Multi-tenant: list regions for a project. Returns only regions the user
+  // has at least one grant for (whole-project grant returns all regions).
+  // Used by the sidebar to render the "Company → Region" tree.
+  app.get("/api/projects/:id/regions", requireAuth, (req, res) => {
+    const u = (req as AuthedRequest).user;
+    const access = (req as AuthedRequest).access;
+    const id = Number(req.params.id);
+    if (!userCanAccessProject(u.id, u.orgId, id, access)) return res.status(404).json({ message: "Not found" });
+    const all = rawDb
+      .prepare(`SELECT id, project_id AS projectId, code, name, position FROM regions WHERE project_id = ? ORDER BY position ASC, id ASC`)
+      .all(id) as Array<{ id: number; projectId: number; code: string; name: string; position: number }>;
+    if (!access || access.isSuperAdmin) return res.json(all);
+    const regionsForProject = access.regionsByProject.get(id);
+    // Whole-project grant (set contains null) -> see all regions.
+    if (regionsForProject?.has(null as any)) return res.json(all);
+    const allowed = regionsForProject ?? new Set<number>();
+    res.json(all.filter(r => allowed.has(r.id)));
   });
 
   app.post("/api/projects/:id/channels", requireAuth, requireCap(can.chat.createChannel), (req, res) => {
@@ -504,6 +529,22 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
       }
       workObjectId = job.id;
     }
+    // Multi-tenant: validate the optional region belongs to this project,
+    // and that the caller has access to it. NULL = company-wide channel.
+    let regionId: number | null = null;
+    if (parsed.data.regionId != null) {
+      const region = rawDb
+        .prepare(`SELECT id, project_id AS projectId FROM regions WHERE id = ?`)
+        .get(parsed.data.regionId) as { id: number; projectId: number } | undefined;
+      if (!region || region.projectId !== id) {
+        return res.status(400).json({ message: "Region does not belong to this company" });
+      }
+      const access = (req as AuthedRequest).access;
+      if (access && !mtCanSeeChannel(access, id, region.id)) {
+        return res.status(404).json({ message: "Not found" });
+      }
+      regionId = region.id;
+    }
     const existing = storage.listChannelsByProject(id);
     // Phase 1.9.3 — if the caller is attaching a contract at creation, the
     // linkedContract payload carries the cached metadata. Validated by the
@@ -522,6 +563,7 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     const channel = storage.createChannel({
       projectId: id,
       workObjectId,
+      regionId,
       position: existing.length,
       name: parsed.data.name,
       type: parsed.data.type,
