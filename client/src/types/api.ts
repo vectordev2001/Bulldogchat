@@ -53,12 +53,23 @@ export interface ApiLinkedContract {
   attachedAt: number;
 }
 
+export interface ApiRegion {
+  id: number;
+  projectId: number;
+  code: string;
+  name: string;
+  position: number;
+}
+
 export interface ApiChannel {
   id: number;
   projectId: number;
   // Phase 1.8: optional Job (work_object) this channel is nested under.
   // NULL = company-global channel rendered above the Jobs section.
   workObjectId?: number | null;
+  // Multi-tenant Option A: optional region scope. NULL = company-wide
+  // channel; sidebar groups it above the per-region sections.
+  regionId?: number | null;
   name: string;
   type: ChannelType;
   topic: string | null;
