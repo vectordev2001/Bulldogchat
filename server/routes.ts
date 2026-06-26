@@ -506,8 +506,8 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     const id = Number(req.params.id);
     if (!userCanAccessProject(u.id, u.orgId, id, access)) return res.status(404).json({ message: "Not found" });
     const all = rawDb
-      .prepare(`SELECT id, project_id AS projectId, code, name, position FROM regions WHERE project_id = ? ORDER BY position ASC, id ASC`)
-      .all(id) as Array<{ id: number; projectId: number; code: string; name: string; position: number }>;
+      .prepare(`SELECT id, project_id AS projectId, code, name, position, auth_location_id AS authLocationId FROM regions WHERE project_id = ? ORDER BY position ASC, id ASC`)
+      .all(id) as Array<{ id: number; projectId: number; code: string; name: string; position: number; authLocationId: string | null }>;
     if (!access || access.isSuperAdmin) return res.json(all);
     const regionsForProject = access.regionsByProject.get(id);
     // Whole-project grant (set contains null) -> see all regions.

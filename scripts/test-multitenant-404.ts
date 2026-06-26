@@ -98,6 +98,8 @@ async function main() {
   }
   const regA0 = regionsA.body[0];
   const regB0 = regionsB.body[0];
+  console.log(`Region A0: ${regA0.id} ${regA0.code} (authLoc ${regA0.authLocationId})`);
+  console.log(`Region B0: ${regB0.id} ${regB0.code} (authLoc ${regB0.authLocationId})`);
 
   // Channels per project (super admin sees all).
   const chansA = await chatGet(superToken, `/api/projects/${projA.id}/channels`);
@@ -113,7 +115,9 @@ async function main() {
   const regionScopedEmail = `test-mt-${Date.now()}@bulldogops.test`;
   // Provision the user first via auth internal API (best-effort; the chat bridge
   // also auto-provisions on first hit).  Then mint a token with a narrow grant.
-  const grants = [{ companyId: projA.authCompanyId!, locationId: String(regA0.id) }];
+  // Use the AUTH-side ids (authCompanyId + authLocationId) so resolveGrants
+  // on the chat side can map back to (projectId, regionId).
+  const grants = [{ companyId: projA.authCompanyId!, locationId: regA0.authLocationId! }];
   const scopedToken = await mintToken(regionScopedEmail, grants);
 
   // ===== Cases =====
