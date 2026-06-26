@@ -421,6 +421,36 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     res.json(result);
   });
 
+  // ── PHASE 3 CLEANUP: ADMIN DELETE PROJECTS ──
+  // Cascade-delete one or more projects (and ALL of their channels, regions,
+  // jobs, messages, members, MT grants, auth-company links). Admin-only and
+  // scoped to the caller's org. Body: { projectIds: number[] }.
+  // Returns per-project ok/error.
+  app.post("/api/admin/delete-projects", requireAuth, requireRole(["admin"]), (req, res) => {
+    const u = (req as AuthedRequest).user;
+    const body = req.body ?? {};
+    const ids: number[] = Array.isArray(body.projectIds)
+      ? body.projectIds.map((n: unknown) => Number(n)).filter((n) => Number.isFinite(n))
+      : [];
+    if (ids.length === 0) return res.status(400).json({ message: "projectIds[] required" });
+    const results: Array<{ id: number; ok: boolean; error?: string }> = [];
+    for (const id of ids) {
+      const project = storage.getProject(id);
+      if (!project || project.orgId !== u.orgId) {
+        results.push({ id, ok: false, error: "not-in-org" });
+        continue;
+      }
+      try {
+        storage.deleteProjectCascade(id);
+        results.push({ id, ok: true });
+      } catch (err: any) {
+        console.error("[delete-project]", id, err);
+        results.push({ id, ok: false, error: String(err?.message ?? err) });
+      }
+    }
+    res.json({ results });
+  });
+
   // ── PRESENCE (Phase 1.9) ──
   // Client posts here when the user picks a status from the top-bar popover,
   // when the idle detector flips to 'away', or on page-hide to 'offline'.
