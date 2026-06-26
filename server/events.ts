@@ -1,10 +1,16 @@
 import type { Response } from "express";
 import type { Message } from "@shared/schema";
+import { rawDb } from "./db";
+import { canSeeChannel, type AccessSnapshot } from "./multitenant-access";
 
 type Subscriber = {
   userId: number;
   orgId: number;
   res: Response;
+  // Multi-tenant access snapshot for this subscriber. When MULTITENANT_MODE
+  // is off, callers may pass a permissive snapshot that allows everything.
+  // When on, every channel-scoped event runs canSeeChannel before send().
+  access: AccessSnapshot;
 };
 
 const subscribers = new Set<Subscriber>();
@@ -31,41 +37,70 @@ export type WireMessage = Message & {
   reactions?: { emoji: string; count: number; userIds: number[] }[];
 };
 
-export function emitMessageNew(orgId: number, msg: WireMessage) {
-  for (const sub of subscribers) {
-    if (sub.orgId === orgId) send(sub, "message:new", msg);
+// Tiny per-call cache so we don't hit SQLite N times per fan-out for the
+// same channelId. Channels rarely change project/region after creation, but
+// we still want a fresh row per emit invocation.
+function lookupChannelScope(channelId: number): { projectId: number; regionId: number | null } | null {
+  try {
+    const row = rawDb
+      .prepare(`SELECT project_id AS projectId, region_id AS regionId FROM channels WHERE id = ?`)
+      .get(channelId) as { projectId: number; regionId: number | null } | undefined;
+    if (!row) return null;
+    return { projectId: row.projectId, regionId: row.regionId ?? null };
+  } catch {
+    return null;
   }
+}
+
+// Wraps a per-channel fan-out with an access check. If the channel can't be
+// located (deleted mid-emit, schema mismatch, etc.) we fall back to org-only
+// gating so we don't silently drop legitimate events.
+function fanoutChannel(
+  orgId: number,
+  channelId: number,
+  event: string,
+  payload: unknown,
+) {
+  const scope = lookupChannelScope(channelId);
+  for (const sub of subscribers) {
+    if (sub.orgId !== orgId) continue;
+    if (scope) {
+      if (!canSeeChannel(sub.access, scope.projectId, scope.regionId)) continue;
+    }
+    send(sub, event, payload);
+  }
+}
+
+export function emitMessageNew(orgId: number, msg: WireMessage) {
+  fanoutChannel(orgId, msg.channelId, "message:new", msg);
 }
 
 export function emitMessageUpdate(orgId: number, msg: WireMessage) {
-  for (const sub of subscribers) {
-    if (sub.orgId === orgId) send(sub, "message:update", msg);
-  }
+  fanoutChannel(orgId, msg.channelId, "message:update", msg);
 }
 
 export function emitMessageDelete(orgId: number, payload: { channelId: number; messageId: number }) {
-  for (const sub of subscribers) {
-    if (sub.orgId === orgId) send(sub, "message:delete", payload);
-  }
+  fanoutChannel(orgId, payload.channelId, "message:delete", payload);
 }
 
 export function emitReactionChange(orgId: number, payload: { messageId: number; channelId: number }) {
-  for (const sub of subscribers) {
-    if (sub.orgId === orgId) send(sub, "reaction:change", payload);
-  }
+  fanoutChannel(orgId, payload.channelId, "reaction:change", payload);
 }
 
 // Broadcast that a channel was deleted (admin delete or DM thread wipe).
 // Clients drop the channel from their caches and bail out of the view if
 // it's currently active. formerMemberIds lets a DM-aware client skip the
 // invalidate work for users who weren't members anyway.
+//
+// We use the cached channel scope if available, but channels are deleted
+// from the table before this fires in most code paths, so we accept the
+// org-only fallback here. Clients that can't see the channel will simply
+// receive a no-op cache invalidation.
 export function emitChannelDelete(
   orgId: number,
   payload: { channelId: number; deletedByUserId?: number; formerMemberIds?: number[] },
 ) {
-  for (const sub of subscribers) {
-    if (sub.orgId === orgId) send(sub, "channel:delete", payload);
-  }
+  fanoutChannel(orgId, payload.channelId, "channel:delete", payload);
 }
 
 /**

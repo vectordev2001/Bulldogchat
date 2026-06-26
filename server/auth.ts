@@ -4,6 +4,7 @@ import type { Request, Response, NextFunction } from "express";
 import { storage } from "./storage";
 import type { User } from "@shared/schema";
 import { type Role } from "@shared/permissions";
+import { computeAccess, type AccessSnapshot } from "./multitenant-access";
 
 /**
  * Resolve a chat user's local role onto the Phase 2.0 Role enum. Chat stores
@@ -24,6 +25,17 @@ export const AUTH_COOKIE = "vc_token";
 
 export interface AuthedRequest extends Request {
   user: User;
+  /**
+   * Multi-tenant access snapshot. Populated by requireAuth on every
+   * authenticated request. Cheap to compute (≤2 indexed reads), and lets
+   * downstream route handlers do O(1) visibility checks without hitting
+   * the DB themselves.
+   *
+   * In single-tenant mode (MULTITENANT_MODE ≠ "1") this is a permissive
+   * snapshot — isSuperAdmin=true — so the existing routes behave exactly
+   * as before until the rollout is enabled.
+   */
+  access: AccessSnapshot;
 }
 
 export function hashPassword(password: string): string {
@@ -70,8 +82,28 @@ export function requireAuth(req: Request, res: Response, next: NextFunction) {
   const user = storage.getUser(userId);
   if (!user) return res.status(401).json({ message: "User not found" });
   (req as AuthedRequest).user = user;
+  (req as AuthedRequest).access = buildAccessForUser(user);
   storage.updateUserLastSeen(user.id);
   next();
+}
+
+/**
+ * Compute the multi-tenant access snapshot for a user. When MULTITENANT_MODE
+ * is off, returns a permissive snapshot (isSuperAdmin=true) so the existing
+ * single-tenant routes keep working unchanged. When on, returns the real
+ * grants snapshot pulled from user_project_regions.
+ */
+export function buildAccessForUser(user: User): AccessSnapshot {
+  if (process.env.MULTITENANT_MODE !== "1") {
+    return { isSuperAdmin: true, projectIds: new Set(), regionsByProject: new Map() };
+  }
+  // The chat user row stores admin/manager/user. Super-admin status lives on
+  // the auth side. We mirror it onto the chat row via the SSO bridge for the
+  // founder account by setting role="admin" + matching jbieler@vectorfd.com.
+  // For now, treat chat "admin" as a Suite-wide bypass; tighten later if we
+  // need company-scoped admins distinct from global super_admin.
+  const globalRole = user.role === "admin" ? "super_admin" : user.role;
+  return computeAccess(user.id, globalRole);
 }
 
 export function tryAuth(req: Request, _res: Response, next: NextFunction) {
@@ -80,7 +112,10 @@ export function tryAuth(req: Request, _res: Response, next: NextFunction) {
     const userId = verifyJwt(token);
     if (userId) {
       const user = storage.getUser(userId);
-      if (user) (req as AuthedRequest).user = user;
+      if (user) {
+        (req as AuthedRequest).user = user;
+        (req as AuthedRequest).access = buildAccessForUser(user);
+      }
     }
   }
   next();

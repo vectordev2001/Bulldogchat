@@ -27,6 +27,7 @@ import { createMeeting as createMeetingRow, linkExistingCallToMeeting } from "./
 import { checkSmsConsent } from "./auth-consent";
 import { emitMessageNew, emitMessageDelete } from "./events";
 import { requireAuth, type AuthedRequest } from "./auth";
+import { canSeeChannel as mtCanSeeChannel } from "./multitenant-access";
 import { sendEmail, isEmailConfigured, emailFromAddress, emailFromName } from "./email";
 import { sendNotificationToUsers } from "./push";
 import { createTeamsMeeting } from "./teams/createMeeting";
@@ -905,6 +906,10 @@ export function registerScheduledCallRoutes(app: Express) {
           const isMember = storage.isChannelMember(parsed, u.id);
           if (!isMember && me.role !== "admin") {
             return res.status(403).json({ message: "not a member of that channel" });
+          }
+          // Multi-tenant: even if isChannelMember/admin passes, region scope must match.
+          if (!mtCanSeeChannel((req as AuthedRequest).access, ch.projectId, ch.regionId ?? null)) {
+            return res.status(404).json({ message: "channel not found" });
           }
           channelId = parsed;
         } else {

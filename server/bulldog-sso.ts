@@ -15,6 +15,7 @@ import type { Request, Response, NextFunction, RequestHandler } from "express";
 import { bulldogAuth } from "./bulldog-sdk";
 import { storage } from "./storage";
 import { AUTH_COOKIE, signJwt, setAuthCookie, verifyJwt } from "./auth";
+import { mirrorUserGrants } from "./multitenant-access";
 
 const AUTH_BASE = process.env.BULLDOG_AUTH_URL || "https://auth.bulldogops.com";
 
@@ -86,14 +87,20 @@ export function bulldogSsoBridge(): RequestHandler {
             // Auto-add new SSO users to every project in their org so they
             // can immediately see global channels. Without this, brand-new
             // users see an empty sidebar.
-            try {
-              const orgProjects = storage.listProjectsByOrg(local.orgId);
-              for (const p of orgProjects) {
-                try { storage.addProjectMember(p.id, local.id, "member"); }
-                catch { /* duplicate is fine */ }
+            //
+            // SKIPPED in multi-tenant mode — mirrorUserGrants (below)
+            // populates project_members for the specific projects the
+            // user is granted via auth, never the rest.
+            if (process.env.MULTITENANT_MODE !== "1") {
+              try {
+                const orgProjects = storage.listProjectsByOrg(local.orgId);
+                for (const p of orgProjects) {
+                  try { storage.addProjectMember(p.id, local.id, "member"); }
+                  catch { /* duplicate is fine */ }
+                }
+              } catch (e) {
+                console.warn("[chat bulldogSsoBridge] failed to seed project membership:", e);
               }
-            } catch (e) {
-              console.warn("[chat bulldogSsoBridge] failed to seed project membership:", e);
             }
           } catch (e) {
             console.error("[chat bulldogSsoBridge] provision failed:", e);
@@ -136,20 +143,38 @@ export function bulldogSsoBridge(): RequestHandler {
           try { storage.updateUser(local.id, { role: syncedRole }); }
           catch (e) { console.warn("[chat bulldogSsoBridge] role sync failed:", e); }
         }
+        // Multi-tenant Option A: mirror auth grants[] into chat's
+        // user_project_regions on every bridge so revocations land
+        // immediately on the next page load. Gated by MULTITENANT_MODE so
+        // pre-rollout deploys keep their single-tenant behavior.
+        if (process.env.MULTITENANT_MODE === "1") {
+          try {
+            const grants = ((req.user as { grants?: Array<{ companyId: string; locationId: string | null }> }).grants) ?? [];
+            mirrorUserGrants(local.id, grants);
+          } catch (e) {
+            console.warn("[chat bulldogSsoBridge] grants mirror failed:", e);
+          }
+        }
         // Backfill: if an existing local user is in zero projects, seed them
         // into every org project. Cheap idempotent guard for users created
         // before the auto-seed code above shipped.
-        try {
-          const memberOf = storage.listProjectsForUser(local.id);
-          if (memberOf.length === 0) {
-            const orgProjects = storage.listProjectsByOrg(local.orgId);
-            for (const p of orgProjects) {
-              try { storage.addProjectMember(p.id, local.id, "member"); }
-              catch { /* duplicate is fine */ }
+        //
+        // SKIPPED in multi-tenant mode — mirrorUserGrants above already
+        // populates project_members for legitimately-granted projects, and
+        // blanket-membership here would over-grant cross-tenant access.
+        if (process.env.MULTITENANT_MODE !== "1") {
+          try {
+            const memberOf = storage.listProjectsForUser(local.id);
+            if (memberOf.length === 0) {
+              const orgProjects = storage.listProjectsByOrg(local.orgId);
+              for (const p of orgProjects) {
+                try { storage.addProjectMember(p.id, local.id, "member"); }
+                catch { /* duplicate is fine */ }
+              }
             }
+          } catch (e) {
+            console.warn("[chat bulldogSsoBridge] backfill membership failed:", e);
           }
-        } catch (e) {
-          console.warn("[chat bulldogSsoBridge] backfill membership failed:", e);
         }
         // Only mint a new chat JWT when one isn't already present. When the
         // caller already has a valid chat token we just ran the sync above
