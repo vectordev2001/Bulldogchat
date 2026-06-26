@@ -135,6 +135,27 @@ export function bulldogSsoBridge(): RequestHandler {
           try { storage.updateUser(local.id, { phone: authPhone }); }
           catch (e) { console.warn("[chat bulldogSsoBridge] phone sync failed:", e); }
         }
+        // Phase 4 — mirror canonical profile photo from bulldog-auth. Auth
+        // is the single source of truth; chat just stores the URL so the
+        // sidebar / avatar components can render without an extra round
+        // trip. Empty string from auth clears the local URL.
+        const authAvatar = ((req.user as { avatarUrl?: string | null }).avatarUrl ?? "").trim();
+        // Resolve to absolute URL if auth gave us a relative /avatars/... path
+        // so chat clients on a different origin can load it without CORS
+        // surprises. AUTH_BASE already points at https://auth.bulldogops.com
+        // (or the configured base).
+        const resolvedAvatar = authAvatar.startsWith("/") ? `${AUTH_BASE}${authAvatar}` : (authAvatar || null);
+        if ((resolvedAvatar ?? null) !== ((local as { avatarUrl?: string | null }).avatarUrl ?? null)) {
+          try { storage.updateUser(local.id, { avatarUrl: resolvedAvatar }); }
+          catch (e) { console.warn("[chat bulldogSsoBridge] avatar sync failed:", e); }
+        }
+        // Phase 4 — mirror Job Title (auth stores it as `department`, chat
+        // stores it as `title`). Trim/normalize the same way as name above.
+        const authTitle = ((req.user as { department?: string | null }).department ?? "").trim() || null;
+        if (authTitle !== ((local as { title?: string | null }).title ?? null)) {
+          try { storage.updateUser(local.id, { title: authTitle }); }
+          catch (e) { console.warn("[chat bulldogSsoBridge] title sync failed:", e); }
+        }
         // Phase 2.0 role sync: auth owns role. Promote/demote the chat row on
         // every bridge so manager/admin grants made in auth take effect on the
         // user's next page load rather than waiting for an admin sync sweep.
