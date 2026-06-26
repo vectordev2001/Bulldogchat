@@ -14,6 +14,59 @@ export const insertOrganizationSchema = createInsertSchema(organizations).omit({
 export type Organization = typeof organizations.$inferSelect;
 export type InsertOrganization = z.infer<typeof insertOrganizationSchema>;
 
+/* ----- MULTI-TENANT (Bulldog Suite Option A) -----
+   The Bulldog Suite serves 4 separate legal companies sharing one chat
+   install: Vector Force Development, Vector Services, Vector Talent
+   Solutions, TDIS. Each is a chat-side `project` (the existing
+   Discord-style "server" primitive) tagged with the matching
+   bulldog-auth companyId via `project_auth_company`.
+
+   `regions` are the geographic slices each project carves itself into
+   (PNW, West, Southwest, Central, Southeast, Northeast). Channels can
+   optionally be scoped to a region; null = company-wide.
+
+   `user_project_regions` mirrors a user's bulldog-auth grants into the
+   chat DB on every SSO bridge. (projectId, regionId=null) = whole-project
+   access; (projectId, regionId=R) = scoped to region R. A user can hold
+   multiple rows per project for several regions.
+*/
+export const projectAuthCompany = sqliteTable("project_auth_company", {
+  // chat-side project id (the "company" workspace in the UI)
+  projectId: integer("project_id").primaryKey().references(() => projects.id),
+  // bulldog-auth companies.id (UUID-style string)
+  authCompanyId: text("auth_company_id").notNull(),
+});
+export type ProjectAuthCompany = typeof projectAuthCompany.$inferSelect;
+
+export const regions = sqliteTable("regions", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  projectId: integer("project_id").notNull().references(() => projects.id),
+  // Stable code ("PNW", "W", "SW", "C", "SE", "NE"). Unique within projectId.
+  code: text("code").notNull(),
+  name: text("name").notNull(),
+  // Display ordering inside the company; lower first.
+  position: integer("position").notNull().default(0),
+  // Mirror of the bulldog-auth locationId so SSO grants map cleanly.
+  authLocationId: text("auth_location_id"),
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+});
+export type Region = typeof regions.$inferSelect;
+
+export const userProjectRegions = sqliteTable(
+  "user_project_regions",
+  {
+    userId: integer("user_id").notNull().references(() => users.id),
+    projectId: integer("project_id").notNull().references(() => projects.id),
+    // Null = whole-project ("company-wide") grant. Non-null = scoped to that region.
+    regionId: integer("region_id").references(() => regions.id),
+    grantedAt: integer("granted_at", { mode: "timestamp" }).notNull(),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.userId, t.projectId, t.regionId] }),
+  }),
+);
+export type UserProjectRegion = typeof userProjectRegions.$inferSelect;
+
 /* ─────────────────── USERS ─────────────────── */
 // Phase 2.0 unified roles. Legacy values (foreman/office/field/safety/
 // dispatcher/field_crew) are remapped to "user" by the boot migration and by
@@ -100,6 +153,11 @@ export const channels = sqliteTable("channels", {
   // company-global channel (e.g. #general, #announcements). When set,
   // sidebar nests this channel under the job's section.
   workObjectId: integer("work_object_id").references(() => workObjects.id),
+  // Optional region scope (Multi-tenant Option A). NULL = company-wide
+  // channel visible to every user with any grant on this project. When
+  // set, only users with a (project, region) grant for this exact region
+  // (or a whole-project grant where region IS NULL) can see it.
+  regionId: integer("region_id").references(() => regions.id),
   name: text("name").notNull(),
   type: text("type", { enum: channelTypes }).notNull().default("text"),
   topic: text("topic"),
@@ -161,6 +219,9 @@ export const channelCreateSchema = z.object({
   // Optional: nest this channel under a specific Job (work_object).
   // The job must belong to the same company (projectId) as the channel.
   workObjectId: z.number().int().positive().optional().nullable(),
+  // Optional region scope. Server enforces caller has a grant on this
+  // (project, region) pair (or a whole-project grant) at create time.
+  regionId: z.number().int().positive().optional().nullable(),
   memberIds: z.array(z.number().int().positive()).optional(),
   // Phase 1.9.3 — attach a contract at create time. When present, the
   // channel will store linkedContract and post a system message announcing
