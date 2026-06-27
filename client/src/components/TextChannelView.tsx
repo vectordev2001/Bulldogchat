@@ -957,7 +957,12 @@ function SystemMessageRow({ meta, content, createdAt, meId, myRole, onJoinMeetin
   // instead of the compact work-object banner.
   if (meta.kind.startsWith("scheduled_call.")) {
     const smeta = meta as ApiScheduledCallSystemMessageMeta;
-    return <ScheduledCallCard meta={smeta} createdAt={createdAt} meId={meId} myRole={myRole} onJoin={onJoinMeeting ? () => onJoinMeeting(smeta.callKind) : undefined} />;
+    // Scheduled meetings carry their own `joinUrl` (/m/<code>). Route the
+    // Join button to that URL directly so the meeting flow ranges over the
+    // explicit invitee list instead of the ad-hoc channel ring dialog, which
+    // would otherwise read channel members and show "Ring everyone in
+    // #channel (0 people)" for company-wide channels like #announcements.
+    return <ScheduledCallCard meta={smeta} createdAt={createdAt} meId={meId} myRole={myRole} />;
   }
   // Meeting-summary cards: title + preview + "View full notes".
   if (meta.kind === "meeting_summary") {
@@ -1357,7 +1362,15 @@ interface ScheduledCallInviteeLive {
   response: "pending" | "yes" | "no" | "maybe";
 }
 
-function ScheduledCallCard({ meta, createdAt, meId, myRole, onJoin }: { meta: ApiScheduledCallSystemMessageMeta; createdAt: string; meId: number; myRole: UserRole; onJoin?: () => void }) {
+function ScheduledCallCard({ meta, createdAt, meId, myRole }: { meta: ApiScheduledCallSystemMessageMeta; createdAt: string; meId: number; myRole: UserRole }) {
+  // Join button always navigates to the meeting's canonical /m/<code> page,
+  // which handles invitee gating, ringing the explicit invitee list, and
+  // guest joins via SMS link — the same flow Twilio uses. Falls back to the
+  // meeting code if joinUrl is somehow absent on an older message.
+  const onJoin = () => {
+    const url = (meta as any).joinUrl || (meta as any).meetingCode ? ((meta as any).joinUrl ?? `/m/${(meta as any).meetingCode}`) : null;
+    if (url) window.location.href = url;
+  };
   const { toast } = useToast();
   const canDelete = meta.organizerId === meId || myRole === "admin";
   const startDate = new Date(meta.startAt);
