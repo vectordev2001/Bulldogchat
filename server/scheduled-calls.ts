@@ -751,6 +751,77 @@ export function stopReminderLoop() {
   if (reminderTimer) { clearInterval(reminderTimer); reminderTimer = null; }
 }
 
+/**
+ * Notify every app-user invitee of a scheduled meeting that the meeting has
+ * actually started (someone joined the LiveKit room). Mirrors Teams' "Bob
+ * started a meeting" prompt: each invitee gets a web push with a one-tap
+ * Join URL pointing at the meeting's canonical /m/<code> page.
+ *
+ * Looks up the scheduled_calls row by its linked meeting_id (set when the
+ * scheduled call was mirrored into the meetings table). Idempotent guard:
+ * uses the call's existing `reminder_sent_at` timestamp as a marker so we
+ * don't re-fire if the host re-joins after a brief drop. Best-effort: never
+ * throws; failures here must not block the meeting join flow.
+ */
+export async function notifyInviteesMeetingStarted(
+  meetingId: string,
+  starterUserId: number,
+): Promise<void> {
+  try {
+    const row = rawDb
+      .prepare(
+        "SELECT id, organizer_id, title, reminder_sent_at FROM scheduled_calls WHERE meeting_id = ? AND status IN ('scheduled','started')",
+      )
+      .get(meetingId) as
+      | { id: number; organizer_id: number; title: string; reminder_sent_at: number | null }
+      | undefined;
+    if (!row) return;
+    // Don't re-spam invitees if we've already fanned out for this meeting.
+    if (row.reminder_sent_at) return;
+
+    const call = getScheduledCall(row.id);
+    if (!call) return;
+    const starter = storage.getUser(starterUserId);
+    const starterName = starter?.name ?? "Someone";
+
+    // Resolve the meeting code for the Join link.
+    const meeting = getMeetingById(meetingId);
+    if (!meeting?.code) return;
+    const joinUrl = `https://chat.bulldogops.com/m/${meeting.code}`;
+
+    // Mark started + reminder_sent_at up-front (best-effort) so a concurrent
+    // re-join doesn't double-fire.
+    setScheduledCallStatus(call.id, "started");
+    markReminderSent(call.id);
+
+    // Pull every app-user invitee EXCEPT the starter themself — they're
+    // already in the room. We don't push to phone/email-only invitees here;
+    // those got SMS/email reminders earlier.
+    const invitees = listInviteesForCall(call.id);
+    const userIds = invitees
+      .map((inv) => inv.userId)
+      .filter((id): id is number => typeof id === "number" && id > 0 && id !== starterUserId);
+    if (userIds.length === 0) return;
+
+    await sendNotificationToUsers(userIds, {
+      title: `${starterName} started “${call.title}”`,
+      body: "Tap to join the meeting now.",
+      url: joinUrl,
+      tag: `meeting-started-${call.id}`,
+    });
+
+    // Also re-post the scheduled-call card as 'started' so the in-channel
+    // card flips from "Scheduled" to "Started" with the live count. The
+    // client-side renderer dedupes by scheduledCallId, so older cards for
+    // the same meeting collapse into this one.
+    if (call.channelId) {
+      postScheduledCallCard(call, "scheduled_call.started").catch(() => {});
+    }
+  } catch (e) {
+    console.warn("[scheduled-calls] notifyInviteesMeetingStarted failed:", (e as { message?: string })?.message ?? e);
+  }
+}
+
 /* ─────────────────── In-channel RSVP card ─────────────────────────────── */
 async function postScheduledCallCard(call: ScheduledCall, kind: ScheduledCallSystemMessageMeta["kind"]) {
   if (!call.channelId) return;
@@ -778,17 +849,39 @@ async function postScheduledCallCard(call: ScheduledCall, kind: ScheduledCallSys
     return { id: inv.id, name, response: inv.response as "pending" | "yes" | "no" | "maybe" };
   });
 
-  const meta: ScheduledCallSystemMessageMeta = {
+  // Resolve the linked meeting's stable code so client cards can build a
+  // /m/<code> deep link and (for 'started' cards) poll the live participant
+  // count via /api/meetings/<code>/participants. The link is set when the
+  // scheduled_call was mirrored into the meetings table.
+  let meetingCode: string | null = null;
+  try {
+    const raw = rawDb
+      .prepare("SELECT meeting_id FROM scheduled_calls WHERE id = ?")
+      .get(call.id) as { meeting_id?: string | null } | undefined;
+    if (raw?.meeting_id) {
+      const meeting = getMeetingById(raw.meeting_id);
+      if (meeting?.code) meetingCode = meeting.code;
+    }
+  } catch {
+    /* best-effort */
+  }
+
+  const meta: ScheduledCallSystemMessageMeta & { callTitle: string; meetingCode: string | null } = {
     system: true,
     kind,
     scheduledCallId: call.id,
+    // Both `title` (server canonical) and `callTitle` (client API surface)
+    // are emitted so older + newer renderers find the title in the meta.
+    // The client UI reads `meta.callTitle` (see ApiScheduledCallSystemMessageMeta).
     title: call.title,
+    callTitle: call.title,
     startAt: call.startAt.getTime(),
     endAt: call.endAt.getTime(),
     callKind: call.kind,
     organizerId: call.organizerId,
     inviteeCount: invitees.length,
     joinUrl: placeholderUrl,
+    meetingCode,
     teamsJoinUrl: call.teamsJoinUrl ?? null,
     provider: (call.provider as "bulldog" | "both" | "teams") ?? "both",
     invitees: inviteeSnapshot,

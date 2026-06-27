@@ -2507,10 +2507,21 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     const roomName = String(req.body?.roomName ?? "").trim();
     const kind = (req.body?.kind === "video" ? "video" : "voice") as "voice" | "video";
     if (!roomName) return res.status(400).json({ message: "roomName required" });
-    // Sanity-check the room name shape. We only allow rooms minted by
-    // this server (direct-<n>, group-channel-<n>-<ts>, vector-<n>-channel-<n>)
-    // so a malicious client can't poke users into arbitrary rooms.
-    if (!/^(direct-\d+|group-channel-\d+-\d+|vector-\d+-channel-\d+)$/.test(roomName)) {
+    // Sanity-check the room name shape. We only allow rooms minted by this
+    // server so a malicious client can't poke users into arbitrary rooms.
+    //   - direct-<n>                       1:1 ad-hoc voice/video call
+    //   - group-channel-<n>-<ts>           ad-hoc channel group call
+    //   - vector-<n>-channel-<n>           legacy huddle room name
+    //   - bdc-<code>                       scheduled / instant meeting room
+    //                                      code is xxx-yyyy-zzz (3-4-3) from
+    //                                      a 31-char alphabet, see
+    //                                      server/meetings/codes.ts
+    //   - sched-<n>-<ts>                   legacy scheduled-call room name
+    const meetingAlpha = "a-hj-km-np-z2-9";
+    const validRoomName = new RegExp(
+      `^(direct-\\d+|group-channel-\\d+-\\d+|vector-\\d+-channel-\\d+|bdc-[${meetingAlpha}]{3}-[${meetingAlpha}]{4}-[${meetingAlpha}]{3}|sched-\\d+-\\d+)$`,
+    );
+    if (!validRoomName.test(roomName)) {
       return res.status(400).json({ message: "invalid roomName" });
     }
 

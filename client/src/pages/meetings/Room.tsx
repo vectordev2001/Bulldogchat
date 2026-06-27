@@ -42,7 +42,7 @@ import {
   type BgSelection,
 } from "@/components/call/VirtualBackgroundPicker";
 import { MeetSettingsModal } from "@/components/call/MeetSettingsModal";
-import { DeviceMenu } from "@/components/call/DeviceMenu";
+import { DeviceSelector } from "@/components/call/DeviceSelector";
 import { SharingFloatingBar, type SharingAnnotationTool } from "@/components/call/SharingFloatingBar";
 import { ScreenShareAnnotator, annotationsSupported } from "@/lib/screen-share-annotator";
 import { blurSupported, loadDevicePrefs, saveDevicePrefs, type DevicePrefs } from "@/lib/meet-devices";
@@ -803,30 +803,29 @@ function BulldogMeetingUI({ code }: { code: string }) {
               popover to switch between available microphones without leaving
               the call. The gear button on the right still shows the full
               Devices modal with camera+speaker as well. */}
-          <div className="relative flex items-center">
-            <BarBtn testid="bar-mic" active={micOn} danger={!micOn} onClick={toggleMic} label={micOn ? "Mute" : "Unmute"}>
-              {micOn ? <Mic size={18} /> : <MicOff size={18} />}
-            </BarBtn>
-            <div className="absolute -right-1.5 -top-1.5">
-              <DeviceMenu
-                kind="audioInput"
-                prefs={devicePrefs}
-                onPick={(deviceId) => onDeviceChange("audioInput", deviceId)}
-              />
-            </div>
-          </div>
-          <div className="relative flex items-center">
-            <BarBtn testid="bar-cam" active={camOn} danger={!camOn} onClick={toggleCam} label={camOn ? "Stop video" : "Start video"}>
-              {camOn ? <Video size={18} /> : <VideoOff size={18} />}
-            </BarBtn>
-            <div className="absolute -right-1.5 -top-1.5">
-              <DeviceMenu
-                kind="videoInput"
-                prefs={devicePrefs}
-                onPick={(deviceId) => onDeviceChange("videoInput", deviceId)}
-              />
-            </div>
-          </div>
+          {/* Mic + camera with INLINE labeled device pills so users can see
+              (and switch) the active device without leaving the call. The
+              prior chevron caret was a 5px target; the pill shows the
+              device label and acts as the switcher. The gear button on the
+              right still opens the full Devices modal (mic+cam+speaker). */}
+          <BarBtn testid="bar-mic" active={micOn} danger={!micOn} onClick={toggleMic} label={micOn ? "Mute" : "Unmute"}>
+            {micOn ? <Mic size={18} /> : <MicOff size={18} />}
+          </BarBtn>
+          <DeviceSelector
+            kind="audioInput"
+            prefs={devicePrefs}
+            onPick={(deviceId) => onDeviceChange("audioInput", deviceId)}
+            variant="pill"
+          />
+          <BarBtn testid="bar-cam" active={camOn} danger={!camOn} onClick={toggleCam} label={camOn ? "Stop video" : "Start video"}>
+            {camOn ? <Video size={18} /> : <VideoOff size={18} />}
+          </BarBtn>
+          <DeviceSelector
+            kind="videoInput"
+            prefs={devicePrefs}
+            onPick={(deviceId) => onDeviceChange("videoInput", deviceId)}
+            variant="pill"
+          />
           <BarBtn
             testid="bar-share"
             active={sharing}
