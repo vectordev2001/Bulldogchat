@@ -83,8 +83,14 @@ export default function Join() {
   // meeting join — we already know who they are from the JWT. Prefill
   // from authedUser.name and (below) hide the name input entirely for
   // authed users. Guests still see the input.
+  //
+  // IMPORTANT: m.displayName defaults to "" in the meeting context (not
+  // undefined), so `??` would NOT fall through to authedUser.name. Use an
+  // explicit truthiness check so an empty string falls through and the
+  // Join button (disabled when localName.trim().length < 1) becomes
+  // clickable for authed users on first render.
   const [localName, setLocalName] = useState(
-    m.displayName ?? authedUser?.name ?? "",
+    (m.displayName && m.displayName.trim()) || authedUser?.name || "",
   );
   const [joining, setJoining] = useState(false);
   const [nameError, setNameError] = useState<string | null>(null);
