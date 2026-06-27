@@ -95,3 +95,35 @@ export async function listRoomParticipantIdentities(roomName: string): Promise<s
     return [];
   }
 }
+
+/**
+ * Evict any existing LiveKit participant with the given identity from the
+ * room. This is the cleanup half of "identity uniqueness" — LiveKit will
+ * normally boot a prior connection when a new one with the same identity
+ * connects, but if the previous tab/window closed uncleanly (the WebSocket
+ * never sent a graceful disconnect), the SFU can keep ghost publishers in
+ * the room until its own timeout fires. Result on the user side: 1 real
+ * user shows up as 5–6 tiles. We call this right before minting a fresh
+ * token so the join path is idempotent and self-healing.
+ *
+ * Best-effort: any error (room not found, participant not present, network
+ * blip) is swallowed because the subsequent connect still works — we just
+ * lose the proactive cleanup for that one join.
+ */
+export async function evictParticipant(roomName: string, identity: string): Promise<void> {
+  const svc = roomService();
+  if (!svc) return;
+  try {
+    await svc.removeParticipant(roomName, identity);
+    // eslint-disable-next-line no-console
+    console.log(`[livekit] evicted stale participant ${identity} from ${roomName}`);
+  } catch (e: unknown) {
+    const msg = (e as { message?: string })?.message ?? "";
+    // "not found" = room or participant doesn't exist, which is the
+    // desired post-state anyway. Don't log noise.
+    if (msg.includes("not found") || msg.includes("NotFound") || msg.includes("participant does not exist")) {
+      return;
+    }
+    console.warn(`[livekit] removeParticipant(${roomName}, ${identity}) failed:`, e);
+  }
+}
