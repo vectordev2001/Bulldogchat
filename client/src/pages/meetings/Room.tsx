@@ -326,6 +326,32 @@ function BulldogMeetingUI({ code }: { code: string }) {
     let cancelled = false;
 
     (async () => {
+      // Defensive cleanup: unpublish ANY existing Camera/Microphone tracks
+      // on the local participant BEFORE publishing fresh ones. This is the
+      // "N tiles for one user" fix — when a prior tab/connection left
+      // orphan publications attached to this identity in the LiveKit room,
+      // reconnecting with the same identity inherits those publications.
+      // useTracks(Camera, withPlaceholder:true) then renders one tile per
+      // publication — so 1 real user = 6 tiles. Unpublishing first guarantees
+      // exactly one published Camera + Microphone track per real publish.
+      const stalePubs = Array.from(localParticipant.trackPublications.values()).filter(
+        (pub) => pub.source === Track.Source.Camera || pub.source === Track.Source.Microphone,
+      );
+      if (stalePubs.length > 0) {
+        // eslint-disable-next-line no-console
+        console.log(`[meet] unpublishing ${stalePubs.length} stale local track(s) before re-publishing`);
+      }
+      for (const pub of stalePubs) {
+        try {
+          if (pub.track) {
+            await localParticipant.unpublishTrack(pub.track, true);
+          }
+        } catch (e) {
+          console.warn("[meet] failed to unpublish stale track:", e);
+        }
+      }
+      if (cancelled) return;
+
       // ---- Audio ----
       if (handed.audio) {
         try {
