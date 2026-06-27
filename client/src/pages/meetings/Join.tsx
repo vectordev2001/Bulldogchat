@@ -79,7 +79,13 @@ export default function Join() {
 
   const { user: authedUser } = useAuth();
 
-  const [localName, setLocalName] = useState(m.displayName ?? "");
+  // Signed-in org members shouldn't have to retype their name on every
+  // meeting join — we already know who they are from the JWT. Prefill
+  // from authedUser.name and (below) hide the name input entirely for
+  // authed users. Guests still see the input.
+  const [localName, setLocalName] = useState(
+    m.displayName ?? authedUser?.name ?? "",
+  );
   const [joining, setJoining] = useState(false);
   const [nameError, setNameError] = useState<string | null>(null);
   const [creatingNew, setCreatingNew] = useState(false);
@@ -694,24 +700,40 @@ export default function Join() {
               </div>
             )}
 
-            <label htmlFor="join-name" className="mt-6 block text-sm font-medium">
-              Your name
-            </label>
-            <Input
-              id="join-name"
-              ref={inputRef}
-              data-testid="input-name"
-              value={localName}
-              maxLength={60}
-              onChange={(e) => { setLocalName(e.target.value); if (nameError) setNameError(null); }}
-              onKeyDown={(e) => e.key === "Enter" && join()}
-              placeholder="e.g. Josh Bieler"
-              className="mt-1.5 h-12 text-base"
-            />
-            {nameError && (
-              <p className="mt-1.5 text-xs font-medium text-destructive" data-testid="text-name-error">
-                {nameError}
-              </p>
+            {/* Signed-in users: skip the name input entirely — we already
+                know them from the JWT. Show their name + avatar as a
+                read-only "joining as" line instead so they can confirm.
+                Guests still get the editable Name input. */}
+            {authedUser ? (
+              <div
+                className="mt-6 flex items-center gap-2 rounded-md border border-border bg-muted/40 px-3 py-2.5"
+                data-testid="row-joining-as"
+              >
+                <span className="text-xs uppercase tracking-wide text-muted-foreground">Joining as</span>
+                <span className="text-sm font-medium" data-testid="text-joining-as">{authedUser.name}</span>
+              </div>
+            ) : (
+              <>
+                <label htmlFor="join-name" className="mt-6 block text-sm font-medium">
+                  Your name
+                </label>
+                <Input
+                  id="join-name"
+                  ref={inputRef}
+                  data-testid="input-name"
+                  value={localName}
+                  maxLength={60}
+                  onChange={(e) => { setLocalName(e.target.value); if (nameError) setNameError(null); }}
+                  onKeyDown={(e) => e.key === "Enter" && join()}
+                  placeholder="e.g. Josh Bieler"
+                  className="mt-1.5 h-12 text-base"
+                />
+                {nameError && (
+                  <p className="mt-1.5 text-xs font-medium text-destructive" data-testid="text-name-error">
+                    {nameError}
+                  </p>
+                )}
+              </>
             )}
 
             <Button

@@ -3,7 +3,7 @@ import { z } from "zod";
 import { nanoid } from "nanoid";
 import { requireAuth, tryAuth, AuthedRequest } from "./auth";
 import { gateChannelById } from "./multitenant-access";
-import { livekitConfigured, mintLivekitToken } from "./livekit";
+import { livekitConfigured, mintLivekitToken, evictParticipant } from "./livekit";
 import {
   createMeeting,
   getMeetingByCode,
@@ -317,6 +317,14 @@ export function registerMeetingRoutes(app: Express) {
         role,
         origin: "app",
       });
+      // Evict any stale SFU publisher with the same identity BEFORE we
+      // mint a fresh token. LiveKit auto-boots a duplicate identity on
+      // reconnect, but only if the previous WebSocket was still alive.
+      // If a prior tab/page crashed or the user closed the laptop lid,
+      // ghost publishers can linger in the room until their server-side
+      // timeout fires — manifesting as N copies of the same person in
+      // the grid. Best-effort: swallow errors and proceed.
+      await evictParticipant(meeting.livekitRoomName, identity);
       const token = await mintLivekitToken({
         identity,
         name: authed.name,
