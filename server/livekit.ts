@@ -97,6 +97,48 @@ export async function listRoomParticipantIdentities(roomName: string): Promise<s
 }
 
 /**
+ * Debug helper for the "N tiles for 1 user" investigation. Returns the
+ * full participant list with track publication summaries so we can see
+ * directly whether the SFU is reporting (a) N distinct participants with
+ * identical identity, (b) one participant with N camera publications, or
+ * (c) one participant + one publication (in which case the bug is
+ * entirely client-side rendering).
+ */
+export async function describeRoomParticipants(roomName: string): Promise<Array<{
+  identity: string;
+  name?: string;
+  sid: string;
+  joinedAt?: number;
+  state?: string;
+  tracks: Array<{ sid: string; source: string; type: string; muted: boolean; name?: string }>;
+}>> {
+  const svc = roomService();
+  if (!svc) return [];
+  try {
+    const list = await svc.listParticipants(roomName);
+    return list.map(p => ({
+      identity: p.identity,
+      name: p.name,
+      sid: p.sid,
+      joinedAt: typeof p.joinedAt === "bigint" ? Number(p.joinedAt) : (p.joinedAt as number | undefined),
+      state: String(p.state ?? ""),
+      tracks: (p.tracks ?? []).map((t: { sid: string; source?: unknown; type?: unknown; muted?: boolean; name?: string }) => ({
+        sid: t.sid,
+        source: String(t.source ?? ""),
+        type: String(t.type ?? ""),
+        muted: !!t.muted,
+        name: t.name,
+      })),
+    }));
+  } catch (e: unknown) {
+    const msg = (e as { message?: string })?.message ?? "";
+    if (msg.includes("not found") || msg.includes("NotFound")) return [];
+    console.warn(`[livekit] describeRoomParticipants(${roomName}) failed:`, e);
+    return [];
+  }
+}
+
+/**
  * Evict any existing LiveKit participant with the given identity from the
  * room. This is the cleanup half of "identity uniqueness" — LiveKit will
  * normally boot a prior connection when a new one with the same identity

@@ -9,7 +9,7 @@ import {
 import { hashPassword, verifyPassword, signJwt, requireAuth, requireRole, requireCap, setAuthCookie, clearAuthCookie, AuthedRequest, AUTH_COOKIE } from "./auth";
 import { can } from "@shared/permissions";
 import { addSubscriber, removeSubscriber, emitMessageNew, emitMessageDelete, emitMessageUpdate, emitReactionChange, emitChannelDelete, emitCallIncoming, emitCallAccepted, emitCallEnded, emitPresenceChange, type CallEventPayload, WireMessage } from "./events";
-import { generateLivekitToken, livekitConfigured, listRoomParticipantIdentities } from "./livekit";
+import { generateLivekitToken, livekitConfigured, listRoomParticipantIdentities, describeRoomParticipants, evictParticipant } from "./livekit";
 import { setupWebPush, pushConfigured, getPublicVapidKey, sendNotificationToUsers } from "./push";
 import { runMigrations } from "./migrate";
 import { runSeed } from "./seed";
@@ -426,6 +426,36 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
   // jobs, messages, members, MT grants, auth-company links). Admin-only and
   // scoped to the caller's org. Body: { projectIds: number[] }.
   // Returns per-project ok/error.
+  // Diagnostic: dump every participant in a LiveKit room along with their
+  // track publications. Used to triage the "N tiles for 1 user" bug —
+  // distinguishes between (a) duplicate participant rows in the SFU, (b)
+  // a single participant with N camera publications, (c) entirely
+  // client-side rendering bug. Admin-only.
+  app.get("/api/admin/lk-describe-room", requireAuth, requireRole(["admin"]), async (req, res) => {
+    const roomName = String(req.query.room ?? "").trim();
+    if (!roomName) return res.status(400).json({ message: "room=<name> required" });
+    const data = await describeRoomParticipants(roomName);
+    res.json({ roomName, participantCount: data.length, participants: data });
+  });
+
+  // Diagnostic: nuke every participant in a LiveKit room. Useful for a
+  // "reset the bad room" recovery when ghosts are stuck. Admin-only.
+  app.post("/api/admin/lk-purge-room", requireAuth, requireRole(["admin"]), async (req, res) => {
+    const roomName = String(req.body?.room ?? "").trim();
+    if (!roomName) return res.status(400).json({ message: "room required" });
+    const data = await describeRoomParticipants(roomName);
+    const evicted: string[] = [];
+    for (const p of data) {
+      try {
+        await evictParticipant(roomName, p.identity);
+        evicted.push(`${p.identity}#${p.sid}`);
+      } catch (e) {
+        console.warn("[lk-purge-room] evict failed:", p.identity, e);
+      }
+    }
+    res.json({ roomName, evictedCount: evicted.length, evicted });
+  });
+
   app.post("/api/admin/delete-projects", requireAuth, requireRole(["admin"]), (req, res) => {
     const u = (req as AuthedRequest).user;
     const body = req.body ?? {};
