@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { ActionPill } from "@/components/ui/action-pill";
 import { useCalls } from "@/lib/CallContext";
+import { useLocation } from "wouter";
 import { Avatar } from "./Avatar";
 import { useState, useRef, useEffect, KeyboardEvent, useCallback, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -114,27 +115,46 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers, me
   // caller drops straight into the LiveKit room) and post a shareable
   // join-link message so anyone — including external guests — can hop in via
   // the public /m/:code page.
+  // useLocation here is bound to the hash-router (see App.tsx). Calling
+  // navigate("/m/<code>") updates the hash so wouter resolves the
+  // PublicMeetingRoutes → MeetingJoin (prejoin) component. Using
+  // window.location.href = "/m/..." instead would trigger a full-page
+  // navigation to a path the server SPA-fallback can't resolve, and the
+  // app would re-mount at the root — NOT prejoin. That was the user-
+  // reported bug: "set up a meeting and joined and it did not give me
+  // options, it just joined."
+  const [, navigate] = useLocation();
+
   const startHuddle = useCallback(async () => {
     if (callBusy || huddleStarting) return;
     setHuddleStarting(true);
     try {
-      const { joinUrl } = await startGroupCall({
+      // skipAutoJoin: server creates the meeting + rings invitees, but we
+      // do NOT setActive on the caller. Instead we route to /m/<code>
+      // (prejoin) so the caller can pick mic/cam/output before joining.
+      const { meetingCode, joinUrl } = await startGroupCall({
         channelId: channel.id,
         channelName: channel.name,
         inviteeIds: [],
         kind: "voice",
+        skipAutoJoin: true,
       });
+      // Post the shareable link first so the room exists for invitees,
+      // then navigate the caller into prejoin.
       if (joinUrl) {
         sendMutation.mutate({
           content: `${me.name} started a huddle — join here: ${joinUrl}`,
         });
+      }
+      if (meetingCode) {
+        navigate(`/m/${meetingCode}`);
       }
     } catch {
       channelToast({ title: "Couldn't start the huddle", description: "Please try again.", variant: "destructive" });
     } finally {
       setHuddleStarting(false);
     }
-  }, [callBusy, huddleStarting, startGroupCall, channel.id, channel.name, me.name, sendMutation, channelToast]);
+  }, [callBusy, huddleStarting, startGroupCall, channel.id, channel.name, me.name, sendMutation, channelToast, navigate]);
 
   // Phase 1.9.36 — admin-only "clear channel". Double-confirmed because
   // the operation tombstones every message in the channel. Server fans
@@ -1396,8 +1416,23 @@ function ScheduledCallCard({ meta, createdAt, meId, myRole }: { meta: ApiSchedul
   // which handles invitee gating, ringing the explicit invitee list, and
   // guest joins via SMS link — the same flow Twilio uses. Falls back to the
   // meeting code if joinUrl is somehow absent on an older message.
+  // The app uses wouter's hash router (see App.tsx → useHashLocation).
+  // Setting window.location.href = "/m/<code>" navigates to a NON-hash
+  // path, which the SPA fallback serves the root HTML for — the hash
+  // router then mounts at #/ and never reaches MeetingJoin. We must use
+  // the wouter setter so it writes to location.hash instead.
+  const [, navigateScheduled] = useLocation();
   const onJoin = () => {
-    const url = (meta as any).joinUrl || (meta as any).meetingCode ? ((meta as any).joinUrl ?? `/m/${(meta as any).meetingCode}`) : null;
+    const code = (meta as any).meetingCode;
+    // Prefer the canonical meetingCode — server-built joinUrl is an
+    // absolute URL (https://chat.bulldogops.com/m/<code>) which would
+    // also trigger a hard navigation and lose the hash router state.
+    if (code) {
+      navigateScheduled(`/m/${code}`);
+      return;
+    }
+    // Fallback for very old messages that only carry the absolute URL.
+    const url = (meta as any).joinUrl;
     if (url) window.location.href = url;
   };
   const { toast } = useToast();
