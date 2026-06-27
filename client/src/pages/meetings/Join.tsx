@@ -27,7 +27,7 @@ import {
   type BgSelection,
 } from "@/components/call/VirtualBackgroundPicker";
 import { MeetSettingsModal } from "@/components/call/MeetSettingsModal";
-import { DeviceMenu } from "@/components/call/DeviceMenu";
+import { DeviceSelector } from "@/components/call/DeviceSelector";
 import { blurSupported, loadDevicePrefs, saveDevicePrefs, type DevicePrefs } from "@/lib/meet-devices";
 
 interface MeetingMeta {
@@ -593,42 +593,43 @@ export default function Join() {
             </div>
           )}
 
+          {/* Labeled device dropdowns under the preview — these replaced
+              the prior 5px chevron carets so users can see at a glance
+              WHICH mic and camera they're about to publish from, and switch
+              to a headset/external camera with one tap. */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+            <DeviceSelector
+              kind="audioInput"
+              prefs={devicePrefs}
+              onPick={(d) => onDeviceChange("audioInput", d)}
+              variant="panel"
+            />
+            <DeviceSelector
+              kind="videoInput"
+              prefs={devicePrefs}
+              onPick={(d) => onDeviceChange("videoInput", d)}
+              variant="panel"
+            />
+          </div>
+
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-2">
-              <div className="relative flex items-center">
-                <ControlBtn
-                  testid="button-toggle-mic"
-                  tone={micOn ? "neutral" : "danger"}
-                  onClick={toggleMic}
-                  label={micOn ? "Mute" : "Unmute"}
-                >
-                  {micOn ? <Mic size={18} /> : <MicOff size={18} />}
-                </ControlBtn>
-                <div className="absolute -right-1.5 -top-1.5">
-                  <DeviceMenu
-                    kind="audioInput"
-                    prefs={devicePrefs}
-                    onPick={(d) => onDeviceChange("audioInput", d)}
-                  />
-                </div>
-              </div>
-              <div className="relative flex items-center">
-                <ControlBtn
-                  testid="button-toggle-cam"
-                  tone={camOn ? "neutral" : "danger"}
-                  onClick={toggleCam}
-                  label={camOn ? "Stop video" : "Start video"}
-                >
-                  {camOn ? <Video size={18} /> : <VideoOff size={18} />}
-                </ControlBtn>
-                <div className="absolute -right-1.5 -top-1.5">
-                  <DeviceMenu
-                    kind="videoInput"
-                    prefs={devicePrefs}
-                    onPick={(d) => onDeviceChange("videoInput", d)}
-                  />
-                </div>
-              </div>
+              <ControlBtn
+                testid="button-toggle-mic"
+                tone={micOn ? "neutral" : "danger"}
+                onClick={toggleMic}
+                label={micOn ? "Mute" : "Unmute"}
+              >
+                {micOn ? <Mic size={18} /> : <MicOff size={18} />}
+              </ControlBtn>
+              <ControlBtn
+                testid="button-toggle-cam"
+                tone={camOn ? "neutral" : "danger"}
+                onClick={toggleCam}
+                label={camOn ? "Stop video" : "Start video"}
+              >
+                {camOn ? <Video size={18} /> : <VideoOff size={18} />}
+              </ControlBtn>
               <div className="relative">
                 <ControlBtn
                   testid="button-toggle-blur"

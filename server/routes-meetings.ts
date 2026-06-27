@@ -33,10 +33,21 @@ import {
   summaryRecipientPolicies,
   type Meeting,
 } from "@shared/schema";
+import { notifyInviteesMeetingStarted } from "./scheduled-calls";
 
 // Public-safe shape of a meeting. We never leak org-internal ids/policy
 // internals to an unauthenticated joiner beyond what the join screen needs.
 function publicMeetingShape(m: Meeting) {
+  // Live count of participants still in the room (joinedAt set, leftAt null).
+  // Surfaced so in-channel "Started" meeting cards can show "3 people in this
+  // meeting" without forcing an extra round-trip to /participants. Best-effort:
+  // a count failure must not block the meeting fetch.
+  let activeParticipantCount = 0;
+  try {
+    activeParticipantCount = listParticipants(m.id).filter((p) => p.joinedAt && !p.leftAt).length;
+  } catch {
+    /* best-effort */
+  }
   return {
     id: m.id,
     code: m.code,
@@ -50,6 +61,7 @@ function publicMeetingShape(m: Meeting) {
     scheduledStartAt: m.scheduledStartAt ? new Date(m.scheduledStartAt).getTime() : null,
     startedAt: m.startedAt ? new Date(m.startedAt).getTime() : null,
     endedAt: m.endedAt ? new Date(m.endedAt).getTime() : null,
+    activeParticipantCount,
   };
 }
 
@@ -288,8 +300,14 @@ export function registerMeetingRoutes(app: Express) {
       }
       const identity = `u_${authed.id}`;
       const role = meeting.hostUserId === authed.id ? "host" : "participant";
-      if (meeting.status === "scheduled") {
+      // Detect the scheduled→active transition BEFORE we mutate so the
+      // notifier only fires once, on the actual first join.
+      const wasScheduled = meeting.status === "scheduled";
+      if (wasScheduled) {
         setMeetingStatus(meeting.id, "active", { startedAt: new Date() });
+        // Teams-style: notify every invitee that the meeting just started.
+        // Fire-and-forget; failure must not block the join.
+        void notifyInviteesMeetingStarted(meeting.id, authed.id);
       }
       createParticipant({
         meetingId: meeting.id,
@@ -480,9 +498,13 @@ export function registerMeetingRoutes(app: Express) {
   });
 
   // ── PARTICIPANTS (authed) ──
+  // Accepts either the opaque meeting id OR the human meeting code so the
+  // in-channel "Started" card can pass the code it already has without an
+  // extra id-resolution round-trip.
   app.get("/api/meetings/:id/participants", requireAuth, (req: Request, res: Response) => {
     const u = (req as unknown as AuthedRequest).user;
-    const meeting = getMeetingById(String(req.params.id));
+    const key = String(req.params.id);
+    const meeting = getMeetingById(key) ?? getMeetingByCode(key);
     if (!meeting) return res.status(404).json({ message: "Meeting not found" });
     if (meeting.orgId !== u.orgId) {
       return res.status(403).json({ message: "Forbidden" });

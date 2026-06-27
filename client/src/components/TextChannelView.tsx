@@ -407,6 +407,22 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers, me
     type Item =
       | { type: "msg"; msg: ApiMessage; grouped: boolean }
       | { type: "deleted-run"; key: string; count: number };
+    // First pass: for each scheduledCallId, figure out the latest status the
+    // channel has emitted (`scheduled_call.created` → `started` → `cancelled`).
+    // We render only the latest card per meeting so the channel doesn't grow
+    // to N stacked variants of the SAME meeting (Teams-style consolidation).
+    const latestCardMsgIdByCall = new Map<number, number>();
+    for (const m of messages) {
+      const meta = (m as { meta?: { kind?: string; scheduledCallId?: number } | null }).meta;
+      if (!meta || typeof meta !== "object") continue;
+      if (!String(meta.kind ?? "").startsWith("scheduled_call.")) continue;
+      const id = meta.scheduledCallId;
+      if (typeof id !== "number") continue;
+      // Last write wins — messages are in chronological order, so the last
+      // matching message we see for this scheduledCallId is the freshest.
+      latestCardMsgIdByCall.set(id, m.id);
+    }
+
     const items: Item[] = [];
     for (let i = 0; i < messages.length; i++) {
       const msg = messages[i];
@@ -420,6 +436,19 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers, me
         i--; // for-loop will re-increment
         items.push({ type: "deleted-run", key: `del-${firstId}`, count });
         continue;
+      }
+      // Suppress older scheduled-call cards once a newer card for the SAME
+      // meeting exists. Keeps the channel showing one current card per
+      // meeting (Scheduled → Started → Cancelled) instead of a stack.
+      const sMeta = (msg as { meta?: { kind?: string; scheduledCallId?: number } | null }).meta;
+      if (
+        sMeta &&
+        typeof sMeta === "object" &&
+        String(sMeta.kind ?? "").startsWith("scheduled_call.") &&
+        typeof sMeta.scheduledCallId === "number"
+      ) {
+        const winner = latestCardMsgIdByCall.get(sMeta.scheduledCallId);
+        if (winner !== undefined && winner !== msg.id) continue;
       }
       const prev = messages[i - 1];
       const grouped = !!(
@@ -1422,6 +1451,17 @@ function ScheduledCallCard({ meta, createdAt, meId, myRole }: { meta: ApiSchedul
 
   const liveInvitees: ScheduledCallInviteeLive[] = inviteesQuery.data?.invitees ?? (meta as any).invitees ?? [];
 
+  // When the meeting is live, poll the public meeting shape for the active
+  // participant count so the card can show e.g. "Started · 3 in meeting".
+  const liveMeetingCode = (meta as any).meetingCode as string | null | undefined;
+  const liveMeetingQuery = useQuery<{ meeting?: { activeParticipantCount?: number } }>({
+    queryKey: ["/api/meetings", liveMeetingCode, "live"],
+    queryFn: () => apiRequest("GET", `/api/meetings/${liveMeetingCode}`),
+    refetchInterval: 10000,
+    enabled: !!liveMeetingCode && started && !cancelled,
+  });
+  const activeCount = liveMeetingQuery.data?.meeting?.activeParticipantCount ?? 0;
+
   const Icon = meta.callKind === "video" ? Video : Mic;
   const accent = meta.callKind === "video" ? "vs-blue-light" : "vs-green";
 
@@ -1458,6 +1498,15 @@ function ScheduledCallCard({ meta, createdAt, meId, myRole }: { meta: ApiSchedul
             <span className="text-[10px] font-mono uppercase tracking-wider text-[hsl(var(--vs-text-subtle))]">
               {cancelled ? "Cancelled" : started ? "Started" : meta.kind === "scheduled_call.updated" ? "Updated" : "Scheduled"}
             </span>
+            {started && !cancelled && activeCount > 0 && (
+              <span
+                className="text-[10px] font-mono uppercase tracking-wider text-emerald-300 flex items-center gap-1"
+                data-testid={`scheduled-call-live-count-${meta.scheduledCallId}`}
+              >
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                {activeCount} in meeting
+              </span>
+            )}
             <CalendarIcon className="w-3 h-3 text-[hsl(var(--vs-text-subtle))]" />
             <span className="text-[11px] text-[hsl(var(--vs-text-muted))]">{whenLabel}</span>
             <div className="ml-auto flex items-center gap-1.5">

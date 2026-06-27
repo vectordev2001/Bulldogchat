@@ -189,6 +189,8 @@ export interface ApiScheduledCallSystemMessageMeta {
     name: string;
     response: "pending" | "yes" | "no" | "maybe";
   }>;
+  meetingCode?: string | null;
+  joinUrl?: string | null;
 }
 
 export interface ApiMeetingSummarySystemMessageMeta {
