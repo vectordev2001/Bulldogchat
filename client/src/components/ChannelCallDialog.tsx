@@ -15,6 +15,7 @@
  */
 
 import { useEffect, useMemo, useState } from "react";
+import { useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { Phone, Video, X, Loader2, Plus } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
@@ -38,6 +39,8 @@ interface Props {
 
 export function ChannelCallDialog({ channel, fallbackMembers, meId, open, initialKind, onClose }: Props) {
   const { startGroupCall, active, outgoing } = useCalls();
+  // Hash-router setter — wouter is mounted with useHashLocation in App.tsx.
+  const [, navigate] = useLocation();
   const [kind, setKind] = useState<"voice" | "video">(initialKind);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   // Per-member call route: 'app' (in-app push + LiveKit join) or 'phone'
@@ -169,15 +172,25 @@ export function ChannelCallDialog({ channel, fallbackMembers, meId, open, initia
         if ((route.get(id) ?? "app") === "phone") phoneIds.push(id);
         else appIds.push(id);
       }
-      await startGroupCall({
+      // skipAutoJoin: caller routes through /m/<code> (prejoin) instead of
+      // dropping straight into the LiveKit room — so they can pick
+      // mic/cam/output and review the device selector before joining.
+      const { meetingCode } = await startGroupCall({
         channelId: channel.id,
         channelName: channel.name,
         inviteeIds: appIds,
         phoneInviteeIds: phoneIds,
         phoneNumbers,
         kind,
+        skipAutoJoin: true,
       });
       onClose();
+      if (meetingCode) {
+        // wouter hash-router setter — see App.tsx useHashLocation. Using
+        // window.location.href would skip the hash router and never
+        // reach MeetingJoin.
+        navigate(`/m/${meetingCode}`);
+      }
     } catch (err: any) {
       // Most likely 503 (LiveKit not configured) or 400 (no reachable
       // invitees). Surface the server's `message` if present.

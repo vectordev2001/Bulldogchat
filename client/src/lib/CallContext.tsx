@@ -87,6 +87,14 @@ interface CallCtxValue {
     /** Raw phone numbers to send an SMS join-link to (no SIP dial). */
     smsPhoneNumbers?: string[];
     kind?: "voice" | "video";
+    /**
+     * When true, the server still creates the meeting + rings invitees,
+     * but the caller is NOT dropped into the LiveKit room. The caller is
+     * expected to navigate to /m/<code> (prejoin) so they can pick their
+     * mic/camera/output before joining. Default false preserves the legacy
+     * "drop straight in" huddle behavior for callers that opt in.
+     */
+    skipAutoJoin?: boolean;
   }): Promise<{ meetingCode: string | null; joinUrl: string | null }>;
   acceptIncoming(): Promise<void>;
   declineIncoming(): Promise<void>;
@@ -304,7 +312,7 @@ export function CallProvider({ children }: { children: ReactNode }) {
   // screen while waiting for the first accept.
   const startGroupCall = useCallback<CallCtxValue["startGroupCall"]>(async ({
     channelId, channelName, inviteeIds, phoneInviteeIds = [], phoneNumbers = [],
-    smsInviteeIds = [], smsPhoneNumbers = [], kind = "voice",
+    smsInviteeIds = [], smsPhoneNumbers = [], kind = "voice", skipAutoJoin = false,
   }) => {
     if (outgoing || active) return { meetingCode: null, joinUrl: null };
     const resp = await apiRequest<StartGroupCallResponse>(
@@ -334,20 +342,25 @@ export function CallProvider({ children }: { children: ReactNode }) {
       // eslint-disable-next-line no-console
       console.warn("[startGroupCall] dialWarnings:", resp.dialWarnings);
     }
-    setActive({
-      // No single callId for a group call — we use 0 as a sentinel and
-      // skip /api/calls/:id/end on hangup (per-invitee rows are cleaned
-      // up server-side as they accept/miss).
-      callId: 0,
-      roomName: resp.roomName,
-      token: resp.token,
-      wsUrl: resp.ws_url,
-      otherName: `#${channelName}`,
-      otherHue: 215, // neutral channel hue
-      kind: resp.kind,
-      iAmCaller: true,
-      active: true,
-    });
+    // skipAutoJoin: caller will route through /m/<code> (prejoin) so they
+    // can pick mic/cam/output before joining. Do NOT setActive — that
+    // would drop them straight into the LiveKit room and bypass prejoin.
+    if (!skipAutoJoin) {
+      setActive({
+        // No single callId for a group call — we use 0 as a sentinel and
+        // skip /api/calls/:id/end on hangup (per-invitee rows are cleaned
+        // up server-side as they accept/miss).
+        callId: 0,
+        roomName: resp.roomName,
+        token: resp.token,
+        wsUrl: resp.ws_url,
+        otherName: `#${channelName}`,
+        otherHue: 215, // neutral channel hue
+        kind: resp.kind,
+        iAmCaller: true,
+        active: true,
+      });
+    }
     return { meetingCode: resp.meetingCode ?? null, joinUrl: resp.joinUrl ?? null };
   }, [outgoing, active]);
 
