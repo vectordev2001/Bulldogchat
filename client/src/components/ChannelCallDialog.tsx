@@ -186,10 +186,20 @@ export function ChannelCallDialog({ channel, fallbackMembers, meId, open, initia
       });
       onClose();
       if (meetingCode) {
-        // wouter hash-router setter — see App.tsx useHashLocation. Using
-        // window.location.href would skip the hash router and never
-        // reach MeetingJoin.
-        navigate(`/m/${meetingCode}`);
+        // Open the meeting in a NEW window so chat stays available
+        // behind it (Teams-replacement UX). Hash router means the URL
+        // must include `#/`. Falls back to in-window navigation if the
+        // popup is blocked by the browser.
+        const url = `${window.location.origin}/#/m/${meetingCode}`;
+        const w = 1280;
+        const h = 800;
+        const left = Math.max(0, Math.round((window.screen.availWidth - w) / 2));
+        const top = Math.max(0, Math.round((window.screen.availHeight - h) / 2));
+        const features = `popup=yes,noopener=no,width=${w},height=${h},left=${left},top=${top}`;
+        const popup = window.open(url, `bulldog-meeting-${meetingCode}`, features);
+        if (!popup) {
+          navigate(`/m/${meetingCode}`);
+        }
       }
     } catch (err: any) {
       // Most likely 503 (LiveKit not configured) or 400 (no reachable

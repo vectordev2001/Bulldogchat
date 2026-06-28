@@ -62,31 +62,60 @@ interface LobbyKnock {
   createdAt: number;
 }
 
-// Room-level LiveKit options shared by every participant.
+// Room-level LiveKit options shared by every participant. Tuned for the
+// "replace Teams" goal: smooth multi-user calls on mixed hardware
+// (laptops + phones + tablets), good screen-share quality, low overall
+// bandwidth so jobsite LTE doesn't choke.
 //
 // - `adaptiveStream`: subscriber-side; pause/resize tracks based on what's
-//   actually visible. Lowers bandwidth and prevents a 1×1 tile from
-//   subscribing to full-resolution remote video.
-// - `dynacast`: publisher-side; if no subscriber is asking for a simulcast
-//   layer, the SFU tells the publisher to stop sending it. Critical for
-//   mixed-power calls (Mac + Dell + phone) so the weaker peers don't get
-//   blasted with HD encodes they can't render.
-// - `publishDefaults.simulcast`: enable per-layer encodes so receivers can
-//   pick L/M/H independently. `videoCodec: 'vp9'` is supported on Chrome,
-//   Edge, Firefox, and Safari 16+; livekit-client transparently falls back
-//   to VP8 when the negotiated codec list excludes it (e.g. older Safari).
-// - `videoCaptureDefaults.resolution`: cap publisher capture at 720p so a
-//   Dell webcam in a 4K mode doesn't push a 30Mbps HD layer that strangles
-//   the SFU; users can opt into HD later via the devices modal.
+//   actually visible. A 1×1 thumbnail won't subscribe to the HD layer.
+// - `dynacast`: publisher-side; the SFU tells the publisher to stop
+//   encoding simulcast layers no one is subscribing to. Critical for
+//   mixed-power calls so weak peers don't get blasted with HD encodes
+//   they can't render and the strong peer's uplink stays clean.
+// - `publishDefaults.simulcast`: per-layer L/M/H encodes so receivers
+//   pick independently. We switched off VP9 to VP8: VP9 was crashing
+//   some webcam drivers and Safari < 17 has scattered VP9 hardware-
+//   decode bugs. VP8 is universally supported and dynacast still keeps
+//   bandwidth reasonable. Codec choice here is for camera video; screen
+//   share has its own codec preference below.
+// - `publishDefaults.screenShareEncoding`: bumped to 1.5 Mbps target /
+//   3 Mbps max so shared text/code stays crisp. Default 1.5 Mbps is
+//   often too low for Teams-style code review.
+// - `publishDefaults.videoEncoding`: 1.2 Mbps target / 2.5 Mbps max for
+//   the HD camera layer; simulcast Low and Mid auto-derive from this.
+// - `publishDefaults.stopMicTrackOnMute`: false — keep the mic track alive
+//   when muted so unmute is instant (no getUserMedia round trip, which
+//   on Bluetooth audio can be 1–2 seconds).
+// - `videoCaptureDefaults.resolution`: cap publisher capture at 720p.
+//   Higher resolutions kill mobile uplinks for marginal quality gain at
+//   tile size; users can opt into HD via the devices modal later.
+// - `audioCaptureDefaults`: enable echoCancellation, noiseSuppression,
+//   autoGainControl. Especially important on AirPods/Bluetooth where
+//   raw mic audio is noisy.
 const MEETING_ROOM_OPTIONS: RoomOptions = {
   adaptiveStream: true,
   dynacast: true,
   publishDefaults: {
     simulcast: true,
-    videoCodec: "vp9",
+    videoCodec: "vp8",
+    stopMicTrackOnMute: false,
+    videoEncoding: {
+      maxBitrate: 2_500_000,
+      maxFramerate: 30,
+    },
+    screenShareEncoding: {
+      maxBitrate: 3_000_000,
+      maxFramerate: 15,
+    },
   },
   videoCaptureDefaults: {
     resolution: VideoPresets.h720.resolution,
+  },
+  audioCaptureDefaults: {
+    echoCancellation: true,
+    noiseSuppression: true,
+    autoGainControl: true,
   },
 };
 
@@ -482,15 +511,17 @@ function BulldogMeetingUI({ code }: { code: string }) {
   const origin = m.origin;
   const chipLabel = ORIGIN_CHIP[origin];
 
-  const tracks = useTracks(
-    [
-      { source: Track.Source.Camera, withPlaceholder: true },
-      { source: Track.Source.ScreenShare, withPlaceholder: false },
-    ],
+  // Screen-share detection still uses useTracks because (a) it has no
+  // placeholder behavior to worry about, and (b) we want both subscribed
+  // and unsubscribed states. The Camera tile grid is built below from
+  // useParticipants() directly to avoid the useTracks(withPlaceholder:true)
+  // multiplication bug that produced 7 tiles for 1 user.
+  const screenShareTracks = useTracks(
+    [{ source: Track.Source.ScreenShare, withPlaceholder: false }],
     { onlySubscribed: false },
   );
 
-  const remoteScreenShare = tracks.some(
+  const remoteScreenShare = screenShareTracks.some(
     (t) =>
       t.source === Track.Source.ScreenShare &&
       t.participant?.identity !== localParticipant?.identity,
@@ -630,7 +661,10 @@ function BulldogMeetingUI({ code }: { code: string }) {
       setSharing(true);
       setAnnAvailable(true);
       setShareSurface(annotator.displaySurface);
-      toast({ title: "Screen share started" });
+      toast({
+        title: "Screen share started",
+        description: "Floating bar at the top has laser pointer & highlighter — drag it anywhere.",
+      });
     } catch (err) {
       // User cancelled the picker, or the annotator failed to initialize.
       // Either way: clean up anything we partially set up.
@@ -713,13 +747,49 @@ function BulldogMeetingUI({ code }: { code: string }) {
       apiRequest("POST", `/api/meetings/${code}/leave`, { identity: m.identity }).catch(() => {});
     }
     room.disconnect();
+    // After disconnect, send the user back to chat (the channel they came
+    // from). The meeting was opened in a new window in most flows, so we
+    // ALSO try window.close() — if this tab was script-opened (the new
+    // window/tab path), it'll close cleanly. If it was a top-level
+    // navigation (deep-link from SMS, refresh, etc.), close() is a no-op
+    // and the route change to /#/ keeps the user productive instead of
+    // stranded on a disconnected /r/<code> page.
+    try { window.close(); } catch { /* ignore */ }
+    // Hash-router setter — navigate to the chat home. window.close() above
+    // either succeeds (and this never runs) or is a no-op (and we navigate).
+    navigate("/");
   };
 
   const openTab = (tab: SidebarTab) => setSidebar((cur) => (cur === tab ? null : tab));
 
-  const cameraTracks = tracks.filter(
-    (t) => t.source === Track.Source.Camera || t.source === Track.Source.ScreenShare,
-  );
+  // Render-from-participants: one Camera tile per participant in the room,
+  // PLUS any active ScreenShare publications. This is the fix for the
+  // "N tiles for 1 user" bug — useTracks(Camera, withPlaceholder:true) was
+  // returning N entries for a single participant whenever the local
+  // trackPublications map contained stale publications from prior failed
+  // join attempts. By driving the grid off participants directly (the
+  // same source the header counter uses), tile count is GUARANTEED to
+  // equal the participant count.
+  //
+  // For each participant we look up their primary Camera publication via
+  // getTrackPublication(); if absent we render a placeholder (camera off /
+  // not yet published). StageTile and StripTile already handle both cases.
+  const cameraTracks: TrackReferenceOrPlaceholder[] = useMemo(() => {
+    const refs: TrackReferenceOrPlaceholder[] = [];
+    for (const p of participants) {
+      const pub = p.getTrackPublication(Track.Source.Camera);
+      refs.push({
+        participant: p,
+        source: Track.Source.Camera,
+        publication: pub,
+      } as TrackReferenceOrPlaceholder);
+    }
+    // Add any active screen-share publications on top so they take the stage.
+    for (const t of screenShareTracks) {
+      refs.push(t);
+    }
+    return refs;
+  }, [participants, screenShareTracks]);
 
   const sorted = useMemo(() => sortTracks(cameraTracks), [cameraTracks]);
   const main = sorted[0];

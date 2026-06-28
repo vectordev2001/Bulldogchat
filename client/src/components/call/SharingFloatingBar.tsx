@@ -103,7 +103,9 @@ export function SharingFloatingBar({
         };
       }).documentPictureInPicture;
       if (!dpip) return;
-      const w = await dpip.requestWindow({ width: 380, height: 64 });
+      // Wider window so all controls (mic, cam, stop, laser, highlighter,
+      // eraser, PiP, back-to-meeting + label) fit in one row without clipping.
+      const w = await dpip.requestWindow({ width: 560, height: 64 });
       // Copy enough document styles for tailwind classes to apply. We rely on
       // <link rel=stylesheet> tags that vite injects on the host document.
       // Cloning them keeps the toolbar visually consistent with the in-tab
@@ -135,18 +137,23 @@ export function SharingFloatingBar({
     setPipWindow(null);
   };
 
-  // Auto-open PiP exactly once per share session when the user picked
-  // "entire screen" — that's the case where the Bulldog tab definitely
-  // can't sit on top of what they're sharing, so the PiP window is the
-  // only way to keep controls reachable.
+  // Auto-open PiP exactly once per share session. We do this for *any* share
+  // type (monitor/window/browser/unknown) because:
+  //   - monitor: Bulldog tab is fully obscured, PiP is the only on-top option
+  //   - window:  user usually focuses the shared app full-screen, PiP keeps
+  //              the laser/highlighter/stop controls reachable without alt-tab
+  //   - browser tab: same — the user is staring at the shared tab, not Bulldog
+  // PiP always-on-top is what makes the annotation tools (laser pointer,
+  // highlighter) actually discoverable while a share is live.
   useEffect(() => {
     if (pipAttempted.current) return;
     if (!pipApiAvailable) return;
-    if (displaySurface !== "monitor") return;
+    // Wait until we know what's being shared (or after a short grace window).
+    // displaySurface starts as null while LiveKit publishes the track.
     pipAttempted.current = true;
     void openPip();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [displaySurface, pipApiAvailable]);
+  }, [pipApiAvailable]);
 
   // Close the PiP window if this component unmounts (share stopped).
   useEffect(() => {
@@ -189,10 +196,14 @@ export function SharingFloatingBar({
  * its own window (the OS provides the drag handle).
  */
 function InTabFloatingShell({ children }: { children: React.ReactNode }) {
-  const [pos, setPos] = useState<{ x: number; y: number }>(() => ({
-    x: Math.max(16, (typeof window !== "undefined" ? window.innerWidth : 1024) - 380),
-    y: 16,
-  }));
+  // Default position: top-center of the viewport, well clear of either the
+  // left channel rail or the right chat sidebar. The bar is ~520px wide with
+  // annotation tools rendered, so center-anchoring keeps it discoverable
+  // regardless of sidebar state. User can still drag anywhere.
+  const [pos, setPos] = useState<{ x: number; y: number }>(() => {
+    const w = typeof window !== "undefined" ? window.innerWidth : 1024;
+    return { x: Math.max(16, Math.floor(w / 2) - 260), y: 16 };
+  });
   const dragRef = useRef<{ startX: number; startY: number; baseX: number; baseY: number } | null>(
     null,
   );
