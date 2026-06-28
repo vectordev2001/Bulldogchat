@@ -15,6 +15,12 @@
  * caller falls back to the raw camera track.
  */
 
+import type {
+  Track,
+  TrackProcessor,
+  VideoProcessorOptions,
+} from "livekit-client";
+
 export type BackgroundMode =
   | { kind: "none" }
   | { kind: "blur"; amount?: number }
@@ -435,5 +441,80 @@ export class VirtualBackgroundProcessor {
     this.frameCount = 0;
     this.sizedToVideo = false;
     this.gotFirstResult = false;
+  }
+}
+
+/**
+ * LiveKit-compatible TrackProcessor adapter around VirtualBackgroundProcessor.
+ *
+ * Why this matters: LiveKit's `LocalVideoTrack.setProcessor` swaps the
+ * track's underlying MediaStreamTrack in place, without unpublishing or
+ * republishing the track. This is critical for stability — doing an
+ * unpublish/publish cycle ourselves races against React renders, the
+ * prejoin handoff effect, the camera-tile <VideoTrack> attachment, and
+ * any sibling effect touching the camera. The symptoms of those races
+ * are exactly what users reported: camera flickers then renders a
+ * frozen black frame, or the selected background silently fails to
+ * apply because a raw camera publication replaced the processed one
+ * before our processor could attach.
+ *
+ * The adapter implements `init` / `restart` / `destroy` against an
+ * internal `VirtualBackgroundProcessor` instance and exposes the
+ * processed `MediaStreamTrack` via the `processedTrack` field. To
+ * change the background mode after the processor is live, call
+ * `updateMode` directly on the adapter — that hot-swaps the
+ * compositing logic without rebuilding the MediaPipe pipeline.
+ */
+export class LkVirtualBackgroundProcessor
+  implements TrackProcessor<Track.Kind.Video, VideoProcessorOptions>
+{
+  public name = "bulldog-virtual-background";
+  public processedTrack?: MediaStreamTrack;
+  private inner: VirtualBackgroundProcessor | null = null;
+  private currentMode: BackgroundMode;
+
+  constructor(initialMode: BackgroundMode) {
+    this.currentMode = initialMode;
+  }
+
+  async init(opts: VideoProcessorOptions): Promise<void> {
+    const inner = new VirtualBackgroundProcessor();
+    this.processedTrack = await inner.start(opts.track, this.currentMode);
+    this.inner = inner;
+  }
+
+  /**
+   * Called by LiveKit when the input track changes (e.g. user switched
+   * cameras via `switchActiveDevice`). We rebuild the processor against
+   * the new input track and update our published processedTrack.
+   */
+  async restart(opts: VideoProcessorOptions): Promise<void> {
+    if (this.inner) {
+      try { this.inner.stop(); } catch { /* ignore */ }
+      this.inner = null;
+      this.processedTrack = undefined;
+    }
+    const inner = new VirtualBackgroundProcessor();
+    this.processedTrack = await inner.start(opts.track, this.currentMode);
+    this.inner = inner;
+  }
+
+  async destroy(): Promise<void> {
+    if (this.inner) {
+      try { this.inner.stop(); } catch { /* ignore */ }
+      this.inner = null;
+    }
+    this.processedTrack = undefined;
+  }
+
+  /**
+   * Hot-swap the background mode without rebuilding the MediaPipe
+   * pipeline. Cheap — the next composited frame uses the new mode.
+   */
+  async updateMode(mode: BackgroundMode): Promise<void> {
+    this.currentMode = mode;
+    if (this.inner) {
+      await this.inner.setMode(mode);
+    }
   }
 }
