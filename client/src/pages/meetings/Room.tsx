@@ -27,7 +27,7 @@ import {
 import "@livekit/components-styles";
 import {
   Mic, MicOff, Video, VideoOff, MonitorUp, Hand, MessageSquare, Users, Sparkles,
-  X, Smile, PhoneOff, Send, MicOff as MicOffIcon, Aperture, Settings, DoorOpen, Check,
+  X, Smile, PhoneOff, Send, MicOff as MicOffIcon, Aperture, Settings, DoorOpen, Check, UserPlus,
 } from "lucide-react";
 import { BulldogMark, PlatformLogo, initials } from "@/components/BulldogLogo";
 import { ThemeToggle } from "@/components/MeetingThemeToggle";
@@ -44,6 +44,7 @@ import {
 import { MeetSettingsModal } from "@/components/call/MeetSettingsModal";
 import { DeviceSelector } from "@/components/call/DeviceSelector";
 import { SharingFloatingBar, type SharingAnnotationTool } from "@/components/call/SharingFloatingBar";
+import { InviteToMeetingDialog } from "@/components/call/InviteToMeetingDialog";
 import { ScreenShareAnnotator, annotationsSupported } from "@/lib/screen-share-annotator";
 import { blurSupported, loadDevicePrefs, saveDevicePrefs, type DevicePrefs } from "@/lib/meet-devices";
 
@@ -456,7 +457,7 @@ function BulldogMeetingUI({ code }: { code: string }) {
 
   // ── Host lobby (server-side waiting room) ──
   const { user: authedUser } = useAuth();
-  const { data: meetingData } = useQuery<{ meeting: { waitingRoom: boolean } }>({
+  const { data: meetingData } = useQuery<{ meeting: { waitingRoom: boolean; title?: string } }>({
     queryKey: ["/api/meetings", code],
     enabled: !!code,
   });
@@ -889,7 +890,7 @@ function BulldogMeetingUI({ code }: { code: string }) {
           )}
         </main>
 
-        <MeetingSidebar tab={sidebar} onClose={() => setSidebar(null)} participants={participants} localIdentity={localParticipant?.identity} />
+        <MeetingSidebar tab={sidebar} onClose={() => setSidebar(null)} participants={participants} localIdentity={localParticipant?.identity} code={code} meetingTitle={meetingData?.meeting?.title} />
       </div>
 
       {/* BOTTOM CONTROL BAR */}
@@ -1236,12 +1237,14 @@ const TABS: { id: SidebarTab; label: string }[] = [
 ];
 
 function MeetingSidebar({
-  tab, onClose, participants, localIdentity,
+  tab, onClose, participants, localIdentity, code, meetingTitle,
 }: {
   tab: SidebarTab | null;
   onClose: () => void;
   participants: Participant[];
   localIdentity?: string;
+  code: string;
+  meetingTitle?: string;
 }) {
   return (
     <AnimatePresence>
@@ -1279,7 +1282,7 @@ function MeetingSidebar({
 
           <div className="min-h-0 flex-1">
             {tab === "chat" && <ChatTab localIdentity={localIdentity} />}
-            {tab === "participants" && <ParticipantsTab participants={participants} localIdentity={localIdentity} />}
+            {tab === "participants" && <ParticipantsTab participants={participants} localIdentity={localIdentity} code={code} meetingTitle={meetingTitle} />}
             {tab === "transcript" && <TranscriptTab />}
           </div>
         </motion.aside>
@@ -1367,9 +1370,23 @@ function ChatTab({ localIdentity }: { localIdentity?: string }) {
   );
 }
 
-function ParticipantsTab({ participants, localIdentity }: { participants: Participant[]; localIdentity?: string }) {
+function ParticipantsTab({ participants, localIdentity, code, meetingTitle }: { participants: Participant[]; localIdentity?: string; code: string; meetingTitle?: string }) {
+  const [inviteOpen, setInviteOpen] = useState(false);
   return (
-    <div className="h-full overflow-y-auto px-2 py-2" data-testid="participants-list">
+    <div className="flex h-full flex-col" data-testid="participants-list">
+      {/* Mid-meeting invite — opens a picker dialog that fires SMS
+          invites via POST /api/meetings/:code/invite. */}
+      <div className="shrink-0 px-2 pt-2">
+        <button
+          onClick={() => setInviteOpen(true)}
+          data-testid="button-open-invite-dialog"
+          className="flex w-full items-center justify-center gap-2 rounded-md border border-dashed border-border bg-muted/30 px-3 py-2 text-sm font-medium text-foreground hover-elevate"
+        >
+          <UserPlus size={14} />
+          Invite people
+        </button>
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2 pt-2">
       {participants.map((p) => {
         const name = (p.identity === localIdentity ? `${p.name || p.identity} (You)` : p.name || p.identity) || "Guest";
         const handRaised = p.attributes?.handRaised === "true";
@@ -1387,6 +1404,13 @@ function ParticipantsTab({ participants, localIdentity }: { participants: Partic
           </div>
         );
       })}
+      </div>
+      <InviteToMeetingDialog
+        open={inviteOpen}
+        onOpenChange={setInviteOpen}
+        code={code}
+        meetingTitle={meetingTitle}
+      />
     </div>
   );
 }
