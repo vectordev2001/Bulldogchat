@@ -92,6 +92,24 @@ export default function Join() {
   const [localName, setLocalName] = useState(
     (m.displayName && m.displayName.trim()) || authedUser?.name || "",
   );
+  // Sync localName from the auth context once it resolves.
+  //
+  // The /api/auth/me round-trip is async (esp. inside the iOS Capacitor
+  // WebView where cookies/JWT take a beat to attach), so authedUser is
+  // often null on first render. Without this effect, useState(initial)
+  // captured "" forever and the Join button stayed disabled even after
+  // we successfully resolved the signed-in user — exactly the iOS bug
+  // reported in the screenshot.
+  //
+  // We only auto-fill the field while the user hasn't typed anything
+  // themselves (localName.trim() === "") and there's no meeting
+  // displayName override. If the user already started typing a custom
+  // name, we don't clobber it.
+  useEffect(() => {
+    if (!authedUser?.name) return;
+    if (m.displayName && m.displayName.trim()) return;
+    setLocalName((cur) => (cur.trim().length === 0 ? authedUser.name : cur));
+  }, [authedUser?.name, m.displayName]);
   const [joining, setJoining] = useState(false);
   const [nameError, setNameError] = useState<string | null>(null);
   const [creatingNew, setCreatingNew] = useState(false);
@@ -404,7 +422,12 @@ export default function Join() {
   };
 
   const join = async () => {
-    const name = localName.trim();
+    // Resolve the display name to send to the server. Priority:
+    //   1. What's currently in localName (user-typed or pre-filled).
+    //   2. authedUser.name as a final fallback for the iOS race where
+    //      /api/auth/me resolves AFTER first render and the sync effect
+    //      hasn't fired yet by the time the user taps Join.
+    const name = (localName.trim() || authedUser?.name?.trim() || "");
     if (name.length < 1 || name.length > 60) {
       setNameError("Please enter a name (1–60 characters).");
       inputRef.current?.focus();
@@ -745,7 +768,14 @@ export default function Join() {
             <Button
               data-testid="button-join"
               onClick={join}
-              disabled={joining || localName.trim().length < 1}
+              // Authed users always have a server-known name (authedUser.name),
+              // so we don't need localName to be non-empty to allow Join — the
+              // join() handler falls back to authedUser.name when localName is
+              // blank. Only block when joining is in-flight, OR when this is
+              // a guest (no authedUser) without a typed name. Fixes the iOS
+              // case where /api/auth/me resolves after first render and the
+              // Join button stayed permanently grayed out.
+              disabled={joining || (!authedUser && localName.trim().length < 1)}
               className="mt-5 h-12 w-full gap-2 text-base font-semibold"
             >
               {joining ? <><Loader2 size={18} className="animate-spin" /> Joining…</> : "Join meeting"}
