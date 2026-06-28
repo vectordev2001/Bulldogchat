@@ -127,14 +127,31 @@ export default function Room() {
   const code = (params?.code ?? "").split("?")[0];
   const m = useMeeting();
 
+  // Give MeetingProvider state a beat to settle before deciding the user
+  // came here without joining. Without this, Room can bounce back to /m
+  // mid-state-propagation (the classic "click Join twice" bug): the navigate
+  // to /r happens in the same batch as setJoinResult, but on first commit
+  // the context value sometimes still reads token=null in the route subtree
+  // depending on how wouter schedules the location update. Waiting a frame
+  // and re-checking eliminates the race; if we're TRULY orphaned (user
+  // pasted /r/:code in a fresh tab), token is still null after the timeout
+  // and we redirect cleanly.
+  const orphaned = !m.token || !m.wsUrl;
+  const [confirmOrphan, setConfirmOrphan] = useState(false);
   useEffect(() => {
-    if (!m.token || !m.wsUrl) {
-      navigate(`/m/${code}`);
+    if (!orphaned) {
+      setConfirmOrphan(false);
+      return;
     }
+    const id = window.setTimeout(() => setConfirmOrphan(true), 250);
+    return () => window.clearTimeout(id);
+  }, [orphaned]);
+  useEffect(() => {
+    if (orphaned && confirmOrphan) navigate(`/m/${code}`);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [orphaned, confirmOrphan]);
 
-  if (!m.token || !m.wsUrl) {
+  if (orphaned) {
     return (
       <div className="flex h-screen items-center justify-center bg-background text-muted-foreground">
         Reconnecting…
@@ -198,6 +215,23 @@ function useMeetBackground(
   // The raw camera MediaStreamTrack we segment from. Stashed so it survives
   // the unpublish/republish cycle (unpublish can stop the wrapper track).
   const rawTrackRef = useRef<MediaStreamTrack | null>(null);
+
+  // Force the effect to re-run when the local camera publication appears.
+  // Without this, picking a background in-meeting silently no-ops because
+  // the effect bailed early on first run (publication not yet attached) and
+  // never re-ran when it became available — bgSel hadn't changed.
+  const [pubReadyTick, setPubReadyTick] = useState(0);
+  useEffect(() => {
+    const lp = room.localParticipant;
+    if (!lp) return;
+    const onPublished = () => setPubReadyTick((n) => n + 1);
+    lp.on("localTrackPublished" as any, onPublished);
+    lp.on("localTrackUnpublished" as any, onPublished);
+    return () => {
+      lp.off("localTrackPublished" as any, onPublished);
+      lp.off("localTrackUnpublished" as any, onPublished);
+    };
+  }, [room]);
 
   // Stop the processor and restore the raw camera publication.
   const teardown = useCallback(async () => {
@@ -263,7 +297,7 @@ function useMeetBackground(
     void run();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [camOn, bgSel.id, bgSel.mode.kind]);
+  }, [camOn, bgSel.id, bgSel.mode.kind, pubReadyTick]);
 
   // Tear the pipeline down on unmount so we don't leak a running processor.
   useEffect(() => () => { void teardown(); }, [teardown]);
@@ -393,11 +427,16 @@ function BulldogMeetingUI({ code }: { code: string }) {
       // ---- Audio ----
       if (handed.audio) {
         try {
-          await localParticipant.publishTrack(handed.audio);
-          // Apply mute state — setMicrophoneEnabled on an already-published
-          // track only flips the enabled flag; no new getUserMedia.
-          if (!cancelled) {
-            await localParticipant.setMicrophoneEnabled(m.micEnabled);
+          // Same reasoning as video below: publish the prejoin track and
+          // skip setMicrophoneEnabled. Reconciling can trigger restartTrack
+          // on the audio publication and silence the mic until the user
+          // manually toggles. The prejoin track already reflects mute state.
+          await localParticipant.publishTrack(handed.audio, {
+            source: Track.Source.Microphone,
+            name: "microphone",
+          });
+          if (!cancelled && !m.micEnabled) {
+            try { handed.audio.mute(); } catch { /* ignore */ }
           }
         } catch (e) {
           console.error("[meet] failed to publish prejoin mic:", e);
@@ -424,9 +463,24 @@ function BulldogMeetingUI({ code }: { code: string }) {
       // ---- Video ----
       if (handed.video) {
         try {
-          await localParticipant.publishTrack(handed.video);
-          if (!cancelled) {
-            await localParticipant.setCameraEnabled(m.camEnabled);
+          // Publish the prejoin track. The track already reflects the
+          // user's mute state (set in handoffPreview) — do NOT call
+          // setCameraEnabled afterwards. Doing so makes the LiveKit client
+          // "reconcile" the publication against the room's track manager
+          // and can trigger restartTrack(), which re-invokes getUserMedia
+          // outside the click gesture and yields a black frame on Safari
+          // and iOS WebKit. If the user explicitly wanted the cam OFF
+          // before joining, the track is muted already; if ON, it's live.
+          await localParticipant.publishTrack(handed.video, {
+            source: Track.Source.Camera,
+            name: "camera",
+          });
+          // If the user toggled cam OFF in prejoin we still want the
+          // publication to be muted at the LiveKit level (mute() on the
+          // raw track only mutes RTP send, not the publication flag that
+          // useTracks reads). Sync it explicitly.
+          if (!cancelled && !m.camEnabled) {
+            try { handed.video.mute(); } catch { /* ignore */ }
           }
         } catch (e) {
           console.error("[meet] failed to publish prejoin camera:", e);

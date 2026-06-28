@@ -192,8 +192,88 @@ function getUserByEmail(email: string) {
     .get(email) as { id: number } | undefined;
 }
 
+// ---------- Self-healing dupe cleanup ----------
+// Historical bug: an older version of this seed (or a transient deploy
+// without MULTITENANT_MODE=1) created project rows under shorter legacy
+// slugs ("vfd", "vs", "vts") or, more recently, the canonical long slugs
+// got duplicated mid-seed when an earlier boot failed partway through.
+// Either way the sidebar ends up rendering 5-7 entries instead of 4.
+//
+// At boot, BEFORE creating any new projects, scan for duplicate slugs and
+// also for legacy-slug rows that point at the same auth_company_id as a
+// canonical row. Keep the LOWEST-id project per canonical slug (it almost
+// always carries the channels/messages the user actually wrote into); blow
+// away the rest via the full cascade so no orphaned channels/regions/
+// members linger.
+function cleanupDuplicateProjects(): void {
+  const allProjects = rawDb
+    .prepare(`SELECT id, slug, name FROM projects ORDER BY id ASC`)
+    .all() as Array<{ id: number; slug: string; name: string }>;
+
+  // 1. Group canonical-slug rows; keep min(id), delete the rest.
+  const canonicalSlugs = new Set(CHAT_PROJECTS.map((p) => p.slug));
+  const seen = new Map<string, number>(); // slug -> kept id
+  const toDelete: number[] = [];
+
+  for (const row of allProjects) {
+    if (!canonicalSlugs.has(row.slug)) continue;
+    const kept = seen.get(row.slug);
+    if (kept === undefined) {
+      seen.set(row.slug, row.id);
+    } else {
+      toDelete.push(row.id);
+    }
+  }
+
+  // 2. Also clean up legacy short-slug rows that overlap with a canonical
+  //    row via project_auth_company. We can't safely match by name alone
+  //    ("VFD" vs "Vector Force Development") but if they're both linked to
+  //    the same auth_company_id we know they're the same logical tenant.
+  const legacyCandidates = allProjects.filter(
+    (p) => !canonicalSlugs.has(p.slug),
+  );
+  for (const legacy of legacyCandidates) {
+    const link = rawDb
+      .prepare(
+        `SELECT auth_company_id FROM project_auth_company WHERE project_id = ?`,
+      )
+      .get(legacy.id) as { auth_company_id: string } | undefined;
+    if (!link) continue;
+    // Is there a canonical project linked to the same auth company?
+    const canonical = rawDb
+      .prepare(
+        `SELECT p.id FROM projects p
+         JOIN project_auth_company pac ON pac.project_id = p.id
+         WHERE pac.auth_company_id = ? AND p.id != ?
+         ORDER BY p.id ASC LIMIT 1`,
+      )
+      .get(link.auth_company_id, legacy.id) as { id: number } | undefined;
+    if (canonical && !toDelete.includes(legacy.id)) {
+      toDelete.push(legacy.id);
+    }
+  }
+
+  if (toDelete.length === 0) return;
+
+  console.log(
+    `[seed-mt] cleaning ${toDelete.length} duplicate/legacy project rows: ${toDelete.join(", ")}`,
+  );
+  for (const id of toDelete) {
+    try {
+      storage.deleteProjectCascade(id);
+    } catch (e: any) {
+      console.error(`[seed-mt] failed to clean project id=${id}:`, e?.message ?? e);
+    }
+  }
+}
+
 // ---------- Entry point ----------
 export async function runMultiTenantSeed(): Promise<void> {
+  // 0. Self-heal: blow away any duplicate-slug rows from prior broken boots
+  //    BEFORE we look up canonical projects, so the create-if-missing path
+  //    sees a clean slate.
+  cleanupDuplicateProjects();
+
   // Resolve auth IDs first — bail loudly if the auth service is unreachable
   // so we don't seed half a tree.
   const { companiesByName, locationsByName } = await resolveAuthIds();
