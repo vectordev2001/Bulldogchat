@@ -61,27 +61,13 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 }
 
 // Public meeting routes intentionally bypass ProtectedRoute/SSO so external
-// guests can join via a shared /m/:code link. A single MeetingProvider wraps all
-// three so the green-room device prefs + LiveKit join result survive the
-// /m → /r → /end navigation (a per-route provider would remount and lose them).
-function PublicMeetingRoutes() {
-  return (
-    <MeetingProvider>
-      <Switch>
-        <Route path="/m/:code" component={MeetingJoin} />
-        <Route path="/r/:code" component={MeetingRoom} />
-        <Route path="/end/:code" component={MeetingEnd} />
-      </Switch>
-    </MeetingProvider>
-  );
-}
-
+// guests can join via a shared /m/:code link.
 function AppRouter() {
   return (
     <Switch>
-      <Route path="/m/:code" component={PublicMeetingRoutes} />
-      <Route path="/r/:code" component={PublicMeetingRoutes} />
-      <Route path="/end/:code" component={PublicMeetingRoutes} />
+      <Route path="/m/:code" component={MeetingJoin} />
+      <Route path="/r/:code" component={MeetingRoom} />
+      <Route path="/end/:code" component={MeetingEnd} />
 
       <Route path="/login" component={Login} />
       <Route path="/signup" component={Signup} />
@@ -103,9 +89,17 @@ function App() {
           <TooltipProvider>
             <Toaster />
             <IosInstallBanner appName="Bulldog Chat" />
-            <Router hook={useHashLocation}>
-              <AppRouter />
-            </Router>
+            {/* MeetingProvider wraps the Router so its state (token, wsUrl,
+                prejoin device prefs, prejoinTracksRef) survives the /m → /r
+                navigation. If the provider lived under a per-route wrapper,
+                wouter's <Switch> would unmount it on each path change and the
+                Room route would see token=null, bouncing the user back to the
+                prejoin screen — the classic "have to click Join twice" bug. */}
+            <MeetingProvider>
+              <Router hook={useHashLocation}>
+                <AppRouter />
+              </Router>
+            </MeetingProvider>
             <CallOverlays />
           </TooltipProvider>
         </CallProvider>

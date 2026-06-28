@@ -47,6 +47,7 @@ import { SharingFloatingBar, type SharingAnnotationTool } from "@/components/cal
 import { InviteToMeetingDialog } from "@/components/call/InviteToMeetingDialog";
 import { ScreenShareAnnotator, annotationsSupported } from "@/lib/screen-share-annotator";
 import { blurSupported, loadDevicePrefs, saveDevicePrefs, type DevicePrefs } from "@/lib/meet-devices";
+import { loadMeetPrefs, saveMeetPrefs, MEET_PREFS_EVENT, emitMeetPrefsChanged, type MeetPrefs } from "@/lib/meet-prefs";
 
 const REACTIONS = ["👍", "❤️", "😂", "🎉", "👏"];
 type SidebarTab = "chat" | "participants" | "transcript";
@@ -330,9 +331,16 @@ function BulldogMeetingUI({ code }: { code: string }) {
     toast({ title: "Background effects unavailable", description: "Falling back to your camera.", variant: "destructive" });
   });
 
-  // Apply any persisted device selection once the room is connected.
+  // Apply audio output preference once the room is connected. Note: we do
+  // NOT touch videoinput/audioinput here — the prejoin handoff already
+  // publishes tracks on the user-selected devices, and calling
+  // switchActiveDevice before the publish effect runs causes a race that
+  // leaves the camera tile as a black box (the camera track gets detached
+  // before it's been published).
   useEffect(() => {
-    void applyDevicePrefsToRoom(room, devicePrefs);
+    if (devicePrefs.audioOutput) {
+      room.switchActiveDevice("audiooutput", devicePrefs.audioOutput).catch(() => { /* ignore */ });
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [room]);
 
@@ -662,9 +670,17 @@ function BulldogMeetingUI({ code }: { code: string }) {
       setSharing(true);
       setAnnAvailable(true);
       setShareSurface(annotator.displaySurface);
+      // Annotation hint depends on what the user picked. For window / browser-tab
+      // shares the OS routes pointer events to the shared surface (not Bulldog),
+      // so laser + highlighter only draw while the cursor is over the Bulldog
+      // window itself. Make that explicit so users don't think it's broken.
+      const surf = annotator.displaySurface;
+      const isWholeScreen = surf === "monitor" || surf == null;
       toast({
         title: "Screen share started",
-        description: "Floating bar at the top has laser pointer & highlighter — drag it anywhere.",
+        description: isWholeScreen
+          ? "Floating bar has laser pointer & highlighter — drag it anywhere."
+          : "Laser & highlighter only draw while your cursor is over the Bulldog window. To annotate over your shared window, switch to sharing your whole screen.",
       });
     } catch (err) {
       // User cancelled the picker, or the annotator failed to initialize.
@@ -1179,6 +1195,16 @@ function TileChrome({
   const hasVideo =
     isTrackReference(trackRef) && !!trackRef.publication && !trackRef.publication.isMuted;
 
+  // Subscribe to the local-only "stage glow" toggle (Settings → Stage glow).
+  // Stored in localStorage; we re-read on the bulldog:meet-prefs-changed
+  // window event so the toggle takes effect instantly across all open tiles.
+  const [stageGlow, setStageGlow] = useState<boolean>(() => loadMeetPrefs().stageGlow);
+  useEffect(() => {
+    const onChange = () => setStageGlow(loadMeetPrefs().stageGlow);
+    window.addEventListener(MEET_PREFS_EVENT, onChange);
+    return () => window.removeEventListener(MEET_PREFS_EVENT, onChange);
+  }, []);
+
   return (
     <div
       className={`relative h-full w-full overflow-hidden rounded-xl bg-slate-900 ring-1 ring-black/10 dark:ring-white/10 ${
@@ -1199,7 +1225,9 @@ function TileChrome({
         </div>
       )}
 
-      <div className="absolute inset-0 bg-gradient-to-t from-black/55 via-transparent to-black/10" />
+      {stageGlow && (
+        <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/55 via-transparent to-black/10" />
+      )}
 
       {handRaised && (
         <div className={`absolute ${large ? "left-3 top-3" : "left-1.5 top-1.5"} flex items-center gap-1 rounded-full bg-amber-400/95 px-2 py-0.5 text-xs font-semibold text-amber-950 shadow`}>

@@ -137,23 +137,32 @@ export function SharingFloatingBar({
     setPipWindow(null);
   };
 
-  // Auto-open PiP exactly once per share session. We do this for *any* share
-  // type (monitor/window/browser/unknown) because:
+  // Auto-open PiP exactly once per share session, and ONLY for full-screen
+  // shares. Why the narrowing:
   //   - monitor: Bulldog tab is fully obscured, PiP is the only on-top option
-  //   - window:  user usually focuses the shared app full-screen, PiP keeps
-  //              the laser/highlighter/stop controls reachable without alt-tab
-  //   - browser tab: same — the user is staring at the shared tab, not Bulldog
-  // PiP always-on-top is what makes the annotation tools (laser pointer,
-  // highlighter) actually discoverable while a share is live.
+  //              — worth the trade-off of a floating control window
+  //   - window / browser tab: the user can still see the Bulldog tab in the
+  //              OS taskbar, AND the PiP window tends to land near the macOS
+  //              menu bar / Windows taskbar, where users have reported losing
+  //              it. Keep the in-tab floating bar instead; the user can still
+  //              open PiP manually via the toolbar button if they want it.
+  //
+  // We wait for displaySurface to populate (LiveKit publishes the track,
+  // which is when displaySurface resolves on Chromium). Once we know the
+  // surface kind, we decide ONCE and never retry.
   useEffect(() => {
     if (pipAttempted.current) return;
     if (!pipApiAvailable) return;
-    // Wait until we know what's being shared (or after a short grace window).
-    // displaySurface starts as null while LiveKit publishes the track.
+    // Wait for displaySurface to populate. Unknown (null) shouldn't auto-PiP
+    // either — better to leave the in-tab bar visible than to surprise the
+    // user with an OS-level window in an unexpected corner.
+    if (displaySurface == null) return;
     pipAttempted.current = true;
-    void openPip();
+    if (displaySurface === "monitor") {
+      void openPip();
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pipApiAvailable]);
+  }, [pipApiAvailable, displaySurface]);
 
   // Close the PiP window if this component unmounts (share stopped).
   useEffect(() => {
