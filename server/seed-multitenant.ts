@@ -35,28 +35,32 @@ import { rawDb } from "./db";
 // joins resolve. If you rename one side, rename the other in the same PR.
 const CHAT_PROJECTS: Array<{
   authCompanyName: string; // join key — must match auth companies.name
-  slug: string;
+  slug: string;            // canonical slug going forward (kept short for sidebar)
+  aliases: string[];       // any legacy slug we should treat as same-tenant during cleanup
   short: string;
   hue: number;
   description: string;
 }> = [
   {
     authCompanyName: "Vector Force Development",
-    slug: "vector-force-development",
+    slug: "vfd",
+    aliases: ["vector-force-development"],
     short: "VFD",
     hue: 232,
     description: "Vector Force Development — utility construction & infrastructure.",
   },
   {
     authCompanyName: "Vector Services",
-    slug: "vector-services",
+    slug: "vs",
+    aliases: ["vector-services"],
     short: "VS",
     hue: 218,
     description: "Vector Services — field operations & maintenance.",
   },
   {
     authCompanyName: "Vector Talent Solutions",
-    slug: "vector-talent-solutions",
+    slug: "vts",
+    aliases: ["vector-talent-solutions"],
     short: "VTS",
     hue: 28,
     description: "Vector Talent Solutions — staffing & placement.",
@@ -64,6 +68,7 @@ const CHAT_PROJECTS: Array<{
   {
     authCompanyName: "TDIS",
     slug: "tdis",
+    aliases: [],
     short: "TDIS",
     hue: 207,
     description: "TDIS — telecom and dark-fiber installation services.",
@@ -197,66 +202,146 @@ function getUserByEmail(email: string) {
 // without MULTITENANT_MODE=1) created project rows under shorter legacy
 // slugs ("vfd", "vs", "vts") or, more recently, the canonical long slugs
 // got duplicated mid-seed when an earlier boot failed partway through.
-// Either way the sidebar ends up rendering 5-7 entries instead of 4.
+// Worse — prod was observed with id=12 slug="vfd" linked to the WRONG
+// auth_company_id (VS) and orphan rows with corrupt +058xxx createdAt
+// dates from a Unix-ms-as-seconds bug.
 //
-// At boot, BEFORE creating any new projects, scan for duplicate slugs and
-// also for legacy-slug rows that point at the same auth_company_id as a
-// canonical row. Keep the LOWEST-id project per canonical slug (it almost
-// always carries the channels/messages the user actually wrote into); blow
-// away the rest via the full cascade so no orphaned channels/regions/
-// members linger.
-function cleanupDuplicateProjects(): void {
+// New strategy (v3): for each canonical project (by short slug + aliases),
+// find every candidate row that either (a) has a slug in {slug, ...aliases}
+// OR (b) is linked via project_auth_company to the matching auth UUID.
+// Among candidates, pick the keeper by MOST MESSAGES (tie-break: lowest id)
+// so we never discard the row the user actually chatted into. Force the
+// keeper's slug/name/description back to canonical, re-link its
+// auth_company_id, then nuke every other candidate via the full cascade.
+function cleanupDuplicateProjects(
+  companiesByName?: Map<string, { id: string }>,
+): void {
   const allProjects = rawDb
     .prepare(`SELECT id, slug, name FROM projects ORDER BY id ASC`)
     .all() as Array<{ id: number; slug: string; name: string }>;
 
-  // 1. Group canonical-slug rows; keep min(id), delete the rest.
-  const canonicalSlugs = new Set(CHAT_PROJECTS.map((p) => p.slug));
-  const seen = new Map<string, number>(); // slug -> kept id
-  const toDelete: number[] = [];
+  const toDelete = new Set<number>();
+  const keepers = new Map<string, number>(); // canonical slug -> kept id
+  const protectedIds = new Set<number>();    // never delete a keeper
 
+  // Helper: count messages under all channels of a project.
+  const messageCount = (projectId: number): number => {
+    try {
+      const row = rawDb
+        .prepare(
+          `SELECT COUNT(m.id) AS c FROM messages m
+           JOIN channels c ON c.id = m.channel_id
+           WHERE c.project_id = ?`,
+        )
+        .get(projectId) as { c: number } | undefined;
+      return row?.c ?? 0;
+    } catch {
+      return 0;
+    }
+  };
+
+  for (const cp of CHAT_PROJECTS) {
+    const slugSet = new Set<string>([cp.slug, ...cp.aliases]);
+    const candidates = new Map<
+      number,
+      { id: number; slug: string; name: string }
+    >();
+
+    // (a) slug-match candidates.
+    for (const row of allProjects) {
+      if (slugSet.has(row.slug)) candidates.set(row.id, row);
+    }
+
+    // (b) auth-link candidates — every project currently linked to this
+    //     tenant's auth UUID, even if its slug doesn't match.
+    const authId = companiesByName?.get(cp.authCompanyName)?.id;
+    if (authId) {
+      const linkedRows = rawDb
+        .prepare(
+          `SELECT p.id, p.slug, p.name FROM projects p
+           JOIN project_auth_company pac ON pac.project_id = p.id
+           WHERE pac.auth_company_id = ?`,
+        )
+        .all(authId) as Array<{ id: number; slug: string; name: string }>;
+      for (const row of linkedRows) candidates.set(row.id, row);
+    }
+
+    if (candidates.size === 0) continue;
+
+    // Pick keeper: most messages, tie-break lowest id.
+    let keeper: { id: number; msgs: number } | null = null;
+    for (const row of candidates.values()) {
+      const msgs = messageCount(row.id);
+      if (
+        !keeper ||
+        msgs > keeper.msgs ||
+        (msgs === keeper.msgs && row.id < keeper.id)
+      ) {
+        keeper = { id: row.id, msgs };
+      }
+    }
+    if (!keeper) continue;
+
+    keepers.set(cp.slug, keeper.id);
+    protectedIds.add(keeper.id);
+    console.log(
+      `[seed-mt] keeper ${cp.short} project_id=${keeper.id} msgs=${keeper.msgs} (candidates=${[...candidates.keys()].join(",")})`,
+    );
+
+    // Force keeper metadata back to canonical.
+    try {
+      rawDb
+        .prepare(
+          `UPDATE projects SET slug = ?, name = ?, description = ? WHERE id = ?`,
+        )
+        .run(cp.slug, cp.short, cp.description, keeper.id);
+    } catch (e: any) {
+      console.warn(
+        `[seed-mt] could not normalize keeper id=${keeper.id}: ${e?.message ?? e}`,
+      );
+    }
+
+    // Re-link auth_company_id on keeper (delete then insert, idempotent).
+    if (authId) {
+      try {
+        rawDb
+          .prepare(`DELETE FROM project_auth_company WHERE project_id = ?`)
+          .run(keeper.id);
+        rawDb
+          .prepare(
+            `INSERT INTO project_auth_company (project_id, auth_company_id) VALUES (?, ?)`,
+          )
+          .run(keeper.id, authId);
+      } catch (e: any) {
+        console.warn(
+          `[seed-mt] could not re-link auth_company_id for keeper id=${keeper.id}: ${e?.message ?? e}`,
+        );
+      }
+    }
+
+    // Everyone else in candidates dies.
+    for (const id of candidates.keys()) {
+      if (id !== keeper.id) toDelete.add(id);
+    }
+  }
+
+  // Finally, any project not protected by being a keeper is an orphan or
+  // duplicate — drop it too. This catches the +058xxx-date ghost rows and
+  // any stray short-slug rows we never linked to.
   for (const row of allProjects) {
-    if (!canonicalSlugs.has(row.slug)) continue;
-    const kept = seen.get(row.slug);
-    if (kept === undefined) {
-      seen.set(row.slug, row.id);
-    } else {
-      toDelete.push(row.id);
-    }
+    if (!protectedIds.has(row.id)) toDelete.add(row.id);
   }
 
-  // 2. Also clean up legacy short-slug rows that overlap with a canonical
-  //    row via project_auth_company. We can't safely match by name alone
-  //    ("VFD" vs "Vector Force Development") but if they're both linked to
-  //    the same auth_company_id we know they're the same logical tenant.
-  const legacyCandidates = allProjects.filter(
-    (p) => !canonicalSlugs.has(p.slug),
-  );
-  for (const legacy of legacyCandidates) {
-    const link = rawDb
-      .prepare(
-        `SELECT auth_company_id FROM project_auth_company WHERE project_id = ?`,
-      )
-      .get(legacy.id) as { auth_company_id: string } | undefined;
-    if (!link) continue;
-    // Is there a canonical project linked to the same auth company?
-    const canonical = rawDb
-      .prepare(
-        `SELECT p.id FROM projects p
-         JOIN project_auth_company pac ON pac.project_id = p.id
-         WHERE pac.auth_company_id = ? AND p.id != ?
-         ORDER BY p.id ASC LIMIT 1`,
-      )
-      .get(link.auth_company_id, legacy.id) as { id: number } | undefined;
-    if (canonical && !toDelete.includes(legacy.id)) {
-      toDelete.push(legacy.id);
-    }
-  }
+  // Defensive: never delete a keeper, no matter how we got here.
+  for (const id of protectedIds) toDelete.delete(id);
 
-  if (toDelete.length === 0) return;
+  if (toDelete.size === 0) {
+    console.log("[seed-mt] cleanup: no duplicate/orphan project rows");
+    return;
+  }
 
   console.log(
-    `[seed-mt] cleaning ${toDelete.length} duplicate/legacy project rows: ${toDelete.join(", ")}`,
+    `[seed-mt] cleaning ${toDelete.size} duplicate/legacy project rows: ${[...toDelete].join(", ")}`,
   );
 
   // SQLite FK constraints can foil deleteProjectCascade when a table we
@@ -350,14 +435,14 @@ function cleanupDuplicateProjects(): void {
 
 // ---------- Entry point ----------
 export async function runMultiTenantSeed(): Promise<void> {
-  // 0. Self-heal: blow away any duplicate-slug rows from prior broken boots
-  //    BEFORE we look up canonical projects, so the create-if-missing path
-  //    sees a clean slate.
-  cleanupDuplicateProjects();
-
   // Resolve auth IDs first — bail loudly if the auth service is unreachable
   // so we don't seed half a tree.
   const { companiesByName, locationsByName } = await resolveAuthIds();
+
+  // 0. Self-heal: collapse duplicate/legacy/orphan rows into the canonical 4
+  //    projects. Runs AFTER resolveAuthIds() so we can pick the keeper by
+  //    message count and re-link auth_company_id correctly.
+  cleanupDuplicateProjects(companiesByName);
 
   // Sanity: every canonical name must exist auth-side.
   for (const p of CHAT_PROJECTS) {
