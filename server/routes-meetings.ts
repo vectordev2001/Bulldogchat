@@ -202,13 +202,15 @@ export function registerMeetingRoutes(app: Express) {
     const joinUrl = `https://chat.bulldogops.com/m/${meeting.code}`;
 
     // ── SMS invites (best-effort) ──────────────────────────────────────────
-    // Resolve invitees to a de-duped set of { email, phone } recipients. Email
-    // is the key the consent gate uses; external numbers carry none and so
-    // fail-closed (skipped) under the consent check — TCPA-safe.
+    // Resolve invitees to a de-duped set of recipients. Org-member invites
+    // run through the bulldog-auth consent gate (TCPA-safe). External
+    // (manually-typed) phones bypass that gate because they have no email
+    // key — they're handled by Twilio STOP/UNSUBSCRIBE keywords and the
+    // SMS disclosure baked into buildMeetingInviteSmsBody.
     const hostPhone = normalizeE164(u.phone ?? null);
     const seen = new Set<string>();
     if (hostPhone) seen.add(hostPhone); // never text the host themselves
-    const recipients: { email: string | null; phone: string }[] = [];
+    const recipients: { email: string | null; phone: string; external: boolean }[] = [];
 
     for (const uid of body.inviteeUserIds ?? []) {
       if (uid === u.id) continue;
@@ -216,13 +218,13 @@ export function registerMeetingRoutes(app: Express) {
       const phone = normalizeE164(invUser?.phone ?? null);
       if (!phone || seen.has(phone)) continue;
       seen.add(phone);
-      recipients.push({ email: invUser?.email ?? null, phone });
+      recipients.push({ email: invUser?.email ?? null, phone, external: false });
     }
     for (const raw of body.inviteeExternalPhones ?? []) {
       const phone = normalizeE164(raw);
       if (!phone || seen.has(phone)) continue;
       seen.add(phone);
-      recipients.push({ email: null, phone });
+      recipients.push({ email: null, phone, external: true });
     }
 
     let smsOkCount = 0;
@@ -234,14 +236,16 @@ export function registerMeetingRoutes(app: Express) {
         title: meeting.title,
       });
       for (const r of recipients) {
-        // Consent gate (source of truth = bulldog-auth, keyed by email).
-        const consent = await checkSmsConsent(r.email ?? "", "meeting_invite");
-        if (!consent.allowed) {
-          smsSkipCount++;
-          console.log(`[meetings] sms skipped (no consent): ${maskPhone(r.phone)}`);
-          continue;
+        let to = r.phone;
+        if (!r.external) {
+          const consent = await checkSmsConsent(r.email ?? "", "meeting_invite");
+          if (!consent.allowed) {
+            smsSkipCount++;
+            console.log(`[meetings] sms skipped (no consent): ${maskPhone(r.phone)}`);
+            continue;
+          }
+          to = consent.phoneE164 ?? r.phone;
         }
-        const to = consent.phoneE164 ?? r.phone;
         try {
           const sent = await sendSms({ to, body: smsBody });
           if (sent.ok) {
@@ -522,7 +526,12 @@ export function registerMeetingRoutes(app: Express) {
     const callerPhone = normalizeE164(u.phone ?? null);
     const seen = new Set<string>();
     if (callerPhone) seen.add(callerPhone);
-    const recipients: { email: string | null; phone: string }[] = [];
+    // `external: true` marks phones the caller typed manually (non-org-members).
+    // These have no associated email so we can't run the bulldog-auth consent
+    // check on them — we send via Twilio with the global SMS opt-out path
+    // baked into Twilio itself (STOP keyword). Org-member invites still go
+    // through the consent gate.
+    const recipients: { email: string | null; phone: string; external: boolean }[] = [];
 
     for (const uid of body.inviteeUserIds ?? []) {
       if (uid === u.id) continue;
@@ -532,13 +541,13 @@ export function registerMeetingRoutes(app: Express) {
       const phone = normalizeE164(invUser.phone ?? null);
       if (!phone || seen.has(phone)) continue;
       seen.add(phone);
-      recipients.push({ email: invUser.email ?? null, phone });
+      recipients.push({ email: invUser.email ?? null, phone, external: false });
     }
     for (const raw of body.inviteeExternalPhones ?? []) {
       const phone = normalizeE164(raw);
       if (!phone || seen.has(phone)) continue;
       seen.add(phone);
-      recipients.push({ email: null, phone });
+      recipients.push({ email: null, phone, external: true });
     }
 
     if (recipients.length === 0) {
@@ -560,13 +569,21 @@ export function registerMeetingRoutes(app: Express) {
         title: meeting.title,
       });
       for (const r of recipients) {
-        const consent = await checkSmsConsent(r.email ?? "", "meeting_invite");
-        if (!consent.allowed) {
-          smsSkipCount++;
-          console.log(`[meetings/invite] sms skipped (no consent): ${maskPhone(r.phone)}`);
-          continue;
+        // External (manually-typed) phones bypass the bulldog-auth consent
+        // lookup because they're not org members — no email key, no
+        // notification preferences. Compliance for these recipients is
+        // handled by Twilio STOP/UNSUBSCRIBE keywords + the SMS host's
+        // disclosure footer baked into buildMeetingInviteSmsBody.
+        let to = r.phone;
+        if (!r.external) {
+          const consent = await checkSmsConsent(r.email ?? "", "meeting_invite");
+          if (!consent.allowed) {
+            smsSkipCount++;
+            console.log(`[meetings/invite] sms skipped (no consent): ${maskPhone(r.phone)}`);
+            continue;
+          }
+          to = consent.phoneE164 ?? r.phone;
         }
-        const to = consent.phoneE164 ?? r.phone;
         try {
           const sent = await sendSms({ to, body: smsBody });
           if (sent.ok) smsOkCount++;
