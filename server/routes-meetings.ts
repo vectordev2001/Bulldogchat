@@ -487,6 +487,105 @@ export function registerMeetingRoutes(app: Express) {
     res.json({ meeting: publicMeetingShape(fresh) });
   });
 
+  // ── INVITE more people to a meeting (authed org member) ──
+  //
+  // Mid-meeting invite. The host (or anyone in the same org as the meeting)
+  // can fire SMS invites to additional users + raw external phone numbers.
+  // Mirrors the SMS-fan-out block from POST /api/meetings on create.
+  //
+  // Why "any org member" and not just the host? Mid-meeting reality —
+  // anyone in the room realizing "we need X here" should be able to text
+  // them without rejoining as host. We still scope to the meeting's org
+  // and run the same TCPA consent gate, so it's safe.
+  app.post("/api/meetings/:code/invite", requireAuth, async (req: Request, res: Response) => {
+    const u = (req as unknown as AuthedRequest).user;
+    const meeting = getMeetingByCode(String(req.params.code));
+    if (!meeting) return res.status(404).json({ message: "Meeting not found" });
+    if (meeting.orgId !== u.orgId) {
+      return res.status(403).json({ message: "Forbidden" });
+    }
+
+    const InviteBodySchema = z.object({
+      inviteeUserIds: z.array(z.number().int().positive()).max(50).optional(),
+      inviteeExternalPhones: z.array(z.string()).max(50).optional(),
+    });
+    const parsed = InviteBodySchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      return res.status(400).json({ message: "Invalid invite", issues: parsed.error.flatten() });
+    }
+    const body = parsed.data;
+
+    const joinUrl = `https://chat.bulldogops.com/m/${meeting.code}`;
+
+    // Same de-dupe logic as the create endpoint: build a recipient set
+    // keyed by E.164 phone, never re-text the caller themselves.
+    const callerPhone = normalizeE164(u.phone ?? null);
+    const seen = new Set<string>();
+    if (callerPhone) seen.add(callerPhone);
+    const recipients: { email: string | null; phone: string }[] = [];
+
+    for (const uid of body.inviteeUserIds ?? []) {
+      if (uid === u.id) continue;
+      const invUser = storage.getUser(uid);
+      // Cross-org safety: ignore user ids that don't belong to this org.
+      if (!invUser || invUser.orgId !== u.orgId) continue;
+      const phone = normalizeE164(invUser.phone ?? null);
+      if (!phone || seen.has(phone)) continue;
+      seen.add(phone);
+      recipients.push({ email: invUser.email ?? null, phone });
+    }
+    for (const raw of body.inviteeExternalPhones ?? []) {
+      const phone = normalizeE164(raw);
+      if (!phone || seen.has(phone)) continue;
+      seen.add(phone);
+      recipients.push({ email: null, phone });
+    }
+
+    if (recipients.length === 0) {
+      return res.json({ invitesSent: { sms: 0, skipped: 0 }, joinUrl });
+    }
+
+    // Look up the host's name for the SMS body. Fall back to the caller's
+    // name (they're the one pressing Invite, so that reads naturally too).
+    // hostUserId can be null for guest-started rooms — guard accordingly.
+    const host = meeting.hostUserId != null ? storage.getUser(meeting.hostUserId) : null;
+    const hostName = host?.name || u.name;
+
+    let smsOkCount = 0;
+    let smsSkipCount = 0;
+    if (smsAvailable()) {
+      const smsBody = buildMeetingInviteSmsBody({
+        hostName,
+        joinUrl,
+        title: meeting.title,
+      });
+      for (const r of recipients) {
+        const consent = await checkSmsConsent(r.email ?? "", "meeting_invite");
+        if (!consent.allowed) {
+          smsSkipCount++;
+          console.log(`[meetings/invite] sms skipped (no consent): ${maskPhone(r.phone)}`);
+          continue;
+        }
+        const to = consent.phoneE164 ?? r.phone;
+        try {
+          const sent = await sendSms({ to, body: smsBody });
+          if (sent.ok) smsOkCount++;
+          else {
+            smsSkipCount++;
+            console.warn("[meetings/invite] sms send failed:", sent.error);
+          }
+        } catch (e) {
+          smsSkipCount++;
+          console.warn("[meetings/invite] sms send threw:", e);
+        }
+      }
+    } else {
+      smsSkipCount = recipients.length;
+    }
+
+    res.json({ invitesSent: { sms: smsOkCount, skipped: smsSkipCount }, joinUrl });
+  });
+
   // ── END a meeting (authed host) ──
   app.post("/api/meetings/:id/end", requireAuth, async (req: Request, res: Response) => {
     const u = (req as unknown as AuthedRequest).user;
