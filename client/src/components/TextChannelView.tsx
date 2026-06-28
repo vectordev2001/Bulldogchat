@@ -147,7 +147,23 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers, me
         });
       }
       if (meetingCode) {
-        navigate(`/m/${meetingCode}`);
+        // Open the meeting in a NEW window so the user's chat stays
+        // available behind it. Goal: parity with Teams — chat keeps
+        // running while you're on a call. We size and center it so it
+        // doesn't land in some random corner. The hash router means we
+        // must include `#/` in the URL.
+        const url = `${window.location.origin}/#/m/${meetingCode}`;
+        const w = 1280;
+        const h = 800;
+        const left = Math.max(0, Math.round((window.screen.availWidth - w) / 2));
+        const top = Math.max(0, Math.round((window.screen.availHeight - h) / 2));
+        const features = `popup=yes,noopener=no,width=${w},height=${h},left=${left},top=${top}`;
+        const popup = window.open(url, `bulldog-meeting-${meetingCode}`, features);
+        // Popup blocked? Fall back to in-window navigation so the user
+        // still ends up on prejoin, just in the same tab.
+        if (!popup) {
+          navigate(`/m/${meetingCode}`);
+        }
       }
     } catch {
       channelToast({ title: "Couldn't start the huddle", description: "Please try again.", variant: "destructive" });
@@ -1412,28 +1428,29 @@ interface ScheduledCallInviteeLive {
 }
 
 function ScheduledCallCard({ meta, createdAt, meId, myRole }: { meta: ApiScheduledCallSystemMessageMeta; createdAt: string; meId: number; myRole: UserRole }) {
-  // Join button always navigates to the meeting's canonical /m/<code> page,
-  // which handles invitee gating, ringing the explicit invitee list, and
-  // guest joins via SMS link — the same flow Twilio uses. Falls back to the
-  // meeting code if joinUrl is somehow absent on an older message.
-  // The app uses wouter's hash router (see App.tsx → useHashLocation).
-  // Setting window.location.href = "/m/<code>" navigates to a NON-hash
-  // path, which the SPA fallback serves the root HTML for — the hash
-  // router then mounts at #/ and never reaches MeetingJoin. We must use
-  // the wouter setter so it writes to location.hash instead.
+  // Join button opens the meeting in a NEW window so chat stays open
+  // behind it (Teams-replacement UX goal). The app uses wouter's hash
+  // router, so the URL must include `#/`. Falls back to in-window
+  // navigation if the popup is blocked.
   const [, navigateScheduled] = useLocation();
   const onJoin = () => {
     const code = (meta as any).meetingCode;
-    // Prefer the canonical meetingCode — server-built joinUrl is an
-    // absolute URL (https://chat.bulldogops.com/m/<code>) which would
-    // also trigger a hard navigation and lose the hash router state.
     if (code) {
-      navigateScheduled(`/m/${code}`);
+      const url = `${window.location.origin}/#/m/${code}`;
+      const wW = 1280;
+      const hH = 800;
+      const left = Math.max(0, Math.round((window.screen.availWidth - wW) / 2));
+      const top = Math.max(0, Math.round((window.screen.availHeight - hH) / 2));
+      const features = `popup=yes,noopener=no,width=${wW},height=${hH},left=${left},top=${top}`;
+      const popup = window.open(url, `bulldog-meeting-${code}`, features);
+      if (!popup) {
+        navigateScheduled(`/m/${code}`);
+      }
       return;
     }
     // Fallback for very old messages that only carry the absolute URL.
     const url = (meta as any).joinUrl;
-    if (url) window.location.href = url;
+    if (url) window.open(url, "_blank", "noopener");
   };
   const { toast } = useToast();
   const canDelete = meta.organizerId === meId || myRole === "admin";
