@@ -215,11 +215,20 @@ function useMeetBackground(
   // The raw camera MediaStreamTrack we segment from. Stashed so it survives
   // the unpublish/republish cycle (unpublish can stop the wrapper track).
   const rawTrackRef = useRef<MediaStreamTrack | null>(null);
+  // The processed MediaStreamTrack we published into LiveKit. Used to detect
+  // the case where a sibling effect (e.g. the prejoin handoff or a manual
+  // cam toggle) unpublished our processed track and republished a raw
+  // camera in its place. When that happens the processor is still alive
+  // but disconnected from the room; we need to re-publish to reconnect it.
+  const processedTrackRef = useRef<MediaStreamTrack | null>(null);
 
-  // Force the effect to re-run when the local camera publication appears.
-  // Without this, picking a background in-meeting silently no-ops because
-  // the effect bailed early on first run (publication not yet attached) and
-  // never re-ran when it became available — bgSel hadn't changed.
+  // Force the effect to re-run when the local camera publication appears OR
+  // changes. Without this, picking a background in-meeting silently no-ops
+  // because the effect bailed early on first run (publication not yet
+  // attached) and never re-ran when it became available — bgSel hadn't
+  // changed. We also rely on this to detect when a sibling effect
+  // republished a raw camera over our processed track so we can reclaim
+  // the publication slot.
   const [pubReadyTick, setPubReadyTick] = useState(0);
   useEffect(() => {
     const lp = room.localParticipant;
@@ -238,6 +247,7 @@ function useMeetBackground(
     if (!processorRef.current) return;
     processorRef.current.stop();
     processorRef.current = null;
+    processedTrackRef.current = null;
     const lp = room.localParticipant;
     const existing = lp.getTrackPublication(Track.Source.Camera);
     if (existing?.track) {
@@ -264,22 +274,44 @@ function useMeetBackground(
         return;
       }
       const pub = lp.getTrackPublication(Track.Source.Camera);
-      const raw = (pub?.track as { mediaStreamTrack?: MediaStreamTrack } | undefined)?.mediaStreamTrack;
-      if (!raw) return; // camera not published yet; effect re-runs on change
+      const currentMst = (pub?.track as { mediaStreamTrack?: MediaStreamTrack } | undefined)?.mediaStreamTrack;
+      if (!currentMst) return; // camera not published yet; effect re-runs on change
+
+      // Is the currently-published camera track our processor's output? If
+      // yes, we just need to update the mode (cheap). If no, the room is
+      // showing a raw camera — either because a sibling effect republished
+      // it over our processed track (prejoin handoff, manual cam toggle),
+      // or because the user just turned the camera on and we haven't
+      // claimed the publication yet. In either case we rebuild + republish.
+      const isOurs =
+        processedTrackRef.current !== null &&
+        currentMst === processedTrackRef.current;
 
       try {
-        if (processorRef.current) {
+        if (processorRef.current && isOurs) {
           await processorRef.current.setMode(bgSel.mode);
           return;
         }
-        rawTrackRef.current = raw;
+
+        // Tear down a stale processor before building a fresh one. Without
+        // this we'd leak the old MediaPipe segmentation pipeline and
+        // captureStream() output every time the publication slot got
+        // reclaimed by a sibling effect.
+        if (processorRef.current) {
+          try { processorRef.current.stop(); } catch { /* ignore */ }
+          processorRef.current = null;
+          processedTrackRef.current = null;
+        }
+
+        rawTrackRef.current = currentMst;
         const proc = new VirtualBackgroundProcessor();
-        const processed = await proc.start(raw, bgSel.mode);
+        const processed = await proc.start(currentMst, bgSel.mode);
         if (cancelled) { proc.stop(); return; }
         processorRef.current = proc;
-        // Republish: drop the camera publication, publish the processed track.
-        // stopOnUnpublish=false so the raw input track stays alive for the
-        // processor to keep reading frames from.
+        processedTrackRef.current = processed;
+        // Republish: drop the (raw) camera publication, publish the
+        // processed track in its place. stopOnUnpublish=false so the raw
+        // input track stays alive for the processor to keep reading frames.
         const existing = lp.getTrackPublication(Track.Source.Camera);
         if (existing?.track) {
           try { await lp.unpublishTrack(existing.track as LocalVideoTrack, false); } catch { /* ignore */ }
@@ -290,6 +322,7 @@ function useMeetBackground(
         console.warn("[meet] virtual background unavailable:", (err as Error).message);
         processorRef.current?.stop();
         processorRef.current = null;
+        processedTrackRef.current = null;
         onError();
         await teardown();
       }
@@ -1248,6 +1281,19 @@ function TileChrome({
   const speaking = p?.isSpeaking ?? false;
   const hasVideo =
     isTrackReference(trackRef) && !!trackRef.publication && !trackRef.publication.isMuted;
+  // Derive a stable key from the underlying MediaStreamTrack id. When the
+  // local camera is republished (e.g. virtual-background processor swaps the
+  // raw track for a processed one, or the prejoin handoff unpublishes a
+  // stale orphan and republishes), the publication's wrapped track changes
+  // but React keeps the same <VideoTrack> instance, which can attach to the
+  // old, now-stopped MediaStreamTrack and render a black frozen frame.
+  // Keying on the live MST id forces a clean remount so the <video> element
+  // re-attaches to the fresh source.
+  const mstId =
+    (isTrackReference(trackRef)
+      ? (trackRef.publication?.track as { mediaStreamTrack?: MediaStreamTrack } | undefined)
+          ?.mediaStreamTrack?.id
+      : undefined) ?? trackRef.publication?.trackSid ?? "none";
 
   // Subscribe to the local-only "stage glow" toggle (Settings → Stage glow).
   // Stored in localStorage; we re-read on the bulldog:meet-prefs-changed
@@ -1268,6 +1314,7 @@ function TileChrome({
     >
       {hasVideo ? (
         <VideoTrack
+          key={mstId}
           trackRef={trackRef as any}
           className="h-full w-full object-cover"
         />

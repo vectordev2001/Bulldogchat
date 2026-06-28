@@ -207,9 +207,13 @@ export function registerMeetingRoutes(app: Express) {
     // (manually-typed) phones bypass that gate because they have no email
     // key — they're handled by Twilio STOP/UNSUBSCRIBE keywords and the
     // SMS disclosure baked into buildMeetingInviteSmsBody.
+    //
+    // Self-invite policy mirrors the /invite endpoint: userId-based invites
+    // skip the host's own phone, but explicitly-typed external phones are
+    // honoured even if they match the host's number (e.g. host wants to
+    // forward the link to their personal device or test the flow).
     const hostPhone = normalizeE164(u.phone ?? null);
     const seen = new Set<string>();
-    if (hostPhone) seen.add(hostPhone); // never text the host themselves
     const recipients: { email: string | null; phone: string; external: boolean }[] = [];
 
     for (const uid of body.inviteeUserIds ?? []) {
@@ -217,6 +221,7 @@ export function registerMeetingRoutes(app: Express) {
       const invUser = storage.getUser(uid);
       const phone = normalizeE164(invUser?.phone ?? null);
       if (!phone || seen.has(phone)) continue;
+      if (hostPhone && phone === hostPhone) continue;
       seen.add(phone);
       recipients.push({ email: invUser?.email ?? null, phone, external: false });
     }
@@ -521,11 +526,17 @@ export function registerMeetingRoutes(app: Express) {
 
     const joinUrl = `https://chat.bulldogops.com/m/${meeting.code}`;
 
-    // Same de-dupe logic as the create endpoint: build a recipient set
-    // keyed by E.164 phone, never re-text the caller themselves.
+    // Build a recipient set keyed by E.164 phone.
+    //
+    // Note on self-invite: we DON'T pre-add the caller's own phone to the
+    // de-dupe set. The userId path filters self-invites by id above
+    // (`uid === u.id`), and external phones the caller typed explicitly
+    // should be honoured even if they happen to be the caller's number
+    // (e.g. they want to forward the join link to their personal device or
+    // test the flow). The only filter applied to external phones is
+    // duplicate suppression within the same request.
     const callerPhone = normalizeE164(u.phone ?? null);
     const seen = new Set<string>();
-    if (callerPhone) seen.add(callerPhone);
     // `external: true` marks phones the caller typed manually (non-org-members).
     // These have no associated email so we can't run the bulldog-auth consent
     // check on them — we send via Twilio with the global SMS opt-out path
@@ -540,6 +551,9 @@ export function registerMeetingRoutes(app: Express) {
       if (!invUser || invUser.orgId !== u.orgId) continue;
       const phone = normalizeE164(invUser.phone ?? null);
       if (!phone || seen.has(phone)) continue;
+      // Even for userId invites, skip the caller's own phone — they may have
+      // selected themselves indirectly (e.g. legacy id).
+      if (callerPhone && phone === callerPhone) continue;
       seen.add(phone);
       recipients.push({ email: invUser.email ?? null, phone, external: false });
     }
