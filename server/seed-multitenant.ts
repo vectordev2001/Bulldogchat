@@ -258,12 +258,93 @@ function cleanupDuplicateProjects(): void {
   console.log(
     `[seed-mt] cleaning ${toDelete.length} duplicate/legacy project rows: ${toDelete.join(", ")}`,
   );
-  for (const id of toDelete) {
-    try {
-      storage.deleteProjectCascade(id);
-    } catch (e: any) {
-      console.error(`[seed-mt] failed to clean project id=${id}:`, e?.message ?? e);
+
+  // SQLite FK constraints can foil deleteProjectCascade when a table we
+  // don't know about still points at the project. Temporarily disable FKs
+  // for this teardown so the cleanup is guaranteed to complete; the data
+  // we're nuking is duplicate seed scaffolding with no real user content.
+  const safeRun = (sql: string, ...params: any[]) => {
+    try { rawDb.prepare(sql).run(...params); } catch (e: any) {
+      if (!/no such (table|column)/i.test(String(e?.message))) throw e;
     }
+  };
+  rawDb.pragma("foreign_keys = OFF");
+  try {
+    for (const id of toDelete) {
+      // Try the orchestrated cascade first — it knows about every chat-
+      // owned dependency. If it still throws, fall back to direct raw
+      // deletes of every known referencing table, then drop the project.
+      try {
+        storage.deleteProjectCascade(id);
+        continue;
+      } catch (e: any) {
+        console.warn(
+          `[seed-mt] cascade failed for project id=${id}, doing raw teardown: ${e?.message ?? e}`,
+        );
+      }
+      // Find every channel under this project, then nuke message-tier
+      // rows by channel id before dropping the channels themselves.
+      const chIds = rawDb
+        .prepare(`SELECT id FROM channels WHERE project_id = ?`)
+        .all(id) as Array<{ id: number }>;
+      for (const { id: chId } of chIds) {
+        const msgIds = rawDb
+          .prepare(`SELECT id FROM messages WHERE channel_id = ?`)
+          .all(chId) as Array<{ id: number }>;
+        for (const { id: mId } of msgIds) {
+          safeRun(`DELETE FROM reactions WHERE message_id = ?`, mId);
+          safeRun(`DELETE FROM message_mentions WHERE message_id = ?`, mId);
+          safeRun(`DELETE FROM attachments WHERE message_id = ?`, mId);
+        }
+        safeRun(`DELETE FROM messages WHERE channel_id = ?`, chId);
+        safeRun(`DELETE FROM read_receipts WHERE channel_id = ?`, chId);
+        safeRun(`DELETE FROM channel_members WHERE channel_id = ?`, chId);
+        safeRun(`DELETE FROM recordings WHERE channel_id = ?`, chId);
+        safeRun(`DELETE FROM livekit_rooms WHERE channel_id = ?`, chId);
+        safeRun(`DELETE FROM work_object_channel_links WHERE channel_id = ?`, chId);
+        safeRun(`DELETE FROM meeting_notes WHERE channel_id = ?`, chId);
+        // scheduled_calls + invitees
+        try {
+          const callIds = rawDb
+            .prepare(`SELECT id FROM scheduled_calls WHERE channel_id = ?`)
+            .all(chId) as Array<{ id: number }>;
+          for (const { id: cId } of callIds) {
+            safeRun(
+              `DELETE FROM scheduled_call_invitees WHERE scheduled_call_id = ?`,
+              cId,
+            );
+          }
+          safeRun(`DELETE FROM scheduled_calls WHERE channel_id = ?`, chId);
+        } catch (e: any) {
+          if (!/no such (table|column)/i.test(String(e?.message))) throw e;
+        }
+        safeRun(`DELETE FROM channels WHERE id = ?`, chId);
+      }
+      // work_objects under this project (and their activity rows).
+      try {
+        const woIds = rawDb
+          .prepare(`SELECT id FROM work_objects WHERE project_id = ?`)
+          .all(id) as Array<{ id: number }>;
+        for (const { id: woId } of woIds) {
+          safeRun(`DELETE FROM work_object_activity WHERE work_object_id = ?`, woId);
+          safeRun(`DELETE FROM work_object_channel_links WHERE work_object_id = ?`, woId);
+        }
+        safeRun(`DELETE FROM work_objects WHERE project_id = ?`, id);
+      } catch (e: any) {
+        if (!/no such (table|column)/i.test(String(e?.message))) throw e;
+      }
+      // Multi-tenant + membership + invites.
+      safeRun(`DELETE FROM user_project_regions WHERE project_id = ?`, id);
+      safeRun(`DELETE FROM regions WHERE project_id = ?`, id);
+      safeRun(`DELETE FROM project_auth_company WHERE project_id = ?`, id);
+      safeRun(`DELETE FROM project_members WHERE project_id = ?`, id);
+      safeRun(`DELETE FROM invites WHERE project_id = ?`, id);
+      // Finally the project row itself.
+      safeRun(`DELETE FROM projects WHERE id = ?`, id);
+      console.log(`[seed-mt] raw-tore-down project id=${id}`);
+    }
+  } finally {
+    rawDb.pragma("foreign_keys = ON");
   }
 }
 
