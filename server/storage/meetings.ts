@@ -6,6 +6,7 @@ import { generateMeetingCode } from "../meetings/codes";
 import {
   meetings,
   meetingParticipants,
+  meetingBridgeParticipants,
   meetingSummaryRecipients,
   directCalls,
   scheduledCalls,
@@ -19,6 +20,7 @@ import type {
   MeetingKind,
   MeetingStatus,
   MeetingParticipant,
+  MeetingBridgeParticipant,
   MeetingParticipantRole,
   SummaryRecipientPolicy,
 } from "@shared/schema";
@@ -139,6 +141,128 @@ export function updateMeetingFields(id: string, patch: MeetingPatch): void {
     .set({ ...patch, updatedAt: new Date() })
     .where(eq(meetings.id, id))
     .run();
+}
+
+/**
+ * Persist the Teams join URL + Graph onlineMeetings id on a meeting after
+ * createTeamsMeeting() succeeds. No-op if either value is null — the caller
+ * may have failed to mint the Teams meeting (Graph unavailable, admin
+ * consent missing) and we still want the LiveKit-only meeting to exist.
+ */
+export function setMeetingTeamsLink(
+  id: string,
+  teamsJoinUrl: string | null,
+  teamsMeetingId: string | null,
+): void {
+  if (!teamsJoinUrl || !teamsMeetingId) return;
+  db.update(meetings)
+    .set({
+      teamsJoinUrl,
+      teamsMeetingId,
+      updatedAt: new Date(),
+    })
+    .where(eq(meetings.id, id))
+    .run();
+}
+
+/**
+ * Record the bridge dispatch result on a meeting. Called after
+ * POST /bridges returns; status mirrors the bridge's state machine
+ * (queued | joining | active | leaving | left | failed).
+ */
+export function setMeetingBridge(
+  id: string,
+  bridgeId: string | null,
+  bridgeStatus: string | null,
+): void {
+  db.update(meetings)
+    .set({
+      bridgeId: bridgeId ?? null,
+      bridgeStatus: bridgeStatus ?? null,
+      bridgeLastEventAt: new Date(),
+      updatedAt: new Date(),
+    })
+    .where(eq(meetings.id, id))
+    .run();
+}
+
+/**
+ * Update meeting bridge status from a webhook event. We don't overwrite
+ * bridgeId here — it was set at dispatch time and is the durable id.
+ */
+export function recordBridgeEvent(
+  meetingId: string,
+  status: string,
+  eventAt: Date,
+): void {
+  db.update(meetings)
+    .set({
+      bridgeStatus: status,
+      bridgeLastEventAt: eventAt,
+      updatedAt: new Date(),
+    })
+    .where(eq(meetings.id, meetingId))
+    .run();
+}
+
+/**
+ * Upsert a Teams participant the bridge is forwarding into LiveKit.
+ * Idempotent on (meetingId, teamsParticipantId).
+ */
+export function upsertBridgeParticipant(input: {
+  meetingId: string;
+  teamsParticipantId: string;
+  displayName: string;
+  joinedAt: Date;
+}): void {
+  // SQLite UPSERT via ON CONFLICT — reset leftAt if the participant rejoins.
+  db.insert(meetingBridgeParticipants)
+    .values({
+      meetingId: input.meetingId,
+      source: "teams",
+      teamsParticipantId: input.teamsParticipantId,
+      displayName: input.displayName,
+      joinedAt: input.joinedAt,
+      leftAt: null,
+    })
+    .onConflictDoUpdate({
+      target: [
+        meetingBridgeParticipants.meetingId,
+        meetingBridgeParticipants.teamsParticipantId,
+      ],
+      set: {
+        displayName: input.displayName,
+        joinedAt: input.joinedAt,
+        leftAt: null,
+      },
+    })
+    .run();
+}
+
+export function markBridgeParticipantLeft(input: {
+  meetingId: string;
+  teamsParticipantId: string;
+  leftAt: Date;
+}): void {
+  db.update(meetingBridgeParticipants)
+    .set({ leftAt: input.leftAt })
+    .where(
+      and(
+        eq(meetingBridgeParticipants.meetingId, input.meetingId),
+        eq(meetingBridgeParticipants.teamsParticipantId, input.teamsParticipantId),
+      ),
+    )
+    .run();
+}
+
+export function listBridgeParticipants(
+  meetingId: string,
+): MeetingBridgeParticipant[] {
+  return db
+    .select()
+    .from(meetingBridgeParticipants)
+    .where(eq(meetingBridgeParticipants.meetingId, meetingId))
+    .all();
 }
 
 export interface CreateParticipantInput {

@@ -172,11 +172,20 @@ export function buildMeetingInviteSmsBody(p: {
   hostName: string;
   joinUrl: string;
   title?: string | null;
+  teamsJoinUrl?: string | null;
 }): string {
   const title = p.title?.trim();
   const trimmed = title && title.length > 60 ? `${title.slice(0, 59)}…` : title;
   const titlePart = trimmed ? `: "${trimmed}"` : "";
-  return `${p.hostName} invited you to a Bulldog meeting${titlePart}. Join: ${p.joinUrl}`;
+  // When a Teams meeting was minted in parallel (Phase 0 interop), include
+  // it as a second join line so external invitees who only have a Teams
+  // client can still join. Most US carriers split SMS into 160-char
+  // segments; with two URLs we typically land in 2 segments — acceptable
+  // for invite blasts. STOP keyword and Twilio opt-out still apply.
+  const teamsPart = p.teamsJoinUrl
+    ? `\nOr via Teams: ${p.teamsJoinUrl}`
+    : "";
+  return `${p.hostName} invited you to a Bulldog meeting${titlePart}. Join: ${p.joinUrl}${teamsPart}`;
 }
 
 /**
