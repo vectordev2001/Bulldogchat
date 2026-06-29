@@ -3,7 +3,7 @@ import { z } from "zod";
 import { nanoid } from "nanoid";
 import { requireAuth, tryAuth, AuthedRequest } from "./auth";
 import { gateChannelById } from "./multitenant-access";
-import { livekitConfigured, mintLivekitToken, evictParticipant } from "./livekit";
+import { livekitConfigured, mintLivekitToken, mintLivekitBotToken, evictParticipant } from "./livekit";
 import {
   createMeeting,
   getMeetingByCode,
@@ -14,7 +14,20 @@ import {
   listParticipants,
   addSummaryRecipient,
   updateMeetingFields,
+  setMeetingTeamsLink,
+  setMeetingBridge,
+  recordBridgeEvent,
+  upsertBridgeParticipant,
+  markBridgeParticipantLeft,
+  listBridgeParticipants,
 } from "./storage/meetings";
+import { createTeamsMeeting } from "./teams/createMeeting";
+import {
+  bridgeAvailable,
+  dispatchBridge,
+  deleteBridge,
+  verifyBridgeWebhookSecret,
+} from "./bridge/client";
 import { storage } from "./storage";
 import { sendSms, smsAvailable, buildMeetingInviteSmsBody, normalizeE164 } from "./sms";
 import { checkSmsConsent } from "./auth-consent";
@@ -48,6 +61,15 @@ function publicMeetingShape(m: Meeting) {
   } catch {
     /* best-effort */
   }
+  // Surface bridge participants count alongside LiveKit participants so the
+  // "X people in this meeting" badge in channel cards reflects the true
+  // total (LiveKit attendees + Teams attendees forwarded via the bridge).
+  let bridgeParticipantCount = 0;
+  try {
+    bridgeParticipantCount = listBridgeParticipants(m.id).filter((p) => p.joinedAt && !p.leftAt).length;
+  } catch {
+    /* best-effort */
+  }
   return {
     id: m.id,
     code: m.code,
@@ -62,6 +84,12 @@ function publicMeetingShape(m: Meeting) {
     startedAt: m.startedAt ? new Date(m.startedAt).getTime() : null,
     endedAt: m.endedAt ? new Date(m.endedAt).getTime() : null,
     activeParticipantCount,
+    // Teams interop — null when MS Graph isn't configured or admin
+    // consent hasn't been granted. UI uses teamsJoinUrl to render a
+    // "Copy Teams link" button next to "Copy invite link".
+    teamsJoinUrl: m.teamsJoinUrl ?? null,
+    bridgeStatus: m.bridgeStatus ?? null,
+    bridgeParticipantCount,
   };
 }
 
@@ -201,6 +229,100 @@ export function registerMeetingRoutes(app: Express) {
 
     const joinUrl = `https://chat.bulldogops.com/m/${meeting.code}`;
 
+    // ── Teams interop (Phase 0) ──────────────────────────────────────
+    // Mint a Teams onlineMeeting in parallel so external attendees who only
+    // have a Teams client can still join. Mirrors what scheduled-calls
+    // already does for scheduled meetings (see scheduled-calls.ts:1072).
+    //
+    // Fail-open: if Graph isn't configured, admin consent isn't granted,
+    // or the call errors, we proceed with a LiveKit-only meeting. The
+    // teamsJoinUrl response field will be null and the SMS body falls
+    // back to the LiveKit-only template.
+    //
+    // We don't await the bridge dispatch here for two reasons: (1) the
+    // bridge isn't live yet (Phase 2 ships unified audio/video), and
+    // (2) even when it ships, the dispatch is best-effort and shouldn't
+    // delay the meeting-create response. The bridge is dispatched in the
+    // background; the client polls /api/meetings/:code for bridgeStatus
+    // updates if it cares.
+    let teamsJoinUrl: string | null = null;
+    let teamsMeetingId: string | null = null;
+    try {
+      const startUtc = meeting.scheduledStartAt ?? new Date();
+      const endUtc = new Date(
+        startUtc.getTime() + (meeting.maxDurationMinutes ?? 240) * 60_000,
+      );
+      const teams = await createTeamsMeeting({
+        subject: meeting.title ?? "Bulldog meeting",
+        startUtc,
+        endUtc,
+      });
+      if (teams) {
+        teamsJoinUrl = teams.joinUrl;
+        teamsMeetingId = teams.meetingId;
+        setMeetingTeamsLink(meeting.id, teamsJoinUrl, teamsMeetingId);
+        // Re-read so publicMeetingShape() at the end of the handler picks
+        // up the new teamsJoinUrl column in the response.
+        const refreshed = getMeetingById(meeting.id);
+        if (refreshed) Object.assign(meeting, refreshed);
+      }
+    } catch (e) {
+      console.warn("[meetings] createTeamsMeeting error:", (e as Error).message);
+    }
+
+    // ── Bulldog Bridge dispatch (Phase 0 — best-effort, in background) ──────
+    // When the bridge env vars are set and we successfully created a Teams
+    // meeting, ask bulldog-bridge to dispatch a bot. Fire-and-forget: we
+    // record the result asynchronously via setMeetingBridge so the
+    // POST /api/meetings response doesn't block on bridge cold-start.
+    if (teamsJoinUrl && teamsMeetingId && bridgeAvailable()) {
+      const livekitWsUrl = process.env.LIVEKIT_WS_URL ?? "";
+      void (async () => {
+        try {
+          const botToken = await mintLivekitBotToken({
+            identity: `bridge-${meeting.id}`,
+            name: "Bulldog Bridge (recording)",
+            roomName: meeting.livekitRoomName,
+            ttlMinutes: Math.max(60, meeting.maxDurationMinutes ?? 240),
+          });
+          const result = await dispatchBridge({
+            meetingId: meeting.id,
+            teamsJoinUrl: teamsJoinUrl!,
+            teamsMeetingId: teamsMeetingId!,
+            livekitRoom: meeting.livekitRoomName,
+            livekitToken: botToken,
+            livekitWsUrl,
+            organizerId: meeting.hostUserId ? String(meeting.hostUserId) : null,
+            options: {
+              audioMode: "duplex",
+              videoMode: "duplex",
+              screenShareMode: "duplex",
+              announceOnJoin: true,
+              maxDurationMinutes: meeting.maxDurationMinutes ?? 240,
+            },
+          });
+          if (result) {
+            setMeetingBridge(meeting.id, result.bridgeId, result.status);
+            console.log(
+              `[meetings] bridge dispatched meeting=${meeting.id} bridgeId=${result.bridgeId} status=${result.status}`,
+            );
+          } else {
+            // dispatchBridge returned null — bridge unavailable or 5xx.
+            // Persist a 'failed' sentinel so the UI can surface a retry
+            // button without polling the bridge directly.
+            setMeetingBridge(meeting.id, null, "failed");
+          }
+        } catch (e) {
+          console.warn(
+            "[meetings] bridge dispatch threw for meeting=",
+            meeting.id,
+            (e as Error).message,
+          );
+          setMeetingBridge(meeting.id, null, "failed");
+        }
+      })();
+    }
+
     // ── SMS invites (best-effort) ──────────────────────────────────────────
     // Resolve invitees to a de-duped set of recipients. Org-member invites
     // run through the bulldog-auth consent gate (TCPA-safe). External
@@ -239,6 +361,7 @@ export function registerMeetingRoutes(app: Express) {
         hostName: u.name,
         joinUrl,
         title: meeting.title,
+        teamsJoinUrl: meeting.teamsJoinUrl ?? null,
       });
       for (const r of recipients) {
         let to = r.phone;
@@ -581,6 +704,7 @@ export function registerMeetingRoutes(app: Express) {
         hostName,
         joinUrl,
         title: meeting.title,
+        teamsJoinUrl: meeting.teamsJoinUrl ?? null,
       });
       for (const r of recipients) {
         // External (manually-typed) phones bypass the bulldog-auth consent
@@ -659,6 +783,55 @@ export function registerMeetingRoutes(app: Express) {
         leftAt: p.leftAt ? new Date(p.leftAt).getTime() : null,
       })),
     });
+  });
+
+  // Bridge webhook — receives lifecycle + Teams participant events from the
+  // bulldog-bridge signaling service. Auth via shared secret header. See
+  // teams-bridge-spec.md §4.4 for the body shape.
+  app.post("/internal/bridge-events", async (req: Request, res: Response) => {
+    if (!verifyBridgeWebhookSecret(req.headers.authorization)) {
+      return res.status(401).json({ message: "Invalid bridge secret" });
+    }
+    const body = (req.body ?? {}) as {
+      bridgeId?: string;
+      meetingId?: string;
+      event?: string;
+      timestamp?: string | number;
+      data?: { teamsParticipantId?: string; displayName?: string } | null;
+    };
+    const { meetingId, event, timestamp, data } = body;
+    if (!meetingId || !event) {
+      return res.status(400).json({ message: "Bad payload" });
+    }
+    const eventAt = (() => {
+      if (!timestamp) return new Date();
+      const d = new Date(timestamp);
+      return Number.isNaN(d.getTime()) ? new Date() : d;
+    })();
+
+    try {
+      if (event === "teams-participant-joined" && data?.teamsParticipantId) {
+        upsertBridgeParticipant({
+          meetingId,
+          teamsParticipantId: data.teamsParticipantId,
+          displayName: data.displayName ?? "Teams attendee",
+          joinedAt: eventAt,
+        });
+      } else if (event === "teams-participant-left" && data?.teamsParticipantId) {
+        markBridgeParticipantLeft({
+          meetingId,
+          teamsParticipantId: data.teamsParticipantId,
+          leftAt: eventAt,
+        });
+      } else {
+        // Lifecycle: joined / active / failed / left → status update on meeting row.
+        recordBridgeEvent(meetingId, event, eventAt);
+      }
+      return res.json({ ok: true });
+    } catch (err) {
+      console.error("[bridge-events] handler error", err);
+      return res.status(500).json({ message: "Bridge event handler failed" });
+    }
   });
 }
 

@@ -1213,6 +1213,62 @@ export function runMigrations() {
     console.warn("[migrate v31] multi-tenant tables skipped:", e?.message);
   }
 
+  // v32 (Teams bridge — Phase 0 scaffolding) — add Teams meeting + bridge
+  // columns to `meetings`, and the bridge-participant table that surfaces
+  // Teams attendees in the in-room participant panel. All idempotent.
+  //
+  // teams_join_url       — the joinWebUrl returned by Graph onlineMeetings
+  // teams_meeting_id     — the Graph id (used for /communications/calls)
+  // bridge_id            — bulldog-bridge bridgeId once a bot is dispatched
+  // bridge_status        — queued | joining | active | leaving | left | failed
+  // bridge_last_event_at — last webhook we received from the bridge
+  try {
+    const mtgCols = rawDb.prepare(`PRAGMA table_info(meetings)`).all() as Array<{ name: string }>;
+    const have = (n: string) => mtgCols.find((c) => c.name === n);
+    if (!have("teams_join_url")) {
+      rawDb.exec(`ALTER TABLE meetings ADD COLUMN teams_join_url TEXT;`);
+      console.log("[migrate] v32 added meetings.teams_join_url");
+    }
+    if (!have("teams_meeting_id")) {
+      rawDb.exec(`ALTER TABLE meetings ADD COLUMN teams_meeting_id TEXT;`);
+      console.log("[migrate] v32 added meetings.teams_meeting_id");
+    }
+    if (!have("bridge_id")) {
+      rawDb.exec(`ALTER TABLE meetings ADD COLUMN bridge_id TEXT;`);
+      console.log("[migrate] v32 added meetings.bridge_id");
+    }
+    if (!have("bridge_status")) {
+      rawDb.exec(`ALTER TABLE meetings ADD COLUMN bridge_status TEXT;`);
+      console.log("[migrate] v32 added meetings.bridge_status");
+    }
+    if (!have("bridge_last_event_at")) {
+      rawDb.exec(`ALTER TABLE meetings ADD COLUMN bridge_last_event_at INTEGER;`);
+      console.log("[migrate] v32 added meetings.bridge_last_event_at");
+    }
+    rawDb.exec(
+      `CREATE INDEX IF NOT EXISTS meetings_bridge_idx ON meetings(bridge_id);`,
+    );
+
+    rawDb.exec(`
+      CREATE TABLE IF NOT EXISTS meeting_bridge_participants (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        meeting_id TEXT NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+        source TEXT NOT NULL DEFAULT 'teams',
+        teams_participant_id TEXT NOT NULL,
+        display_name TEXT NOT NULL,
+        joined_at INTEGER NOT NULL,
+        left_at INTEGER
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS meeting_bridge_participants_unique_idx
+        ON meeting_bridge_participants(meeting_id, teams_participant_id);
+      CREATE INDEX IF NOT EXISTS meeting_bridge_participants_meeting_idx
+        ON meeting_bridge_participants(meeting_id);
+    `);
+    console.log("[migrate] v32 teams bridge tables ensured");
+  } catch (e: any) {
+    console.warn("[migrate v32] teams bridge tables skipped:", e?.message);
+  }
+
   // v31 — OPT-IN destructive wipe. Set MULTITENANT_WIPE_ON_BOOT=1 in the
   // service env, deploy once, then unset (and re-deploy) so subsequent
   // boots don't re-wipe. Preserves nothing except the empty tables.

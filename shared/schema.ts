@@ -854,10 +854,44 @@ export const meetings = sqliteTable("meetings", {
   scheduledStartAt: integer("scheduled_start_at", { mode: "timestamp" }),
   startedAt: integer("started_at", { mode: "timestamp" }),
   endedAt: integer("ended_at", { mode: "timestamp" }),
+  // Teams interop — nullable. teamsJoinUrl is the Graph onlineMeetings
+  // joinWebUrl; teamsMeetingId is the Graph id (used by the bridge bot to
+  // dial in). Populated by POST /api/meetings when MS_GRAPH is configured.
+  teamsJoinUrl: text("teams_join_url"),
+  teamsMeetingId: text("teams_meeting_id"),
+  // Bulldog Bridge — nullable. Populated once bulldog-bridge accepts a
+  // dispatch and starts joining the Teams meeting. bridgeStatus mirrors the
+  // bridge state machine; bridgeLastEventAt is the timestamp of the most
+  // recent webhook event from the bridge.
+  bridgeId: text("bridge_id"),
+  bridgeStatus: text("bridge_status"),
+  bridgeLastEventAt: integer("bridge_last_event_at", { mode: "timestamp" }),
   createdAt: integer("created_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
   updatedAt: integer("updated_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
 });
 export type Meeting = typeof meetings.$inferSelect;
+
+/**
+ * Teams attendees joining via the Bulldog Bridge bot.
+ *
+ * The bridge bot is one of LiveKit's participants in the meeting, but it
+ * forwards N separate Teams attendees. Those attendees aren't real LiveKit
+ * participants — we just need to render them in the in-room panel and
+ * count them in the attendee total. The bridge webhook fires
+ * `teams-participant-joined/left` events that upsert rows here.
+ */
+export const meetingBridgeParticipants = sqliteTable("meeting_bridge_participants", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  meetingId: text("meeting_id")
+    .notNull()
+    .references(() => meetings.id, { onDelete: "cascade" }),
+  source: text("source").notNull().default("teams"),
+  teamsParticipantId: text("teams_participant_id").notNull(),
+  displayName: text("display_name").notNull(),
+  joinedAt: integer("joined_at", { mode: "timestamp" }).notNull(),
+  leftAt: integer("left_at", { mode: "timestamp" }),
+});
+export type MeetingBridgeParticipant = typeof meetingBridgeParticipants.$inferSelect;
 
 export const meetingParticipantRoles = ["host", "cohost", "participant", "guest"] as const;
 export type MeetingParticipantRole = typeof meetingParticipantRoles[number];

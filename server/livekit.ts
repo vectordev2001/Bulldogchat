@@ -54,6 +54,47 @@ export async function mintLivekitToken(opts: {
 }
 
 /**
+ * Mint a long-lived LiveKit token for the Bulldog Bridge bot. The bridge
+ * MediaWorker uses this to join the room and publish Teams audio/video
+ * (and subscribe to LiveKit audio/video to forward to Teams).
+ *
+ * Differences from {@link mintLivekitToken}:
+ *   - longer TTL (4h by default; meetings rarely run longer)
+ *   - canPublish/canSubscribe/canPublishData are all true — the bridge
+ *     republishes media both directions and uses data channels for
+ *     out-of-band signaling (mute/talker-state hints).
+ *   - canUpdateOwnMetadata is true so the bot can advertise itself as
+ *     "recording" and update participant counts via attributes.
+ *
+ * `identity` should be deterministic per meeting (`bridge-<meetingId>`)
+ * so the bridge can be re-dispatched against the same identity without
+ * tripping LiveKit's duplicate-identity rejection.
+ */
+export async function mintLivekitBotToken(opts: {
+  identity: string;
+  name: string;
+  roomName: string;
+  ttlMinutes?: number;
+}): Promise<string> {
+  const apiKey = process.env.LIVEKIT_API_KEY!;
+  const apiSecret = process.env.LIVEKIT_API_SECRET!;
+  const at = new AccessToken(apiKey, apiSecret, {
+    identity: opts.identity,
+    name: opts.name,
+    ttl: (opts.ttlMinutes ?? 240) * 60,
+  });
+  at.addGrant({
+    roomJoin: true,
+    room: opts.roomName,
+    canPublish: true,
+    canSubscribe: true,
+    canPublishData: true,
+    canUpdateOwnMetadata: true,
+  });
+  return at.toJwt();
+}
+
+/**
  * Return the participant identities currently in `roomName`. Used by the
  * Phase 1.9 dial-absent flow to figure out which channel members haven't
  * joined the live room and therefore need their phone rung. Identities
