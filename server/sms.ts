@@ -230,7 +230,7 @@ export function buildScheduledCallSmsBody(p: {
   // reply shape. Exactly one URL: short link when present (Universal-Link
   // routed), else the long join URL.
   const link = p.shortUrl || p.joinUrl;
-  return `${p.organizerName} invited you to a Bulldog call: "${p.title}" on ${p.whenLabel}. RSVP: reply ${p.rsvpCode} Y/N/M. Join: ${link}`;
+  return `${p.organizerName} invited you to a Bulldog call: "${p.title}" on ${p.whenLabel}. Join: ${link}`;
 }
 
 /**
