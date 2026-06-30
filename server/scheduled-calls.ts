@@ -495,27 +495,88 @@ async function dispatchInvites(call: ScheduledCall): Promise<void> {
           `  Maybe  → ${rsvpMaybeUrl}`,
         ].join("\n");
 
+        const callKindLabel = call.kind === "video" ? "Video call" : "Voice call";
         const htmlBody = `<!DOCTYPE html>
-<html><body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f4f5f7;color:#191E4A;padding:24px;">
-<div style="max-width:480px;margin:0 auto;background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:28px 24px;">
-<h2 style="color:#191E4A;margin-top:0">${escH(call.title)}</h2>
-<p style="color:#191E4A"><strong>Organizer:</strong> ${escH(organizer.name)}<br/>
-<strong>When:</strong> ${escH(whenLabel)}</p>
-<p style="margin:20px 0 6px;text-align:center">
-  <a href="${escH(joinShortUrl)}" style="display:inline-block;padding:14px 32px;background:#191E4A;color:#fff;border-radius:8px;text-decoration:none;font-weight:bold;font-size:16px;">Join meeting</a>
-</p>${
-  call.teamsJoinUrl
-    ? `<p style="text-align:center;margin-top:8px"><a href="${escH(call.teamsJoinUrl)}" style="display:inline-block;padding:10px 20px;background:#5b5fc7;color:#fff;border-radius:6px;text-decoration:none;font-weight:bold;">Join via Microsoft Teams</a></p>`
-    : ""
-}
-<p style="margin:24px 0 8px;color:#191E4A"><strong>RSVP:</strong> <span style="font-size:12px;color:#6b7280;">(records your response — won't join you)</span></p>
-<p>
-  <a href="${escH(rsvpYesUrl)}" style="display:inline-block;margin-right:8px;padding:8px 16px;background:#16a34a;color:#fff;border-radius:6px;text-decoration:none;font-weight:bold;">Yes</a>
-  <a href="${escH(rsvpNoUrl)}" style="display:inline-block;margin-right:8px;padding:8px 16px;background:#dc2626;color:#fff;border-radius:6px;text-decoration:none;font-weight:bold;">No</a>
-  <a href="${escH(rsvpMaybeUrl)}" style="display:inline-block;padding:8px 16px;background:#d97706;color:#fff;border-radius:6px;text-decoration:none;font-weight:bold;">Maybe</a>
-</p>
-<p style="margin-top:24px;font-size:12px;color:#6b7280;">You received this because you were invited to a Bulldog Chat meeting.</p>
-</div>
+<html>
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>${escH(call.title)}</title>
+</head>
+<body style="margin:0;padding:0;background:#0B1020;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#E8EBF5;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#0B1020;padding:32px 16px;">
+<tr><td align="center">
+  <table role="presentation" width="520" cellpadding="0" cellspacing="0" border="0" style="max-width:520px;width:100%;background:linear-gradient(180deg,#13182E 0%,#191E4A 100%);border:1px solid rgba(94,151,255,0.18);border-radius:16px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,0.45);">
+    <!-- Header bar with logo + brand -->
+    <tr><td style="padding:24px 28px 8px 28px;">
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0">
+        <tr>
+          <td style="vertical-align:middle;padding-right:12px;">
+            <img src="https://chat.bulldogops.com/icon-192.png" width="36" height="36" alt="Bulldog" style="display:block;border-radius:8px;" />
+          </td>
+          <td style="vertical-align:middle;">
+            <div style="font-size:11px;letter-spacing:0.18em;text-transform:uppercase;color:#5E97FF;font-weight:700;">Bulldog Chat</div>
+            <div style="font-size:13px;color:rgba(232,235,245,0.65);margin-top:2px;">${escH(callKindLabel)} invitation</div>
+          </td>
+        </tr>
+      </table>
+    </td></tr>
+
+    <!-- Title -->
+    <tr><td style="padding:20px 28px 0 28px;">
+      <h1 style="margin:0;font-size:22px;line-height:1.25;color:#FFFFFF;font-weight:700;">${escH(call.title)}</h1>
+    </td></tr>
+
+    <!-- Meta strip -->
+    <tr><td style="padding:14px 28px 0 28px;">
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
+        <tr>
+          <td style="padding:10px 14px;background:rgba(94,151,255,0.08);border:1px solid rgba(94,151,255,0.18);border-radius:10px;">
+            <div style="font-size:10px;letter-spacing:0.14em;text-transform:uppercase;color:#5E97FF;font-weight:700;">When</div>
+            <div style="font-size:14px;color:#FFFFFF;margin-top:2px;font-weight:600;">${escH(whenLabel)}</div>
+            <div style="font-size:10px;letter-spacing:0.14em;text-transform:uppercase;color:#5E97FF;font-weight:700;margin-top:10px;">Organizer</div>
+            <div style="font-size:14px;color:#FFFFFF;margin-top:2px;font-weight:600;">${escH(organizer.name)}</div>
+          </td>
+        </tr>
+      </table>
+    </td></tr>
+
+    <!-- Primary Join CTA -->
+    <tr><td style="padding:22px 28px 0 28px;" align="center">
+      <a href="${escH(joinShortUrl)}" style="display:inline-block;padding:14px 36px;background:#34A853;color:#FFFFFF;border-radius:10px;text-decoration:none;font-weight:700;font-size:15px;letter-spacing:0.02em;box-shadow:0 6px 16px rgba(52,168,83,0.35);">Join meeting</a>
+    </td></tr>${
+      call.teamsJoinUrl
+        ? `
+
+    <!-- Teams CTA -->
+    <tr><td style="padding:10px 28px 0 28px;" align="center">
+      <a href="${escH(call.teamsJoinUrl)}" style="display:inline-block;padding:11px 24px;background:#5B5FC7;color:#FFFFFF;border-radius:8px;text-decoration:none;font-weight:600;font-size:13px;">Join via Microsoft Teams</a>
+    </td></tr>`
+        : ""
+    }
+
+    <!-- RSVP -->
+    <tr><td style="padding:24px 28px 0 28px;">
+      <div style="font-size:10px;letter-spacing:0.14em;text-transform:uppercase;color:rgba(232,235,245,0.5);font-weight:700;margin-bottom:10px;">RSVP <span style="color:rgba(232,235,245,0.35);text-transform:none;letter-spacing:normal;font-weight:400;">— records your response without joining</span></div>
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0">
+        <tr>
+          <td style="padding-right:8px;"><a href="${escH(rsvpYesUrl)}" style="display:inline-block;padding:9px 18px;background:#16A34A;color:#FFFFFF;border-radius:8px;text-decoration:none;font-weight:700;font-size:13px;">Yes</a></td>
+          <td style="padding-right:8px;"><a href="${escH(rsvpNoUrl)}" style="display:inline-block;padding:9px 18px;background:#DC2626;color:#FFFFFF;border-radius:8px;text-decoration:none;font-weight:700;font-size:13px;">No</a></td>
+          <td><a href="${escH(rsvpMaybeUrl)}" style="display:inline-block;padding:9px 18px;background:#D97706;color:#FFFFFF;border-radius:8px;text-decoration:none;font-weight:700;font-size:13px;">Maybe</a></td>
+        </tr>
+      </table>
+    </td></tr>
+
+    <!-- Footer -->
+    <tr><td style="padding:28px 28px 24px 28px;border-top:1px solid rgba(94,151,255,0.12);margin-top:24px;">
+      <div style="border-top:1px solid rgba(94,151,255,0.12);padding-top:18px;font-size:11px;color:rgba(232,235,245,0.45);line-height:1.5;">
+        You were invited to a meeting in <span style="color:#5E97FF;font-weight:600;">Bulldog Chat</span>. Calendar invite attached (.ics).<br/>
+        Update notification preferences at <a href="https://auth.bulldogops.com/settings/notifications" style="color:#5E97FF;text-decoration:none;">auth.bulldogops.com</a>.
+      </div>
+    </td></tr>
+  </table>
+</td></tr>
+</table>
 </body></html>`;
 
         const res = await sendEmail({
@@ -680,22 +741,77 @@ async function sendOrganizerConfirmation(
     `An .ics calendar attachment is included so this lands on your calendar.`,
   ].join("\n");
 
+  const callKindLabel = call.kind === "video" ? "Video call" : "Voice call";
   const htmlBody = `<!DOCTYPE html>
-<html><body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f4f5f7;color:#191E4A;padding:24px;">
-<div style="max-width:480px;margin:0 auto;background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:28px 24px;">
-<p style="color:#6b7280;font-size:12px;margin:0 0 8px;text-transform:uppercase;letter-spacing:0.05em;">Meeting scheduled</p>
-<h2 style="color:#191E4A;margin:0 0 16px">${escH(call.title)}</h2>
-<p style="color:#191E4A;margin:0 0 8px"><strong>When:</strong> ${escH(whenLabel)}</p>
-<p style="color:#191E4A;margin:0 0 16px"><strong>Invitees:</strong> ${escH(inviteeSummary)}</p>
-<p style="margin:20px 0 6px;text-align:center">
-  <a href="${escH(hostJoinUrl)}" style="display:inline-block;padding:14px 32px;background:#191E4A;color:#fff;border-radius:8px;text-decoration:none;font-weight:bold;font-size:16px;">Join meeting</a>
-</p>${
+<html>
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Meeting scheduled: ${escH(call.title)}</title>
+</head>
+<body style="margin:0;padding:0;background:#0B1020;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#E8EBF5;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#0B1020;padding:32px 16px;">
+<tr><td align="center">
+  <table role="presentation" width="520" cellpadding="0" cellspacing="0" border="0" style="max-width:520px;width:100%;background:linear-gradient(180deg,#13182E 0%,#191E4A 100%);border:1px solid rgba(94,151,255,0.18);border-radius:16px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,0.45);">
+    <!-- Header bar with logo + brand -->
+    <tr><td style="padding:24px 28px 8px 28px;">
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0">
+        <tr>
+          <td style="vertical-align:middle;padding-right:12px;">
+            <img src="https://chat.bulldogops.com/icon-192.png" width="36" height="36" alt="Bulldog" style="display:block;border-radius:8px;" />
+          </td>
+          <td style="vertical-align:middle;">
+            <div style="font-size:11px;letter-spacing:0.18em;text-transform:uppercase;color:#5E97FF;font-weight:700;">Bulldog Chat</div>
+            <div style="font-size:13px;color:rgba(232,235,245,0.65);margin-top:2px;">${escH(callKindLabel)} scheduled</div>
+          </td>
+        </tr>
+      </table>
+    </td></tr>
+
+    <!-- Title -->
+    <tr><td style="padding:20px 28px 0 28px;">
+      <h1 style="margin:0;font-size:22px;line-height:1.25;color:#FFFFFF;font-weight:700;">${escH(call.title)}</h1>
+      <div style="margin-top:6px;font-size:13px;color:rgba(232,235,245,0.6);">You scheduled this meeting. A copy is attached for your calendar.</div>
+    </td></tr>
+
+    <!-- Meta strip -->
+    <tr><td style="padding:14px 28px 0 28px;">
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
+        <tr>
+          <td style="padding:12px 14px;background:rgba(94,151,255,0.08);border:1px solid rgba(94,151,255,0.18);border-radius:10px;">
+            <div style="font-size:10px;letter-spacing:0.14em;text-transform:uppercase;color:#5E97FF;font-weight:700;">When</div>
+            <div style="font-size:14px;color:#FFFFFF;margin-top:2px;font-weight:600;">${escH(whenLabel)}</div>
+            <div style="font-size:10px;letter-spacing:0.14em;text-transform:uppercase;color:#5E97FF;font-weight:700;margin-top:12px;">Invitees</div>
+            <div style="font-size:14px;color:#FFFFFF;margin-top:2px;font-weight:500;line-height:1.45;">${escH(inviteeSummary)}</div>
+          </td>
+        </tr>
+      </table>
+    </td></tr>
+
+    <!-- Primary Join CTA -->
+    <tr><td style="padding:22px 28px 0 28px;" align="center">
+      <a href="${escH(hostJoinUrl)}" style="display:inline-block;padding:14px 36px;background:#34A853;color:#FFFFFF;border-radius:10px;text-decoration:none;font-weight:700;font-size:15px;letter-spacing:0.02em;box-shadow:0 6px 16px rgba(52,168,83,0.35);">Join meeting</a>
+    </td></tr>${
     call.teamsJoinUrl
-      ? `<p style="text-align:center;margin-top:8px"><a href="${escH(call.teamsJoinUrl)}" style="display:inline-block;padding:10px 20px;background:#5b5fc7;color:#fff;border-radius:6px;text-decoration:none;font-weight:bold;">Join via Microsoft Teams</a></p>`
+      ? `
+
+    <!-- Teams CTA -->
+    <tr><td style="padding:10px 28px 0 28px;" align="center">
+      <a href="${escH(call.teamsJoinUrl)}" style="display:inline-block;padding:11px 24px;background:#5B5FC7;color:#FFFFFF;border-radius:8px;text-decoration:none;font-weight:600;font-size:13px;">Join via Microsoft Teams</a>
+    </td></tr>`
       : ""
   }
-<p style="margin-top:24px;font-size:12px;color:#6b7280;">You received this because you scheduled this meeting in Bulldog Chat. The attached .ics will add it to your calendar.</p>
-</div>
+
+    <!-- Footer -->
+    <tr><td style="padding:28px 28px 24px 28px;">
+      <div style="border-top:1px solid rgba(94,151,255,0.12);padding-top:18px;font-size:11px;color:rgba(232,235,245,0.45);line-height:1.5;">
+        You received this because you scheduled this meeting in <span style="color:#5E97FF;font-weight:600;">Bulldog Chat</span>. Calendar invite attached (.ics).<br/>
+        Update notification preferences at <a href="https://auth.bulldogops.com/settings/notifications" style="color:#5E97FF;text-decoration:none;">auth.bulldogops.com</a>.
+      </div>
+    </td></tr>
+  </table>
+</td></tr>
+</table>
 </body></html>`;
 
   const res = await sendEmail({
