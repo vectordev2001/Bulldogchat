@@ -560,8 +560,20 @@ async function dispatchInvites(call: ScheduledCall): Promise<void> {
       </table>
     </td></tr>
 
+    <!-- How to join explainer -->
+    <tr><td style="padding:24px 28px 0 28px;">
+      <div style="font-size:10px;letter-spacing:0.14em;text-transform:uppercase;color:#5E97FF;font-weight:700;">How to join</div>
+      <div style="font-size:13px;color:rgba(232,235,245,0.85);margin-top:6px;line-height:1.55;">
+        <strong style="color:#FFFFFF;">Bulldog Chat users:</strong> tap <em>Join meeting</em> to open the call in the Bulldog app or browser.${
+          call.teamsJoinUrl
+            ? `<br/><strong style="color:#FFFFFF;">Everyone else (no Bulldog account):</strong> tap <em>Join via Microsoft Teams</em> — works in any browser, no install required.`
+            : ""
+        }
+      </div>
+    </td></tr>
+
     <!-- Primary Join CTA -->
-    <tr><td style="padding:22px 28px 0 28px;" align="center">
+    <tr><td style="padding:14px 28px 0 28px;" align="center">
       <a href="${escH(joinShortUrl)}" style="display:inline-block;padding:14px 36px;background:#5E97FF;color:#FFFFFF;border-radius:10px;text-decoration:none;font-weight:700;font-size:15px;letter-spacing:0.02em;box-shadow:0 6px 16px rgba(94,151,255,0.35);">Join meeting</a>
     </td></tr>${
       call.teamsJoinUrl
@@ -794,8 +806,20 @@ async function sendOrganizerConfirmation(
       </table>
     </td></tr>
 
+    <!-- How to join explainer -->
+    <tr><td style="padding:24px 28px 0 28px;">
+      <div style="font-size:10px;letter-spacing:0.14em;text-transform:uppercase;color:#5E97FF;font-weight:700;">How invitees join</div>
+      <div style="font-size:13px;color:rgba(232,235,245,0.85);margin-top:6px;line-height:1.55;">
+        <strong style="color:#FFFFFF;">Bulldog Chat users:</strong> tap <em>Join meeting</em> to open the call in the Bulldog app or browser.${
+          call.teamsJoinUrl
+            ? `<br/><strong style="color:#FFFFFF;">Everyone else (no Bulldog account):</strong> share the <em>Join via Microsoft Teams</em> link — works in any browser, no install required.`
+            : ""
+        }
+      </div>
+    </td></tr>
+
     <!-- Primary Join CTA -->
-    <tr><td style="padding:22px 28px 0 28px;" align="center">
+    <tr><td style="padding:14px 28px 0 28px;" align="center">
       <a href="${escH(hostJoinUrl)}" style="display:inline-block;padding:14px 36px;background:#5E97FF;color:#FFFFFF;border-radius:10px;text-decoration:none;font-weight:700;font-size:15px;letter-spacing:0.02em;box-shadow:0 6px 16px rgba(94,151,255,0.35);">Join meeting</a>
     </td></tr>${
     call.teamsJoinUrl
@@ -827,7 +851,7 @@ async function sendOrganizerConfirmation(
     html: htmlBody,
     attachments: [{
       filename: "invite.ics",
-      content: icsContent,
+      content: Buffer.from(icsContent, "utf8"),
       contentType: "text/calendar",
     }],
   });
