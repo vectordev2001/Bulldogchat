@@ -39,3 +39,9 @@ services:
       - { key: SUITE_INTERNAL_SECRET, sync: false }
       # Override the bulldog-auth base URL (defaults to https://auth.bulldogops.com).
       - { key: AUTH_BASE_URL, sync: false }
+      # SendGrid (email invites) — required for scheduled-calls.ts email fan-out.
+      # If unset, isEmailConfigured() returns false and all outbound email is
+      # silently skipped. Mirror the SendGrid key used by bulldog-auth.
+      - { key: SENDGRID_API_KEY, sync: false }
+      - { key: SENDGRID_FROM_EMAIL, value: noreply@bulldogops.com }
+      - { key: SENDGRID_FROM_NAME, value: Bulldog Chat }
