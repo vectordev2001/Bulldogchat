@@ -416,6 +416,25 @@ async function dispatchInvites(call: ScheduledCall): Promise<void> {
     }
   }
 
+  // Build the human-readable invitee roster shown on every email so each
+  // recipient can see who else is on the meeting. Organizer is always
+  // listed first (as host); each app-user invitee renders by name (falling
+  // back to email), and external phone/email invitees render by contact.
+  const inviteeRosterParts: string[] = [`${organizer.name} (host)`];
+  for (const inv of invitees) {
+    if (inv.userId === organizer.id) continue; // organizer already listed
+    if (inv.userId) {
+      const u = storage.getUser(inv.userId);
+      if (u?.name) inviteeRosterParts.push(u.name);
+      else if (u?.email) inviteeRosterParts.push(u.email);
+    } else if (inv.externalEmail) {
+      inviteeRosterParts.push(inv.externalEmail);
+    } else if (inv.externalPhone) {
+      inviteeRosterParts.push(inv.externalPhone);
+    }
+  }
+  const inviteeRoster = inviteeRosterParts.join(", ");
+
   for (const inv of invitees) {
     if (inv.inviteSentAt) continue; // already sent
 
@@ -534,8 +553,8 @@ async function dispatchInvites(call: ScheduledCall): Promise<void> {
           <td style="padding:10px 14px;background:rgba(94,151,255,0.08);border:1px solid rgba(94,151,255,0.18);border-radius:10px;">
             <div style="font-size:10px;letter-spacing:0.14em;text-transform:uppercase;color:#5E97FF;font-weight:700;">When</div>
             <div style="font-size:14px;color:#FFFFFF;margin-top:2px;font-weight:600;">${escH(whenLabel)}</div>
-            <div style="font-size:10px;letter-spacing:0.14em;text-transform:uppercase;color:#5E97FF;font-weight:700;margin-top:10px;">Organizer</div>
-            <div style="font-size:14px;color:#FFFFFF;margin-top:2px;font-weight:600;">${escH(organizer.name)}</div>
+            <div style="font-size:10px;letter-spacing:0.14em;text-transform:uppercase;color:#5E97FF;font-weight:700;margin-top:12px;">Invitees</div>
+            <div style="font-size:14px;color:#FFFFFF;margin-top:2px;font-weight:500;line-height:1.45;">${escH(inviteeRoster)}</div>
           </td>
         </tr>
       </table>
@@ -543,7 +562,7 @@ async function dispatchInvites(call: ScheduledCall): Promise<void> {
 
     <!-- Primary Join CTA -->
     <tr><td style="padding:22px 28px 0 28px;" align="center">
-      <a href="${escH(joinShortUrl)}" style="display:inline-block;padding:14px 36px;background:#34A853;color:#FFFFFF;border-radius:10px;text-decoration:none;font-weight:700;font-size:15px;letter-spacing:0.02em;box-shadow:0 6px 16px rgba(52,168,83,0.35);">Join meeting</a>
+      <a href="${escH(joinShortUrl)}" style="display:inline-block;padding:14px 36px;background:#5E97FF;color:#FFFFFF;border-radius:10px;text-decoration:none;font-weight:700;font-size:15px;letter-spacing:0.02em;box-shadow:0 6px 16px rgba(94,151,255,0.35);">Join meeting</a>
     </td></tr>${
       call.teamsJoinUrl
         ? `
@@ -560,9 +579,9 @@ async function dispatchInvites(call: ScheduledCall): Promise<void> {
       <div style="font-size:10px;letter-spacing:0.14em;text-transform:uppercase;color:rgba(232,235,245,0.5);font-weight:700;margin-bottom:10px;">RSVP <span style="color:rgba(232,235,245,0.35);text-transform:none;letter-spacing:normal;font-weight:400;">— records your response without joining</span></div>
       <table role="presentation" cellpadding="0" cellspacing="0" border="0">
         <tr>
-          <td style="padding-right:8px;"><a href="${escH(rsvpYesUrl)}" style="display:inline-block;padding:9px 18px;background:#16A34A;color:#FFFFFF;border-radius:8px;text-decoration:none;font-weight:700;font-size:13px;">Yes</a></td>
-          <td style="padding-right:8px;"><a href="${escH(rsvpNoUrl)}" style="display:inline-block;padding:9px 18px;background:#DC2626;color:#FFFFFF;border-radius:8px;text-decoration:none;font-weight:700;font-size:13px;">No</a></td>
-          <td><a href="${escH(rsvpMaybeUrl)}" style="display:inline-block;padding:9px 18px;background:#D97706;color:#FFFFFF;border-radius:8px;text-decoration:none;font-weight:700;font-size:13px;">Maybe</a></td>
+          <td style="padding-right:8px;"><a href="${escH(rsvpYesUrl)}" style="display:inline-block;padding:9px 18px;background:#5E97FF;color:#FFFFFF;border-radius:8px;text-decoration:none;font-weight:700;font-size:13px;">Yes</a></td>
+          <td style="padding-right:8px;"><a href="${escH(rsvpNoUrl)}" style="display:inline-block;padding:9px 18px;background:#DD403D;color:#FFFFFF;border-radius:8px;text-decoration:none;font-weight:700;font-size:13px;">No</a></td>
+          <td><a href="${escH(rsvpMaybeUrl)}" style="display:inline-block;padding:9px 18px;background:#C99A2E;color:#FFFFFF;border-radius:8px;text-decoration:none;font-weight:700;font-size:13px;">Maybe</a></td>
         </tr>
       </table>
     </td></tr>
@@ -660,7 +679,7 @@ async function dispatchInvites(call: ScheduledCall): Promise<void> {
   // out of the invitee fan-out above (they created the meeting, no SMS spam
   // needed). But they DO want a copy of the .ics so it lands on their
   // calendar like Google Calendar / Outlook. Best-effort: never throws.
-  await sendOrganizerConfirmation(call, organizer, invitees, allAttendeeEmails, whenLabel).catch((e) =>
+  await sendOrganizerConfirmation(call, organizer, invitees, allAttendeeEmails, whenLabel, inviteeRoster).catch((e) =>
     console.warn(`[scheduled-calls] organizer confirmation failed call=${call.id}:`, e),
   );
 }
@@ -672,6 +691,7 @@ async function sendOrganizerConfirmation(
   invitees: ScheduledCallInvitee[],
   allAttendeeEmails: string[],
   whenLabel: string,
+  inviteeRoster: string,
 ): Promise<void> {
   if (!organizer.email) {
     console.log(`[scheduled-calls] organizer confirmation skip call=${call.id}: no organizer email`);
@@ -682,22 +702,8 @@ async function sendOrganizerConfirmation(
     return;
   }
 
-  const inviteeLabels: string[] = [];
-  for (const inv of invitees) {
-    if (inv.userId === organizer.id) continue;
-    if (inv.userId) {
-      const u = storage.getUser(inv.userId);
-      if (u?.name) inviteeLabels.push(u.name);
-      else if (u?.email) inviteeLabels.push(u.email);
-    } else if (inv.externalEmail) {
-      inviteeLabels.push(inv.externalEmail);
-    } else if (inv.externalPhone) {
-      inviteeLabels.push(inv.externalPhone);
-    }
-  }
-  const inviteeSummary = inviteeLabels.length
-    ? inviteeLabels.join(", ")
-    : "(no other invitees)";
+  // Host email uses the same full roster (host + invitees) for consistency.
+  const inviteeSummary = inviteeRoster;
 
   const hostJoinUrl = `${CHAT_BASE_URL}/call-join?t=${encodeURIComponent(
     signCallJoinToken({
@@ -790,7 +796,7 @@ async function sendOrganizerConfirmation(
 
     <!-- Primary Join CTA -->
     <tr><td style="padding:22px 28px 0 28px;" align="center">
-      <a href="${escH(hostJoinUrl)}" style="display:inline-block;padding:14px 36px;background:#34A853;color:#FFFFFF;border-radius:10px;text-decoration:none;font-weight:700;font-size:15px;letter-spacing:0.02em;box-shadow:0 6px 16px rgba(52,168,83,0.35);">Join meeting</a>
+      <a href="${escH(hostJoinUrl)}" style="display:inline-block;padding:14px 36px;background:#5E97FF;color:#FFFFFF;border-radius:10px;text-decoration:none;font-weight:700;font-size:15px;letter-spacing:0.02em;box-shadow:0 6px 16px rgba(94,151,255,0.35);">Join meeting</a>
     </td></tr>${
     call.teamsJoinUrl
       ? `
