@@ -30,6 +30,8 @@ import {
 } from "./bridge/client";
 import { storage } from "./storage";
 import { sendSms, smsAvailable, buildMeetingInviteSmsBody, normalizeE164 } from "./sms";
+import { sendEmail, isEmailConfigured } from "./email";
+import { buildMeetingInviteEmail } from "./meetings/invite-email";
 import { checkSmsConsent } from "./auth-consent";
 import {
   allowKnock,
@@ -334,26 +336,65 @@ export function registerMeetingRoutes(app: Express) {
     // skip the host's own phone, but explicitly-typed external phones are
     // honoured even if they match the host's number (e.g. host wants to
     // forward the link to their personal device or test the flow).
+    //
+    // Channel-meeting auto-invite: when a meeting is started inside a
+    // channel, every channel member (minus the host) is treated as an
+    // implicit invitee. Explicit `inviteeUserIds` from the request body
+    // are merged in on top (deduped). Without this, channel meetings
+    // created from the UI silently send no notifications at all — the
+    // CreateMeetingDialog client doesn't populate inviteeUserIds, and
+    // people get added to the room with no SMS or email ping.
     const hostPhone = normalizeE164(u.phone ?? null);
-    const seen = new Set<string>();
-    const recipients: { email: string | null; phone: string; external: boolean }[] = [];
+    const seenPhones = new Set<string>();
+    const seenEmails = new Set<string>();
+    const seenUserIds = new Set<number>();
+    const recipients: {
+      userId: number | null;
+      email: string | null;
+      phone: string | null;
+      external: boolean;
+    }[] = [];
 
-    for (const uid of body.inviteeUserIds ?? []) {
+    // Merge explicit + implicit channel-member invitees. Order matters
+    // only for de-dupe — first add wins. Explicit invitees go first so
+    // any odd channel-member ordering can\'t override caller intent.
+    const implicitUserIds: number[] =
+      body.channelId != null
+        ? storage.listChannelMemberIds(body.channelId).filter((id) => id !== u.id)
+        : [];
+    const allInviteeUserIds = [
+      ...(body.inviteeUserIds ?? []),
+      ...implicitUserIds,
+    ];
+
+    for (const uid of allInviteeUserIds) {
       if (uid === u.id) continue;
+      if (seenUserIds.has(uid)) continue;
+      seenUserIds.add(uid);
       const invUser = storage.getUser(uid);
-      const phone = normalizeE164(invUser?.phone ?? null);
-      if (!phone || seen.has(phone)) continue;
-      if (hostPhone && phone === hostPhone) continue;
-      seen.add(phone);
-      recipients.push({ email: invUser?.email ?? null, phone, external: false });
+      if (!invUser) continue;
+      // Cross-org safety: never invite a user from another org via id.
+      if (invUser.orgId !== u.orgId) continue;
+      const phone = normalizeE164(invUser.phone ?? null);
+      const email = invUser.email?.trim().toLowerCase() || null;
+      // Skip the host\'s own contacts (defensive — already filtered by id).
+      if (phone && hostPhone && phone === hostPhone) continue;
+      if (phone && seenPhones.has(phone)) continue;
+      if (email && seenEmails.has(email)) continue;
+      // Skip recipients with no contactable channel at all.
+      if (!phone && !email) continue;
+      if (phone) seenPhones.add(phone);
+      if (email) seenEmails.add(email);
+      recipients.push({ userId: uid, email, phone, external: false });
     }
     for (const raw of body.inviteeExternalPhones ?? []) {
       const phone = normalizeE164(raw);
-      if (!phone || seen.has(phone)) continue;
-      seen.add(phone);
-      recipients.push({ email: null, phone, external: true });
+      if (!phone || seenPhones.has(phone)) continue;
+      seenPhones.add(phone);
+      recipients.push({ userId: null, email: null, phone, external: true });
     }
 
+    // ── SMS fan-out (best-effort) ──────────────────────────────────────
     let smsOkCount = 0;
     let smsSkipCount = 0;
     if (recipients.length > 0 && smsAvailable()) {
@@ -364,6 +405,7 @@ export function registerMeetingRoutes(app: Express) {
         teamsJoinUrl: meeting.teamsJoinUrl ?? null,
       });
       for (const r of recipients) {
+        if (!r.phone) continue; // Email-only invitee.
         let to = r.phone;
         if (!r.external) {
           const consent = await checkSmsConsent(r.email ?? "", "meeting_invite");
@@ -387,15 +429,66 @@ export function registerMeetingRoutes(app: Express) {
           console.warn("[meetings] sms send threw:", e);
         }
       }
-    } else if (recipients.length > 0) {
-      // SMS provider not configured — everything is effectively skipped.
-      smsSkipCount = recipients.length;
+    } else if (recipients.length > 0 && !smsAvailable()) {
+      // SMS provider not configured — phone-channel invites are skipped.
+      smsSkipCount = recipients.filter((r) => r.phone).length;
+    }
+
+    // ── Email fan-out (best-effort) ──────────────────────────────────────
+    // Mirrors SMS but for the email channel. Org-member invitees get an
+    // email if they have an `email` on the users table. External phone
+    // entries (no email key) are skipped. We don\'t run the SMS consent
+    // gate on email — TCPA covers SMS only; email opt-out is handled by
+    // SendGrid unsubscribe groups upstream.
+    let emailOkCount = 0;
+    let emailSkipCount = 0;
+    const emailRecipients = recipients.filter((r) => !r.external && r.email);
+    if (emailRecipients.length > 0 && isEmailConfigured()) {
+      const emailPayload = buildMeetingInviteEmail({
+        hostName: u.name,
+        joinUrl,
+        title: meeting.title,
+        teamsJoinUrl: meeting.teamsJoinUrl ?? null,
+      });
+      for (const r of emailRecipients) {
+        try {
+          const sent = await sendEmail({
+            to: r.email!,
+            subject: emailPayload.subject,
+            text: emailPayload.text,
+            html: emailPayload.html,
+          });
+          if (sent.sent) {
+            emailOkCount++;
+          } else {
+            emailSkipCount++;
+            console.warn(
+              "[meetings] email invite failed:",
+              sent.reason,
+              "to=",
+              r.email,
+            );
+          }
+        } catch (e) {
+          emailSkipCount++;
+          console.warn("[meetings] email invite threw:", e);
+        }
+      }
+    } else if (emailRecipients.length > 0 && !isEmailConfigured()) {
+      emailSkipCount = emailRecipients.length;
     }
 
     res.json({
       meeting: publicMeetingShape(meeting),
       joinUrl,
-      invitesSent: { sms: smsOkCount, skipped: smsSkipCount },
+      invitesSent: {
+        sms: smsOkCount,
+        smsSkipped: smsSkipCount,
+        email: emailOkCount,
+        emailSkipped: emailSkipCount,
+        // Legacy field for any client still reading `.skipped` — sum both.
+        skipped: smsSkipCount + emailSkipCount,
+      },
     });
   });
 
@@ -688,7 +781,10 @@ export function registerMeetingRoutes(app: Express) {
     }
 
     if (recipients.length === 0) {
-      return res.json({ invitesSent: { sms: 0, skipped: 0 }, joinUrl });
+      return res.json({
+        invitesSent: { sms: 0, smsSkipped: 0, email: 0, emailSkipped: 0, skipped: 0 },
+        joinUrl,
+      });
     }
 
     // Look up the host's name for the SMS body. Fall back to the caller's
@@ -738,7 +834,49 @@ export function registerMeetingRoutes(app: Express) {
       smsSkipCount = recipients.length;
     }
 
-    res.json({ invitesSent: { sms: smsOkCount, skipped: smsSkipCount }, joinUrl });
+    // Email fan-out for org-member invitees (mirrors POST /api/meetings).
+    let emailOkCount = 0;
+    let emailSkipCount = 0;
+    const emailRecipients = recipients.filter((r) => !r.external && r.email);
+    if (emailRecipients.length > 0 && isEmailConfigured()) {
+      const emailPayload = buildMeetingInviteEmail({
+        hostName,
+        joinUrl,
+        title: meeting.title,
+        teamsJoinUrl: meeting.teamsJoinUrl ?? null,
+      });
+      for (const r of emailRecipients) {
+        try {
+          const sent = await sendEmail({
+            to: r.email!,
+            subject: emailPayload.subject,
+            text: emailPayload.text,
+            html: emailPayload.html,
+          });
+          if (sent.sent) emailOkCount++;
+          else {
+            emailSkipCount++;
+            console.warn("[meetings/invite] email failed:", sent.reason, "to=", r.email);
+          }
+        } catch (e) {
+          emailSkipCount++;
+          console.warn("[meetings/invite] email threw:", e);
+        }
+      }
+    } else if (emailRecipients.length > 0 && !isEmailConfigured()) {
+      emailSkipCount = emailRecipients.length;
+    }
+
+    res.json({
+      invitesSent: {
+        sms: smsOkCount,
+        smsSkipped: smsSkipCount,
+        email: emailOkCount,
+        emailSkipped: emailSkipCount,
+        skipped: smsSkipCount + emailSkipCount,
+      },
+      joinUrl,
+    });
   });
 
   // ── END a meeting (authed host) ──
