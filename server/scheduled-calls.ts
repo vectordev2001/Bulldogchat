@@ -594,6 +594,127 @@ async function dispatchInvites(call: ScheduledCall): Promise<void> {
       markInviteSent(inv.id, errors.length ? `all sends failed: ${errors.join("; ")}` : "no configured provider");
     }
   }
+
+  // Organizer confirmation email — the organizer is intentionally filtered
+  // out of the invitee fan-out above (they created the meeting, no SMS spam
+  // needed). But they DO want a copy of the .ics so it lands on their
+  // calendar like Google Calendar / Outlook. Best-effort: never throws.
+  await sendOrganizerConfirmation(call, organizer, invitees, allAttendeeEmails, whenLabel).catch((e) =>
+    console.warn(`[scheduled-calls] organizer confirmation failed call=${call.id}:`, e),
+  );
+}
+
+/* Organizer confirmation email --------------------------------------------- */
+async function sendOrganizerConfirmation(
+  call: ScheduledCall,
+  organizer: { id: number; name: string; email?: string | null },
+  invitees: ScheduledCallInvitee[],
+  allAttendeeEmails: string[],
+  whenLabel: string,
+): Promise<void> {
+  if (!organizer.email) {
+    console.log(`[scheduled-calls] organizer confirmation skip call=${call.id}: no organizer email`);
+    return;
+  }
+  if (!isEmailConfigured()) {
+    console.log(`[scheduled-calls] organizer confirmation skip call=${call.id}: email not configured`);
+    return;
+  }
+
+  const inviteeLabels: string[] = [];
+  for (const inv of invitees) {
+    if (inv.userId === organizer.id) continue;
+    if (inv.userId) {
+      const u = storage.getUser(inv.userId);
+      if (u?.name) inviteeLabels.push(u.name);
+      else if (u?.email) inviteeLabels.push(u.email);
+    } else if (inv.externalEmail) {
+      inviteeLabels.push(inv.externalEmail);
+    } else if (inv.externalPhone) {
+      inviteeLabels.push(inv.externalPhone);
+    }
+  }
+  const inviteeSummary = inviteeLabels.length
+    ? inviteeLabels.join(", ")
+    : "(no other invitees)";
+
+  const hostJoinUrl = `${CHAT_BASE_URL}/call-join?t=${encodeURIComponent(
+    signCallJoinToken({
+      userId: organizer.id,
+      roomName: call.roomName,
+      callerName: organizer.name,
+      kind: call.kind,
+      channelId: call.channelId,
+    }),
+  )}`;
+
+  const icsContent = buildIcsForScheduledCall({
+    uid: `bulldog-${call.id}@bulldogops.com`,
+    title: call.title,
+    description:
+      (call.notes ? call.notes + "\n\n" : "") +
+      `Join via Bulldog: ${hostJoinUrl}\n` +
+      (call.teamsJoinUrl ? `Join via Teams: ${call.teamsJoinUrl}\n` : "") +
+      `Organizer: ${organizer.name}`,
+    startUtc: call.startAt,
+    endUtc: call.endAt,
+    organizerEmail: organizer.email,
+    organizerName: organizer.name,
+    attendeeEmails: allAttendeeEmails,
+    joinUrl: hostJoinUrl,
+    sequence: call.icsSequence,
+    method: "REQUEST",
+  });
+
+  const escH = (s: string) =>
+    s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  const subject = `Meeting scheduled: "${call.title}" — ${whenLabel}`;
+  const textBody = [
+    `You scheduled a ${call.kind} call: "${call.title}"`,
+    `When: ${whenLabel}`,
+    `Invitees: ${inviteeSummary}`,
+    ``,
+    `Join the meeting: ${hostJoinUrl}`,
+    ...(call.teamsJoinUrl ? [`Join via Teams:   ${call.teamsJoinUrl}`] : []),
+    ``,
+    `An .ics calendar attachment is included so this lands on your calendar.`,
+  ].join("\n");
+
+  const htmlBody = `<!DOCTYPE html>
+<html><body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f4f5f7;color:#191E4A;padding:24px;">
+<div style="max-width:480px;margin:0 auto;background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:28px 24px;">
+<p style="color:#6b7280;font-size:12px;margin:0 0 8px;text-transform:uppercase;letter-spacing:0.05em;">Meeting scheduled</p>
+<h2 style="color:#191E4A;margin:0 0 16px">${escH(call.title)}</h2>
+<p style="color:#191E4A;margin:0 0 8px"><strong>When:</strong> ${escH(whenLabel)}</p>
+<p style="color:#191E4A;margin:0 0 16px"><strong>Invitees:</strong> ${escH(inviteeSummary)}</p>
+<p style="margin:20px 0 6px;text-align:center">
+  <a href="${escH(hostJoinUrl)}" style="display:inline-block;padding:14px 32px;background:#191E4A;color:#fff;border-radius:8px;text-decoration:none;font-weight:bold;font-size:16px;">Join meeting</a>
+</p>${
+    call.teamsJoinUrl
+      ? `<p style="text-align:center;margin-top:8px"><a href="${escH(call.teamsJoinUrl)}" style="display:inline-block;padding:10px 20px;background:#5b5fc7;color:#fff;border-radius:6px;text-decoration:none;font-weight:bold;">Join via Microsoft Teams</a></p>`
+      : ""
+  }
+<p style="margin-top:24px;font-size:12px;color:#6b7280;">You received this because you scheduled this meeting in Bulldog Chat. The attached .ics will add it to your calendar.</p>
+</div>
+</body></html>`;
+
+  const res = await sendEmail({
+    to: organizer.email,
+    subject,
+    text: textBody,
+    html: htmlBody,
+    attachments: [{
+      filename: "invite.ics",
+      content: icsContent,
+      contentType: "text/calendar",
+    }],
+  });
+
+  if (res.sent) {
+    console.log(`[scheduled-calls] organizer confirmation sent call=${call.id} to=${organizer.email}`);
+  } else {
+    console.warn(`[scheduled-calls] organizer confirmation send failed call=${call.id}: ${res.reason ?? "unknown"}`);
+  }
 }
 
 /* ─────────────────── Reminder loop (in-process) ───────────────────────── */
