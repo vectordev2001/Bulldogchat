@@ -1318,4 +1318,63 @@ export function runMigrations() {
       console.warn("[migrate v31] wipe failed:", e?.message);
     }
   }
+
+  // v33 — re-run the v9 global-channel dedupe. v9 ran once at deploy time and
+  // collapsed any pre-existing duplicates, but new duplicates have accumulated
+  // since (most visibly in VFD's Company-wide section where #announcements
+  // appears 13+ times). The dedupe logic itself is idempotent and safe to run
+  // again on every boot; it scans for duplicate (project_id, name) tuples
+  // where work_object_id IS NULL, keeps the lowest-id row as the keeper, and
+  // remaps messages / read_receipts / channel_members / work_object_channel_links
+  // before deleting the dupes. If no dupes exist, this is a no-op.
+  try {
+    const dupeGroups = rawDb.prepare(`
+      SELECT project_id, name, COUNT(*) as cnt, MIN(id) as keeper
+      FROM channels
+      WHERE work_object_id IS NULL
+      GROUP BY project_id, name
+      HAVING COUNT(*) > 1
+    `).all() as Array<{ project_id: number; name: string; cnt: number; keeper: number }>;
+
+    if (dupeGroups.length > 0) {
+      const tx = rawDb.transaction(() => {
+        for (const g of dupeGroups) {
+          const dupes = rawDb.prepare(`
+            SELECT id FROM channels
+            WHERE project_id = ? AND name = ? AND work_object_id IS NULL AND id != ?
+          `).all(g.project_id, g.name, g.keeper) as Array<{ id: number }>;
+
+          const safeRun = (sql: string, ...params: any[]) => {
+            try { rawDb.prepare(sql).run(...params); } catch (e: any) {
+              if (!/no such table/i.test(String(e?.message))) throw e;
+            }
+          };
+          for (const d of dupes) {
+            rawDb.prepare(`UPDATE messages SET channel_id = ? WHERE channel_id = ?`).run(g.keeper, d.id);
+            rawDb.prepare(`UPDATE read_receipts SET channel_id = ? WHERE channel_id = ?`).run(g.keeper, d.id);
+            safeRun(`UPDATE recordings SET channel_id = ? WHERE channel_id = ?`, g.keeper, d.id);
+            safeRun(`UPDATE livekit_rooms SET channel_id = ? WHERE channel_id = ?`, g.keeper, d.id);
+
+            rawDb.prepare(`INSERT OR IGNORE INTO channel_members (channel_id, user_id) SELECT ?, user_id FROM channel_members WHERE channel_id = ?`).run(g.keeper, d.id);
+            rawDb.prepare(`DELETE FROM channel_members WHERE channel_id = ?`).run(d.id);
+
+            safeRun(`INSERT OR IGNORE INTO work_object_channel_links (work_object_id, channel_id) SELECT work_object_id, ? FROM work_object_channel_links WHERE channel_id = ?`, g.keeper, d.id);
+            safeRun(`DELETE FROM work_object_channel_links WHERE channel_id = ?`, d.id);
+
+            // Also clean up any scheduled-call or meeting refs so we don't
+            // orphan rows when the duplicate channel id disappears.
+            safeRun(`UPDATE scheduled_calls SET channel_id = ? WHERE channel_id = ?`, g.keeper, d.id);
+            safeRun(`UPDATE meetings SET channel_id = ? WHERE channel_id = ?`, g.keeper, d.id);
+
+            rawDb.prepare(`DELETE FROM channels WHERE id = ?`).run(d.id);
+          }
+          console.log(`[migrate] v33 rededuped #${g.name} in project ${g.project_id}: kept id=${g.keeper}, removed ${dupes.length} duplicate(s)`);
+        }
+      });
+      tx();
+      console.log(`[migrate] v33 channel re-dedupe: collapsed ${dupeGroups.length} duplicate group(s)`);
+    }
+  } catch (e) {
+    console.warn("[migrate] v33 channel re-dedupe skipped:", e);
+  }
 }
