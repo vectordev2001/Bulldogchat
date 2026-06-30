@@ -17,8 +17,15 @@
  * Spec: /home/user/workspace/teams-bridge-spec.md §4
  */
 
-const BRIDGE_URL = (process.env.BULLDOG_BRIDGE_URL ?? "").replace(/\/+$/, "");
-const BRIDGE_SECRET = process.env.BULLDOG_BRIDGE_SECRET ?? "";
+// Accept both name shapes: the original BULLDOG_BRIDGE_* prefix used in early
+// scaffolding, and the unprefixed BRIDGE_URL / BRIDGE_SHARED_SECRET that the
+// live Render service was provisioned with. Either set works; if both are
+// present BULLDOG_BRIDGE_* wins so an operator can override.
+const BRIDGE_URL = (
+  process.env.BULLDOG_BRIDGE_URL ?? process.env.BRIDGE_URL ?? ""
+).replace(/\/+$/, "");
+const BRIDGE_SECRET =
+  process.env.BULLDOG_BRIDGE_SECRET ?? process.env.BRIDGE_SHARED_SECRET ?? "";
 
 /** True iff the bridge HTTP endpoint is configured. */
 export function bridgeAvailable(): boolean {
