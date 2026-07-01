@@ -63,10 +63,22 @@ export async function createTeamsMeeting(
   }
 
   const organizer = resolveOrganizer(input);
+  // Lobby bypass + presenter policy. Everyone gets in with the join link
+  // and can share. This avoids the "someone will let you in when the
+  // meeting starts" wall for external attendees (e.g. bulldog users
+  // signed into Teams under a different tenant) and for the bridge bot.
+  // The join URL is only distributed via Bulldog's invite fan-out, which
+  // is already gated by channel membership / explicit invitee lists —
+  // so "everyone with the link" is scoped to "everyone we invited".
   const body = {
     subject: input.subject,
     startDateTime: input.startUtc.toISOString(),
     endDateTime: input.endUtc.toISOString(),
+    lobbyBypassSettings: {
+      scope: "everyone",
+      isDialInBypassEnabled: true,
+    },
+    allowedPresenters: "everyone",
   };
 
   try {
@@ -82,7 +94,7 @@ export async function createTeamsMeeting(
       return null;
     }
     console.log(
-      `[teams] created online meeting id=${meetingId} for organizer.${organizer.kind}=${organizer.value}`,
+      `[teams] created online meeting id=${meetingId} for organizer.${organizer.kind}=${organizer.value} lobbyBypass=everyone allowedPresenters=everyone`,
     );
     return { joinUrl, meetingId };
   } catch (err) {
