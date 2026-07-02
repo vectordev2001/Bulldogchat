@@ -285,6 +285,9 @@ export const systemMessageKinds = [
   "scheduled_call.updated",
   "scheduled_call.cancelled",
   "scheduled_call.started",
+  // Phase 2.2 — Bulldog Ops daily-log fan-out.
+  "daily_log.submitted",
+  "daily_log.superseded",
 ] as const;
 export type SystemMessageKind = typeof systemMessageKinds[number];
 // Work-object system messages keep their original shape. Scheduled-call
@@ -322,7 +325,124 @@ export interface ScheduledCallSystemMessageMeta {
     response: "pending" | "yes" | "no" | "maybe";
   }>;
 }
-export type SystemMessageMeta = WorkObjectSystemMessageMeta | ScheduledCallSystemMessageMeta;
+/**
+ * System-message meta for daily-log fan-out from bulldog-ops (Phase 2.2).
+ *
+ * The frontend renders a structured card (production table, crew chips,
+ * photo grid with geotag pins) by discriminating on `kind`. Attachments are
+ * id-refs into the existing `attachments` table; the frontend resolves them
+ * through the normal /api/files/:id download path. Geo on attachments is
+ * informational only — it lives in the Ops DB as the system of record.
+ */
+export interface DailyLogSystemMessageMeta {
+  system: true;
+  kind: "daily_log.submitted" | "daily_log.superseded";
+  opsLogId: number;
+  jobId: number;
+  jobNumber: string;
+  contractId: number | null;
+  logDate: string;            // YYYY-MM-DD
+  foremanUserId: number;      // chat-side user id (resolved by handler)
+  foremanName: string;
+  notes: string;
+  weather: {
+    tempF?: number | null;
+    condition?: string | null;
+    windMph?: number | null;
+    precipitation?: string | null;
+  };
+  crew: Array<{
+    userId: number;           // chat-side user id
+    name: string;
+    hours: number;
+  }>;
+  production: Array<{
+    payItemCode: string;
+    payItemDescription?: string;
+    unit?: string | null;
+    quantity: number;
+    unitPriceSnapshot: number;
+    lineTotal: number;
+    budgetedQuantity?: number | null;
+    consumedToDate?: number | null;
+    overrun?: boolean;
+  }>;
+  attachments: Array<{
+    chatAttachmentId: string;
+    filename: string;
+    contentType: string;
+    thumbnailUrl: string | null;
+    downloadUrl: string;
+    caption?: string | null;
+    latitude?: number | null;
+    longitude?: number | null;
+    accuracyM?: number | null;
+    takenAt?: string | null;
+  }>;
+  totals: {
+    laborHours: number;
+    productionValue: number;
+  };
+  changeOrderFlag: boolean;
+  deepLinkOps: string;
+  revisionOf?: number | null;
+}
+export type SystemMessageMeta =
+  | WorkObjectSystemMessageMeta
+  | ScheduledCallSystemMessageMeta
+  | DailyLogSystemMessageMeta;
+
+// Wire-format shape for POST /api/integrations/jobs/daily-log — mirrors
+// bulldog-ops `SuiteDailyLogInput`. Kept as a plain interface here (chat
+// doesn't need the zod validator; the receiver has its own local zod copy).
+export interface SuiteDailyLogProductionLine {
+  payItemCode: string;
+  payItemDescription?: string;
+  unit?: string | null;
+  quantity: number;
+  unitPriceSnapshot?: number;
+  budgetedQuantity?: number | null;
+  consumedToDate?: number | null;
+  notes?: string | null;
+}
+export interface SuiteDailyLogCrewLine {
+  userId: number;
+  userEmail?: string;
+  userName?: string;
+  hours: number;
+  timesheetId?: number | null;
+}
+export interface SuiteDailyLogAttachmentRef {
+  chatAttachmentId: string;
+  caption?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  accuracyM?: number | null;
+  takenAt?: string | null;
+}
+export interface SuiteDailyLogInput {
+  jobId: number;
+  jobNumber: string;
+  contractId?: number | null;
+  logId: number;
+  logDate: string;
+  foremanEmail: string;
+  foremanName?: string;
+  notes: string;
+  weather: {
+    tempF?: number | null;
+    condition?: string | null;
+    windMph?: number | null;
+    precipitation?: string | null;
+  };
+  crew: SuiteDailyLogCrewLine[];
+  production: SuiteDailyLogProductionLine[];
+  attachments: SuiteDailyLogAttachmentRef[];
+  totalLaborHours: number;
+  totalProductionValue: number;
+  deepLinkOps: string;
+  revisionOf?: number | null;
+}
 export const insertMessageSchema = createInsertSchema(messages).omit({
   id: true, createdAt: true, editedAt: true, isPinned: true, userId: true,
 }).extend({

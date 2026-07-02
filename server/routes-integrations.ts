@@ -24,7 +24,14 @@
 // host or uses it as-is depending on context. Idempotent: if a job with
 // the same ref already exists, we reuse it (and find/create one channel).
 import type { Express } from "express";
+import { z } from "zod";
 import { storage } from "./storage";
+import { getStorageBackend } from "./storage-files";
+import { emitMessageNew } from "./events";
+import type {
+  DailyLogSystemMessageMeta,
+  SuiteDailyLogInput,
+} from "@shared/schema";
 
 const DEFAULT_ORG_ID = 1; // single-org install (see bulldog-sso.ts)
 
@@ -592,6 +599,331 @@ export function registerIntegrationRoutes(app: Express) {
       channelName: channel.name,
       projectId,
       deepLink: `/?channel=${channel.id}`,
+    });
+  });
+
+
+  // ---------------------------------------------------------------------------
+  // Phase 2.2 — Bulldog Ops → Chat "daily log submitted".
+  //
+  // Called by bulldog-ops server/daily-log-chat.ts (fanoutDailyLogToChat)
+  // when a foreman submits (or supersedes) a Daily Log. The Ops app owns
+  // the daily_log/crew/production/attachments rows and uploaded any photos
+  // to POST /api/attachments BEFORE calling this endpoint, so we just look
+  // them up by id and embed resolved URLs + geo in the system message.
+  //
+  // Contract:
+  //   - Body validated against `dailyLogBodySchema` (mirrors the Ops-side
+  //     zod schema in shared/schema.ts).
+  //   - Resolves foreman via shadow-provision (same as create-channel).
+  //   - Finds the JOB-<jobNumber> work_object + its channel (created by
+  //     PR A `/api/integrations/jobs/create-channel`). If missing, we
+  //     create both so an out-of-order daily-log delivery still lands.
+  //   - Posts a system message with structured meta (crew, production,
+  //     attachments, totals, overrun flag, deep-link back to Ops).
+  //   - Fans out via `emitMessageNew` so the card appears immediately.
+  // ---------------------------------------------------------------------------
+
+  const dailyLogProductionLine = z.object({
+    payItemCode: z.string().min(1).max(50),
+    payItemDescription: z.string().max(240).optional(),
+    unit: z.string().max(20).nullable().optional(),
+    quantity: z.number().min(0),
+    unitPriceSnapshot: z.number().min(0).optional(),
+    budgetedQuantity: z.number().min(0).nullable().optional(),
+    consumedToDate: z.number().min(0).nullable().optional(),
+    notes: z.string().max(500).nullable().optional(),
+  });
+
+  const dailyLogCrewLine = z.object({
+    userId: z.number().int().positive(),
+    userEmail: z.string().email().optional(),
+    userName: z.string().max(200).optional(),
+    hours: z.number().min(0).max(24),
+    timesheetId: z.number().int().positive().nullable().optional(),
+  });
+
+  const dailyLogAttachmentRef = z.object({
+    chatAttachmentId: z.string().min(1).max(64),
+    caption: z.string().max(500).nullable().optional(),
+    latitude: z.number().min(-90).max(90).nullable().optional(),
+    longitude: z.number().min(-180).max(180).nullable().optional(),
+    accuracyM: z.number().min(0).max(10000).nullable().optional(),
+    takenAt: z.string().nullable().optional(),
+  });
+
+  const dailyLogBodySchema = z.object({
+    jobId: z.number().int().positive(),
+    jobNumber: z.string().min(1).max(120),
+    contractId: z.number().int().positive().nullable().optional(),
+    logId: z.number().int().positive(),
+    logDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    foremanEmail: z.string().email(),
+    foremanName: z.string().max(200).optional(),
+    notes: z.string().max(8000).default(""),
+    weather: z.object({
+      tempF: z.number().nullable().optional(),
+      condition: z.string().max(80).nullable().optional(),
+      windMph: z.number().nullable().optional(),
+      precipitation: z.string().max(80).nullable().optional(),
+    }).default({}),
+    crew: z.array(dailyLogCrewLine).default([]),
+    production: z.array(dailyLogProductionLine).default([]),
+    attachments: z.array(dailyLogAttachmentRef).default([]),
+    totalLaborHours: z.number().min(0).default(0),
+    totalProductionValue: z.number().min(0).default(0),
+    deepLinkOps: z.string().url(),
+    revisionOf: z.number().int().positive().nullable().optional(),
+  });
+
+  app.post("/api/integrations/jobs/daily-log", (req, res) => {
+    if (!requireSuiteSecret(req, res)) return;
+
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const orgId = Number.isFinite(Number(body.orgId)) && Number(body.orgId) > 0
+      ? Number(body.orgId)
+      : DEFAULT_ORG_ID;
+
+    // ----- 1. Validate body -----
+    const parsed = dailyLogBodySchema.safeParse(body);
+    if (!parsed.success) {
+      return res.status(400).json({
+        message: "Invalid daily-log payload",
+        issues: parsed.error.flatten(),
+      });
+    }
+    const input: SuiteDailyLogInput = parsed.data;
+
+    // ----- 2. Resolve foreman in chat-org (shadow-provision if needed) -----
+    let foreman = storage.getUserByEmail(input.foremanEmail.toLowerCase());
+    if (!foreman) {
+      try {
+        foreman = storage.createUser({
+          orgId,
+          email: input.foremanEmail.toLowerCase(),
+          passwordHash: "",
+          name: input.foremanName || input.foremanEmail,
+          role: "user",
+        });
+        try {
+          const orgProjects = storage.listProjectsByOrg(orgId);
+          for (const p of orgProjects) {
+            try { storage.addProjectMember(p.id, foreman.id, "member"); }
+            catch { /* duplicate is fine */ }
+          }
+        } catch (e) {
+          console.warn("[bridge daily-log] project seed failed:", (e as Error).message);
+        }
+      } catch (e) {
+        console.warn("[bridge daily-log] foreman shadow provision failed:", (e as Error).message);
+        return res.status(400).json({ message: "Could not resolve foreman in chat org" });
+      }
+    }
+    if (!foreman || foreman.orgId !== orgId) {
+      return res.status(400).json({ message: "foreman not in org" });
+    }
+
+    // ----- 3. Resolve target project (same pattern as jobs/create-channel) -----
+    let projectId: number | null = null;
+    const projects = storage.listProjectsByOrg(orgId);
+    if (projects.length > 0) projectId = projects[0].id;
+    if (projectId === null) {
+      return res.status(400).json({ message: "No company found for this org" });
+    }
+
+    // ----- 4. Find (or create) the JOB-<jobNumber> work_object + channel -----
+    //         Same shape as jobs/create-channel (PR A) — kind="work_project".
+    const refSafe = sanitizeRefSegment(input.jobNumber);
+    if (!refSafe) return res.status(400).json({ message: "jobNumber has no usable characters" });
+    const jobRef = `JOB-${refSafe}`;
+    const JOB_KIND = "work_project" as const;
+
+    let job = storage.getWorkObjectByRef(orgId, JOB_KIND, jobRef);
+    if (!job) {
+      job = storage.createWorkObject({
+        orgId,
+        projectId,
+        kind: JOB_KIND,
+        ref: jobRef,
+        title: `Job ${input.jobNumber}`.slice(0, 200),
+        status: "open",
+        description: input.contractId ? `Contract ID: ${input.contractId}` : null,
+        parentId: null,
+        ownerUserId: null,
+        attributes: JSON.stringify({
+          jobNumber: input.jobNumber,
+          contractId: input.contractId ?? null,
+          source: "daily-log-bridge",
+        }),
+        createdByUserId: foreman.id,
+      });
+    }
+
+    const existingChannels = storage.listChannelsForWorkObject(job.id);
+    let channel = existingChannels.find(c => c.projectId === projectId) ?? null;
+    if (!channel) {
+      const channelName = sanitizeChannelName(`job-${refSafe}`);
+      const allInProject = storage.listChannelsByProject(projectId);
+      channel = storage.createChannel({
+        projectId,
+        workObjectId: job.id,
+        position: allInProject.length,
+        name: channelName,
+        type: "text",
+        topic: `Job ${input.jobNumber}`,
+        scope: "global",
+        entityId: null,
+        teamRole: null,
+      });
+    }
+
+    // ----- 5. Build structured meta -----
+    // 5a. Production totals + overrun detection
+    let anyOverrun = false;
+    const production = input.production.map((p: SuiteDailyLogInput["production"][number]) => {
+      const unitPrice = p.unitPriceSnapshot ?? 0;
+      const lineTotal = Math.round(p.quantity * unitPrice * 100) / 100;
+      const overrun =
+        p.budgetedQuantity != null &&
+        p.consumedToDate != null &&
+        p.consumedToDate > p.budgetedQuantity;
+      if (overrun) anyOverrun = true;
+      return {
+        payItemCode: p.payItemCode,
+        payItemDescription: p.payItemDescription,
+        unit: p.unit ?? null,
+        quantity: p.quantity,
+        unitPriceSnapshot: unitPrice,
+        lineTotal,
+        budgetedQuantity: p.budgetedQuantity ?? null,
+        consumedToDate: p.consumedToDate ?? null,
+        overrun,
+      };
+    });
+
+    // 5b. Crew mapping (shadow-provision by email)
+    const crew: DailyLogSystemMessageMeta["crew"] = [];
+    for (const c of input.crew) {
+      const email = (c.userEmail || "").trim().toLowerCase();
+      if (!email) continue;
+      let u = storage.getUserByEmail(email);
+      if (!u) {
+        try {
+          u = storage.createUser({
+            orgId,
+            email,
+            passwordHash: "",
+            name: c.userName || email,
+            role: "user",
+          });
+        } catch (e) {
+          console.warn(`[daily-log] crew shadow provision failed for ${email}:`, (e as Error).message);
+          continue;
+        }
+      }
+      crew.push({ userId: u.id, name: u.name, hours: c.hours });
+    }
+
+    // 5c. Attachment hydration via existing files pipeline
+    const backend = getStorageBackend();
+    const attachments: DailyLogSystemMessageMeta["attachments"] = [];
+    for (const ref of input.attachments) {
+      const att = storage.getAttachment(ref.chatAttachmentId);
+      if (!att) {
+        console.warn(`[daily-log] unknown chatAttachmentId=${ref.chatAttachmentId} — dropping`);
+        continue;
+      }
+      const publicUrl = backend.publicUrl(att.storageKey);
+      const thumbPublic = att.thumbnailKey ? backend.publicUrl(att.thumbnailKey) : null;
+      attachments.push({
+        chatAttachmentId: att.id,
+        filename: att.filename,
+        contentType: att.contentType,
+        thumbnailUrl: thumbPublic ?? (att.thumbnailKey ? `/api/files/${att.id}?thumb=1` : null),
+        downloadUrl: publicUrl ?? `/api/files/${att.id}`,
+        caption: ref.caption ?? null,
+        latitude: ref.latitude ?? null,
+        longitude: ref.longitude ?? null,
+        accuracyM: ref.accuracyM ?? null,
+        takenAt: ref.takenAt ?? null,
+      });
+    }
+
+    const isRevision = !!input.revisionOf;
+    const meta: DailyLogSystemMessageMeta = {
+      system: true,
+      kind: isRevision ? "daily_log.superseded" : "daily_log.submitted",
+      opsLogId: input.logId,
+      jobId: input.jobId,
+      jobNumber: input.jobNumber,
+      contractId: input.contractId ?? null,
+      logDate: input.logDate,
+      foremanUserId: foreman.id,
+      foremanName: foreman.name,
+      notes: input.notes,
+      weather: input.weather,
+      crew,
+      production,
+      attachments,
+      totals: {
+        laborHours: input.totalLaborHours,
+        productionValue: input.totalProductionValue,
+      },
+      changeOrderFlag: anyOverrun,
+      deepLinkOps: input.deepLinkOps,
+      revisionOf: input.revisionOf ?? null,
+    };
+
+    // ----- 6. Persist the system message -----
+    const hours = input.totalLaborHours.toFixed(1);
+    const dollars = input.totalProductionValue.toFixed(0);
+    const flag = anyOverrun ? " ⚠ Possible CO" : "";
+    const headline = `Daily Log · ${input.logDate} · ${input.crew.length} crew · ${hours}h · $${dollars}${flag}`;
+
+    let msg;
+    try {
+      msg = storage.createMessage({
+        channelId: channel.id,
+        userId: foreman.id,
+        content: headline,
+        meta: JSON.stringify(meta),
+      });
+    } catch (err) {
+      console.error("[daily-log] createMessage failed:", err);
+      return res.status(500).json({
+        message: "Failed to post daily log to chat",
+        detail: (err as Error).message,
+      });
+    }
+
+    // ----- 7. Fan out so the card appears immediately -----
+    try {
+      const wire: any = {
+        ...msg,
+        meta,
+        authorName: foreman.name,
+        authorHue: 220,
+        authorRole: "field",
+        authorInitials: (foreman.name || "?").slice(0, 1).toUpperCase(),
+        reactions: [],
+        attachmentsList: [],
+        mentions: [],
+        replyCount: 0,
+        lastReplyAt: null,
+      };
+      emitMessageNew(orgId, wire);
+    } catch (err) {
+      console.warn("[daily-log] events fan-out failed:", (err as Error).message);
+    }
+
+    return res.json({
+      ok: true,
+      channelId: channel.id,
+      workObjectId: job.id,
+      messageId: msg.id,
+      deepLink: `/?channel=${channel.id}&message=${msg.id}`,
+      changeOrderFlag: anyOverrun,
+      droppedAttachments: input.attachments.length - attachments.length,
     });
   });
 }
