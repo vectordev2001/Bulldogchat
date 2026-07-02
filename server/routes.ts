@@ -36,6 +36,7 @@ function escapeHtml(s: string): string {
 }
 import { registerScheduledCallRoutes, startReminderLoop } from "./scheduled-calls";
 import { registerMeetingRoutes } from "./routes-meetings";
+import { registerTeamsLobbyRoutes } from "./routes-teams-lobby";
 import { createMeeting as createMeetingRow, linkExistingCallToMeeting, getMeetingById, getActiveHuddleForChannel, type CreateMeetingInput } from "./storage/meetings";
 import { syncDeactivatedFromAuth } from "./users-sync";
 import {
@@ -183,6 +184,7 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
   registerV2Routes(app);
   registerWorkObjectRoutes(app);
   registerIntegrationRoutes(app);
+  registerTeamsLobbyRoutes(app);
   registerScheduledCallRoutes(app);
   registerMeetingRoutes(app);
 

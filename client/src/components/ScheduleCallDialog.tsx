@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { LobbyControlPanel } from "@/components/meeting-scheduler/LobbyControlPanel";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { apiRequest } from "@/lib/queryClient";
 import type { ApiUser, ApiChannel } from "@/types/api";
@@ -822,6 +823,21 @@ function MeetingRow({
           </div>
         )}
       </div>
+      {/* Teams Lobby Control Panel — visible to the meeting organizer only,
+          when the meeting has a Teams join URL and is in its active window
+          (startAt <= now+30min, endAt >= now). Renders above the RSVP row. */}
+      {!cancelled &&
+        iAmOrganizer &&
+        !!(call as any).teamsJoinUrl &&
+        call.startAt - 30 * 60_000 <= Date.now() &&
+        call.endAt >= Date.now() && (
+          <div className="mt-2">
+            <LobbyControlPanel
+              meetingId={call.id}
+              teamsJoinUrl={(call as any).teamsJoinUrl as string}
+            />
+          </div>
+      )}
       {!readOnly && !cancelled && myInvitee && (
         <div className="flex items-center gap-1.5 mt-2 pt-2 border-t border-[hsl(220_40%_22%)]">
           <span className="text-[10px] uppercase tracking-wider text-[hsl(0_0%_55%)] font-mono">RSVP:</span>
