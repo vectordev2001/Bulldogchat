@@ -399,4 +399,199 @@ export function registerIntegrationRoutes(app: Express) {
       deepLink: `/?channel=${channel.id}`,
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // Phase 2.1 — Bulldog Ops → Chat "open job channel".
+  //
+  // Called by bulldog-ops server/suite-jobs.ts right after it creates a job
+  // row from a signed contract. Mirrors contracts/create-meeting closely:
+  //   - Creates a work_object (kind="work_project", ref=`JOB-<jobNumber>`)
+  //     if one doesn't already exist for this jobId.
+  //   - Creates one channel under that work_object under the org's first
+  //     project (or `projectId` if the caller supplies one).
+  //   - Idempotent on (orgId, jobNumber): second POST reuses both.
+  //   - Posts a system message announcing the job.
+  // ---------------------------------------------------------------------------
+  app.post("/api/integrations/jobs/create-channel", (req, res) => {
+    if (!requireSuiteSecret(req, res)) return;
+
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const orgId = Number.isFinite(Number(body.orgId)) && Number(body.orgId) > 0
+      ? Number(body.orgId)
+      : DEFAULT_ORG_ID;
+
+    const attachedByEmail = typeof body.attachedByEmail === "string"
+      ? body.attachedByEmail.trim().toLowerCase()
+      : "";
+    const attachedByName = typeof body.attachedByName === "string"
+      ? body.attachedByName.trim()
+      : "";
+
+    const lj = body.linkedJob as Record<string, unknown> | undefined;
+    if (!lj || typeof lj !== "object") {
+      return res.status(400).json({ message: "linkedJob required" });
+    }
+    const jobId = Number(lj.jobId);
+    const jobNumber = typeof lj.jobNumber === "string" ? lj.jobNumber.trim() : "";
+    const title = typeof lj.title === "string" ? lj.title.trim() : "";
+    const appUrl = typeof lj.appUrl === "string" ? lj.appUrl.trim() : "";
+    const contractId = Number(lj.contractId);
+    const contractNumber = typeof lj.contractNumber === "string" ? lj.contractNumber.trim() : "";
+    const contractUrl = typeof lj.contractUrl === "string" ? lj.contractUrl.trim() : "";
+
+    if (!Number.isFinite(jobId) || jobId <= 0)
+      return res.status(400).json({ message: "linkedJob.jobId required" });
+    if (!jobNumber) return res.status(400).json({ message: "linkedJob.jobNumber required" });
+    if (!title) return res.status(400).json({ message: "linkedJob.title required" });
+    if (!attachedByEmail) return res.status(400).json({ message: "attachedByEmail required" });
+
+    const refSafe = sanitizeRefSegment(jobNumber);
+    if (!refSafe) return res.status(400).json({ message: "jobNumber has no usable characters" });
+    const jobRef = `JOB-${refSafe}`;
+
+    // Resolve target project: caller can pin one, else first project in org.
+    let projectId: number | null = null;
+    const pidRaw = body.projectId;
+    if (pidRaw !== undefined && pidRaw !== null && pidRaw !== "") {
+      const pid = Number(pidRaw);
+      if (Number.isFinite(pid) && pid > 0) {
+        const proj = storage.getProject(pid);
+        if (proj && proj.orgId === orgId) projectId = pid;
+      }
+    }
+    if (projectId === null) {
+      const projects = storage.listProjectsByOrg(orgId);
+      if (projects.length > 0) projectId = projects[0].id;
+    }
+    if (projectId === null) {
+      return res.status(400).json({ message: "No company found for this org" });
+    }
+
+    // Resolve / shadow-provision the attacher (same pattern as create-channel).
+    let attacher = storage.getUserByEmail(attachedByEmail);
+    if (!attacher) {
+      try {
+        attacher = storage.createUser({
+          orgId,
+          email: attachedByEmail,
+          passwordHash: "",
+          name: attachedByName || attachedByEmail,
+          role: "user",
+        });
+        try {
+          const orgProjects = storage.listProjectsByOrg(orgId);
+          for (const p of orgProjects) {
+            try { storage.addProjectMember(p.id, attacher.id, "member"); }
+            catch { /* duplicate is fine */ }
+          }
+        } catch (e) {
+          console.warn("[bridge jobs/create-channel] project seed failed:", (e as Error).message);
+        }
+      } catch (e) {
+        console.warn("[bridge jobs/create-channel] attacher shadow provision failed:", (e as Error).message);
+        return res.status(400).json({ message: "Could not resolve attacher in chat org" });
+      }
+    }
+    if (!attacher || attacher.orgId !== orgId) {
+      return res.status(400).json({ message: "attacher not in org" });
+    }
+
+    // 1. Find or create the job work_object (idempotent on jobRef).
+    const JOB_KIND = "work_project" as const;
+    let job = storage.getWorkObjectByRef(orgId, JOB_KIND, jobRef);
+    if (!job) {
+      job = storage.createWorkObject({
+        orgId,
+        projectId,
+        kind: JOB_KIND,
+        ref: jobRef,
+        title: title.slice(0, 200),
+        status: "open",
+        description: contractUrl
+          ? `Source contract: ${contractUrl}`
+          : (contractNumber ? `Source contract ref: ${contractNumber}` : `Job ${jobNumber}`),
+        parentId: null,
+        ownerUserId: null,
+        attributes: JSON.stringify({
+          jobId,
+          jobNumber,
+          contractId: Number.isFinite(contractId) ? contractId : null,
+          contractNumber: contractNumber || null,
+          opsAppUrl: appUrl || null,
+          contractUrl: contractUrl || null,
+          source: "ops-bridge",
+        }),
+        createdByUserId: attacher.id,
+      });
+      try {
+        storage.appendWorkObjectActivity({
+          workObjectId: job.id,
+          type: "created",
+          actorUserId: attacher.id,
+          payload: JSON.stringify({
+            source: "ops-bridge",
+            jobId,
+            jobNumber,
+            contractId: Number.isFinite(contractId) ? contractId : null,
+            contractNumber: contractNumber || null,
+          }),
+        });
+      } catch (e) {
+        console.warn("[bridge jobs/create-channel] activity log failed:", (e as Error).message);
+      }
+    }
+
+    // 2. Find or create the job's channel (dedupe on projectId).
+    const existingChannels = storage.listChannelsForWorkObject(job.id);
+    let channel = existingChannels.find(c => c.projectId === projectId) ?? null;
+    if (!channel) {
+      const titleSlug = sanitizeChannelName(title);
+      const channelName = titleSlug && titleSlug !== "job"
+        ? titleSlug
+        : sanitizeChannelName(`job-${refSafe}`);
+      const allInProject = storage.listChannelsByProject(projectId);
+      channel = storage.createChannel({
+        projectId,
+        workObjectId: job.id,
+        position: allInProject.length,
+        name: channelName,
+        type: "text",
+        topic: `Job ${jobNumber} — ${title.slice(0, 380)}`,
+        scope: "global",
+        entityId: null,
+        teamRole: null,
+      });
+
+      // System message announcing the job.
+      try {
+        storage.createMessage({
+          channelId: channel.id,
+          userId: attacher.id,
+          content: `📄 Job opened from contract ${contractNumber || "(no number)"}: ${title}`,
+          meta: JSON.stringify({
+            system: true,
+            kind: "job_opened",
+            jobId,
+            jobNumber,
+            contractId: Number.isFinite(contractId) ? contractId : null,
+            contractNumber: contractNumber || null,
+            opsAppUrl: appUrl || null,
+            contractUrl: contractUrl || null,
+          }),
+        });
+      } catch (e) {
+        console.warn("[bridge jobs/create-channel] system message skipped:", (e as Error).message);
+      }
+    }
+
+    res.json({
+      ok: true,
+      jobId: job.id,
+      jobRef: job.ref,
+      channelId: channel.id,
+      channelName: channel.name,
+      projectId,
+      deepLink: `/?channel=${channel.id}`,
+    });
+  });
 }
