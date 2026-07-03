@@ -99,6 +99,8 @@ function rowToInvitee(r: any): ScheduledCallInvitee {
     responseChannel: r.response_channel ?? null,
     inviteSentAt: r.invite_sent_at ? new Date(r.invite_sent_at * 1000) : null,
     inviteError: r.invite_error ?? null,
+    inviteAttempts: r.invite_attempts ?? 0,
+    inviteNextRetryAt: r.invite_next_retry_at ?? null,
     reminderSentAt: r.reminder_sent_at ? new Date(r.reminder_sent_at * 1000) : null,
   };
 }
@@ -242,12 +244,39 @@ function setTeamsMeeting(id: number, joinUrl: string, meetingId: string) {
   ).run(joinUrl, meetingId, now, id);
 }
 
+// Retry backoff schedule: attempts 1..5 wait 30s, 2m, 10m, 30m, 60m before
+// the next re-dispatch. After 5 failed attempts we stop retrying so a
+// truly-invalid recipient doesn't loop forever. The reminder loop ticks at
+// 60s, so real-world first retry lands 30–90s after the initial failure.
+const INVITE_RETRY_BACKOFF_S: number[] = [30, 120, 600, 1800, 3600];
+const INVITE_MAX_ATTEMPTS = INVITE_RETRY_BACKOFF_S.length;
+
 function markInviteSent(inviteeId: number, err: string | null) {
   const now = Math.floor(Date.now() / 1000);
   if (err) {
-    rawDb.prepare("UPDATE scheduled_call_invitees SET invite_error = ? WHERE id = ?").run(err.slice(0, 500), inviteeId);
+    // Increment attempts + schedule next retry (bounded by MAX_ATTEMPTS).
+    const row = rawDb.prepare(
+      "SELECT invite_attempts FROM scheduled_call_invitees WHERE id = ?",
+    ).get(inviteeId) as { invite_attempts?: number } | undefined;
+    const attempts = (row?.invite_attempts ?? 0) + 1;
+    const nextRetryAt =
+      attempts >= INVITE_MAX_ATTEMPTS
+        ? null
+        : now + INVITE_RETRY_BACKOFF_S[attempts - 1];
+    rawDb.prepare(
+      "UPDATE scheduled_call_invitees SET invite_error = ?, invite_attempts = ?, invite_next_retry_at = ? WHERE id = ?",
+    ).run(err.slice(0, 500), attempts, nextRetryAt, inviteeId);
+    console.log(JSON.stringify({
+      msg: "invite_send_failed",
+      inviteeId,
+      attempts,
+      nextRetryAt,
+      error: err.slice(0, 200),
+    }));
   } else {
-    rawDb.prepare("UPDATE scheduled_call_invitees SET invite_sent_at = ?, invite_error = NULL WHERE id = ?").run(now, inviteeId);
+    rawDb.prepare(
+      "UPDATE scheduled_call_invitees SET invite_sent_at = ?, invite_error = NULL, invite_next_retry_at = NULL WHERE id = ?",
+    ).run(now, inviteeId);
   }
 }
 
@@ -626,14 +655,43 @@ async function dispatchInvites(call: ScheduledCall): Promise<void> {
         });
         if (res.sent) {
           emailSent = true;
+          console.log(JSON.stringify({
+            msg: "invite_email_sent",
+            inviteeId: inv.id,
+            scheduledCallId: call.id,
+            recipient: email,
+          }));
         } else {
           errors.push(`email: ${res.reason ?? "unknown"}`);
-          console.warn(`[scheduled-calls] email invite failed for inv ${inv.id}:`, res.reason);
+          console.warn(JSON.stringify({
+            msg: "invite_email_failed",
+            inviteeId: inv.id,
+            scheduledCallId: call.id,
+            recipient: email,
+            reason: (res.reason ?? "unknown").slice(0, 200),
+          }));
         }
       } catch (e: any) {
         errors.push(`email: ${e?.message ?? "exception"}`);
-        console.warn(`[scheduled-calls] email invite exception for inv ${inv.id}:`, e);
+        console.warn(JSON.stringify({
+          msg: "invite_email_exception",
+          inviteeId: inv.id,
+          scheduledCallId: call.id,
+          recipient: email,
+          error: (e?.message ?? "exception").slice(0, 200),
+        }));
       }
+    } else if (email && !isEmailConfigured()) {
+      // Diagnostic: recipient HAS an email but SendGrid isn't configured. This
+      // is a deployment-level misconfig, not a per-invite failure — log once
+      // per invitee so it's obvious in Render logs.
+      console.warn(JSON.stringify({
+        msg: "invite_email_skipped_no_provider",
+        inviteeId: inv.id,
+        scheduledCallId: call.id,
+        recipient: email,
+      }));
+      errors.push("email: SENDGRID_API_KEY not set");
     }
 
     // ─── SMS ─────────────────────────────────────────────────────────────
@@ -656,6 +714,13 @@ async function dispatchInvites(call: ScheduledCall): Promise<void> {
       // email wasn't sent); the reminder reuses the same token via
       // short_link_token on the invitee row.
       const shortUrl = ensureShortUrl();
+      // Build the RSVP page URL from the same short-link token used for Join.
+      // /r/<token> renders a Yes/No/Maybe page (the same page the email
+      // RSVP buttons target). Two-URL SMS body preserves the SW 1.5.45
+      // learning (no reply-based Y/N/M) while giving invitees an easy
+      // tappable RSVP path from SMS.
+      const smsShortToken = shortUrl.substring(shortUrl.lastIndexOf("/") + 1);
+      const smsRsvpUrl = `${CHAT_BASE_URL}/r/${smsShortToken}`;
       const smsBody = buildScheduledCallSmsBody({
         organizerName: organizer.name,
         title: call.title,
@@ -663,16 +728,37 @@ async function dispatchInvites(call: ScheduledCall): Promise<void> {
         joinUrl,
         rsvpCode: `#${inv.rsvpCode}`,
         shortUrl,
+        rsvpUrl: smsRsvpUrl,
       });
       try {
         const res = await sendSms({ to: smsTo, body: smsBody });
         if (res.ok) {
           smsSent = true;
+          console.log(JSON.stringify({
+            msg: "invite_sms_sent",
+            inviteeId: inv.id,
+            scheduledCallId: call.id,
+            recipient: smsTo,
+          }));
         } else {
           errors.push(`sms: ${res.error ?? "unknown"}`);
+          console.warn(JSON.stringify({
+            msg: "invite_sms_failed",
+            inviteeId: inv.id,
+            scheduledCallId: call.id,
+            recipient: smsTo,
+            reason: (res.error ?? "unknown").slice(0, 200),
+          }));
         }
       } catch (e: any) {
         errors.push(`sms: ${e?.message ?? "exception"}`);
+        console.warn(JSON.stringify({
+          msg: "invite_sms_exception",
+          inviteeId: inv.id,
+          scheduledCallId: call.id,
+          recipient: smsTo,
+          error: (e?.message ?? "exception").slice(0, 200),
+        }));
       }
       }
     }
@@ -863,6 +949,53 @@ async function sendOrganizerConfirmation(
   }
 }
 
+/* ────────────────── Invite retry loop (in-process) ─────────────────────
+ * The initial `dispatchInvites(call)` is fire-and-forget from the create
+ * route. If a specific recipient's send failed transiently (e.g. SendGrid
+ * 5xx, DNS blip, checkSmsConsent lookup timeout), that invitee was left
+ * with invite_sent_at = NULL and would never get another attempt — the
+ * reminder loop only fires reminders, not initial invites. This function
+ * scans for pending invitees whose retry window has come due and re-fans
+ * them out. Runs on the same 60s reminder tick so we don't spin up a
+ * second timer.
+ * ------------------------------------------------------------------------ */
+async function dispatchInviteRetries() {
+  const now = Math.floor(Date.now() / 1000);
+  // Find calls with any invitee still pending + due for retry. We limit to
+  // scheduled/started calls (never retry a cancelled meeting).
+  const rows = rawDb.prepare(`
+    SELECT DISTINCT sc.id
+    FROM scheduled_calls sc
+    JOIN scheduled_call_invitees sci ON sci.scheduled_call_id = sc.id
+    WHERE sc.status IN ('scheduled', 'started')
+      AND sci.invite_sent_at IS NULL
+      AND sci.invite_next_retry_at IS NOT NULL
+      AND sci.invite_next_retry_at <= ?
+      AND sci.invite_attempts < ?
+    LIMIT 50
+  `).all(now, INVITE_MAX_ATTEMPTS) as Array<{ id: number }>;
+  if (rows.length === 0) return;
+  console.log(`[scheduled-calls] retry loop: ${rows.length} call(s) with due invites`);
+  for (const r of rows) {
+    const call = getScheduledCall(r.id);
+    if (!call) continue;
+    try {
+      await dispatchInvites(call);
+    } catch (e) {
+      console.warn(
+        `[scheduled-calls] retry dispatch call=${call.id} error:`,
+        (e as { message?: string })?.message ?? e,
+      );
+    }
+  }
+}
+
+// Exported for smoke tests — lets the test drive one retry pass without
+// starting the 60s timer. Not part of the public surface but stable.
+export function _dispatchInviteRetriesForTest(): Promise<void> {
+  return dispatchInviteRetries();
+}
+
 /* ─────────────────── Reminder loop (in-process) ───────────────────────── */
 async function dispatchReminders() {
   const now = Math.floor(Date.now() / 1000);
@@ -1010,9 +1143,17 @@ let reminderTimer: NodeJS.Timeout | null = null;
 export function startReminderLoop() {
   if (reminderTimer) return;
   reminderTimer = setInterval(() => {
-    dispatchReminders().catch((e) => console.warn("[scheduled-calls] reminder loop error:", e));
+    // Retry pending invites first so a due retry lands before the reminder
+    // scan looks at invitee state. Both are best-effort; a throw from one
+    // must not stop the other.
+    dispatchInviteRetries().catch((e) =>
+      console.warn("[scheduled-calls] invite retry loop error:", e),
+    );
+    dispatchReminders().catch((e) =>
+      console.warn("[scheduled-calls] reminder loop error:", e),
+    );
   }, 60 * 1000); // every 60s
-  console.log("[scheduled-calls] reminder loop started (60s tick)");
+  console.log("[scheduled-calls] reminder loop started (60s tick, includes invite retries)");
 }
 export function stopReminderLoop() {
   if (reminderTimer) { clearInterval(reminderTimer); reminderTimer = null; }

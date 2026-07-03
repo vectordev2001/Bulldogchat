@@ -736,6 +736,12 @@ export const scheduledCallInvitees = sqliteTable("scheduled_call_invitees", {
   // resend on every server restart.
   inviteSentAt: integer("invite_sent_at", { mode: "timestamp" }),
   inviteError: text("invite_error"),
+  // v34: retry state. `inviteAttempts` starts at 0 and increments on each
+  // failed send; `inviteNextRetryAt` is the epoch-seconds timestamp after
+  // which the retry loop will re-dispatch. NULL when there's nothing to
+  // retry (either sent successfully, never attempted, or hit MAX_ATTEMPTS).
+  inviteAttempts: integer("invite_attempts").notNull().default(0),
+  inviteNextRetryAt: integer("invite_next_retry_at"),
   reminderSentAt: integer("reminder_sent_at", { mode: "timestamp" }),
 });
 export type ScheduledCallInvitee = typeof scheduledCallInvitees.$inferSelect;
