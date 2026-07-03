@@ -221,6 +221,30 @@ export function registerV2Routes(app: Express) {
     if (!ok && !res.headersSent) res.status(404).json({ message: "Storage object missing" });
   });
 
+  // Suite-internal metadata endpoint. Bulldog Ops calls this from its photo
+  // bridge (POST /api/suite/jobs/:jobId/attach-field-photo) to learn the
+  // filename/content-type/size/thumbnail URL for a chat attachment id.
+  // Authenticated with x-suite-secret only (no cookie). Response never
+  // includes signed URLs or user data — just file meta.
+  app.get("/api/files/:id/meta", (req, res) => {
+    const secret = process.env.SUITE_INTERNAL_SECRET;
+    if (!secret) return res.status(503).json({ message: "SUITE_INTERNAL_SECRET not configured" });
+    const given = req.header("x-suite-secret");
+    if (!given || given !== secret) return res.status(401).json({ message: "Unauthorized" });
+    const att = storage.getAttachment(String(req.params.id));
+    if (!att) return res.status(404).json({ message: "Not found" });
+    const base = (process.env.CHAT_BASE_URL || "https://chat.bulldogops.com").replace(/\/+$/, "");
+    res.json({
+      id: att.id,
+      filename: att.filename,
+      contentType: att.contentType,
+      sizeBytes: att.sizeBytes,
+      thumbnailUrl: att.thumbnailKey ? `${base}/api/files/${att.id}?thumb=1` : null,
+      width: att.width ?? null,
+      height: att.height ?? null,
+    });
+  });
+
   app.delete("/api/messages/:id/attachments/:attId", requireAuth, async (req, res) => {
     const u = (req as AuthedRequest).user;
     const att = storage.getAttachment(req.params.attId);

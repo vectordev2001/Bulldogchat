@@ -24,6 +24,7 @@ import { SearchModal } from "./SearchModal";
 import { MessageAttachments } from "./MessageAttachments";
 import { ContractBanner } from "./ContractBanner";
 import { MeetingNotesHistory } from "./MeetingNotesHistory";
+import { PromoteToChangeOrderDialog } from "./PromoteToChangeOrderDialog";
 
 interface Props {
   channel: ApiChannel;
@@ -78,6 +79,9 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers, me
   const [callDialog, setCallDialog] = useState<null | "voice" | "video">(null);
   const [createMeetingOpen, setCreateMeetingOpen] = useState(false);
   const [notesOpen, setNotesOpen] = useState(false);
+  // Feature 2.2 — promote-to-change-order dialog. Set to the source message
+  // when the user picks the action from the per-message menu.
+  const [promoteMsg, setPromoteMsg] = useState<ApiMessage | null>(null);
   const { active: activeCall, outgoing: outgoingCall, startGroupCall } = useCalls();
   const callBusy = !!activeCall || !!outgoingCall;
   const [huddleStarting, setHuddleStarting] = useState(false);
@@ -738,9 +742,11 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers, me
                 isMe={item.msg.userId === me.id}
                 meId={me.id}
                 myRole={me.role}
+                canPromoteToChangeOrder={!!channel.linkedContract}
                 onOpenThread={() => setThreadParent(item.msg)}
                 onJoinMeeting={(kind) => setCallDialog(kind)}
                 onOpenNotes={() => setNotesOpen(true)}
+                onPromoteToChangeOrder={() => setPromoteMsg(item.msg)}
               />
             ),
           )}
@@ -951,6 +957,15 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers, me
         onClose={() => setCreateMeetingOpen(false)}
       />
       <MeetingNotesHistory channelId={channel.id} open={notesOpen} onClose={() => setNotesOpen(false)} />
+      {promoteMsg && (
+        <PromoteToChangeOrderDialog
+          open={!!promoteMsg}
+          onClose={() => setPromoteMsg(null)}
+          messageId={promoteMsg.id}
+          messageText={promoteMsg.content}
+          channel={channel}
+        />
+      )}
     </section>
   );
 }
@@ -1032,6 +1047,10 @@ function SystemMessageRow({ meta, content, createdAt, meId, myRole, onJoinMeetin
   // Meeting-summary cards: title + preview + "View full notes".
   if (meta.kind === "meeting_summary") {
     return <MeetingSummaryCard meta={meta as ApiMeetingSummarySystemMessageMeta} createdAt={createdAt} onOpenNotes={onOpenNotes} />;
+  }
+  // Feature 2.2 — CO promoted from a chat message.
+  if ((meta.kind as string) === "change_order.promoted_from_message") {
+    return <ChangeOrderPromotedCard meta={meta as unknown as ChangeOrderPromotedMeta} createdAt={createdAt} />;
   }
   // Below here, meta must be a work-object kind. Narrow the type so TS knows.
   const wo = meta as ApiWorkObjectSystemMessageMeta;
@@ -1124,7 +1143,68 @@ function MeetingSummaryCard({ meta, createdAt, onOpenNotes }: { meta: ApiMeeting
   );
 }
 
-function MessageRow({ msg, grouped, isMe, meId, myRole, onOpenThread, onJoinMeeting, onOpenNotes }: { msg: ApiMessage; grouped: boolean; isMe: boolean; meId: number; myRole: UserRole; onOpenThread: () => void; onJoinMeeting?: (kind: "voice" | "video") => void; onOpenNotes?: () => void }) {
+// Feature 2.2 — shape of the change_order.promoted_from_message system-
+// message meta. Not in ApiSystemMessageMeta yet; kept local so we can ship
+// the render without an api.ts churn.
+interface ChangeOrderPromotedMeta {
+  system: true;
+  kind: "change_order.promoted_from_message";
+  coId: number;
+  coNumber: string;
+  contractId: number;
+  contractTitle: string;
+  deepLink: string;
+  sourceMessageId: number;
+  quotedText: string;
+  existing: boolean;
+}
+
+function ChangeOrderPromotedCard({ meta, createdAt }: { meta: ChangeOrderPromotedMeta; createdAt: string }) {
+  const contractsBase = ((import.meta as any).env?.VITE_CONTRACTS_APP_URL as string | undefined)
+    || "https://vectorcontracts.bulldogops.com";
+  const href = `${contractsBase}${meta.deepLink}`;
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 4 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+      className="my-2 mx-12 rounded-lg border border-[hsl(var(--vs-info)/0.3)] bg-[hsl(var(--vs-info)/0.06)] overflow-hidden"
+      data-testid="system-message-change_order_promoted"
+      title={fmtTime(createdAt)}
+    >
+      <div className="px-3 py-2 flex items-center gap-2 border-b border-[hsl(var(--vs-info)/0.2)]">
+        <FileText className="w-4 h-4 text-vs-blue-light shrink-0" />
+        <span className="text-sm font-semibold text-[hsl(var(--vs-text))] truncate">
+          {meta.existing ? "Change order already exists" : "Change order created"}
+        </span>
+        <span className="ml-auto text-[10px] font-mono text-[hsl(var(--vs-text-muted))] whitespace-nowrap shrink-0">
+          {meta.coNumber}
+        </span>
+      </div>
+      <div className="px-3 py-2 text-xs text-[hsl(var(--vs-text-muted))]">
+        on <span className="text-[hsl(var(--vs-text))]">{meta.contractTitle || "(untitled contract)"}</span>
+      </div>
+      {meta.quotedText && (
+        <div className="px-3 pb-2 text-[11px] italic text-[hsl(var(--vs-text-muted))] line-clamp-3 border-l-2 border-[hsl(var(--vs-info)/0.3)] ml-3">
+          “{meta.quotedText}”
+        </div>
+      )}
+      <div className="px-3 py-2 border-t border-[hsl(var(--vs-info)/0.2)]">
+        <a
+          href={href}
+          target="_blank"
+          rel="noreferrer"
+          className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs bg-secondary border border-border hover:border-vs-blue hover:text-vs-blue-light text-[hsl(var(--vs-text))]"
+          data-testid="link-open-co-card"
+        >
+          <FileText className="w-3 h-3" /> Open change order
+        </a>
+      </div>
+    </motion.div>
+  );
+}
+
+function MessageRow({ msg, grouped, isMe, meId, myRole, canPromoteToChangeOrder, onOpenThread, onJoinMeeting, onOpenNotes, onPromoteToChangeOrder }: { msg: ApiMessage; grouped: boolean; isMe: boolean; meId: number; myRole: UserRole; canPromoteToChangeOrder?: boolean; onOpenThread: () => void; onJoinMeeting?: (kind: "voice" | "video") => void; onOpenNotes?: () => void; onPromoteToChangeOrder?: () => void }) {
   // System messages (work-object events) render as compact centered banners.
   if (msg.meta && msg.meta.system) {
     return <SystemMessageRow meta={msg.meta} content={msg.content} createdAt={msg.createdAt} meId={meId} myRole={myRole} onJoinMeeting={onJoinMeeting} onOpenNotes={onOpenNotes} />;
@@ -1296,6 +1376,17 @@ function MessageRow({ msg, grouped, isMe, meId, myRole, onOpenThread, onJoinMeet
               <Reply className="w-3.5 h-3.5" />
               Reply in thread
             </button>
+            {canPromoteToChangeOrder && onPromoteToChangeOrder && !msg.meta?.system && msg.content.trim().length > 0 && (
+              <button
+                type="button"
+                onClick={() => { setMenuOpen(false); onPromoteToChangeOrder(); }}
+                className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[hsl(var(--vs-text))] hover:bg-[hsl(var(--vs-accent-soft))] hover:text-[hsl(var(--vs-accent))] text-left"
+                data-testid={`menu-item-promote-co-${msg.id}`}
+              >
+                <FileText className="w-3.5 h-3.5" />
+                Promote to Change Order
+              </button>
+            )}
             {canDelete && (
               <button
                 type="button"

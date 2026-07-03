@@ -26,6 +26,13 @@ import { checkSmsConsent } from "./auth-consent";
 import { mintShortLink, resolveShortLink, bumpShortLinkUses } from "./short-links";
 import { sendEmail, isEmailConfigured } from "./email";
 import { emitOpsNotifications } from "./notify-ops";
+import { firePhotoBridgeToOps } from "./suite-photo-bridge";
+import {
+  promoteMessageToChangeOrder,
+  buildChangeOrderPromotedSystemMessage,
+  resolveContractForChannel,
+  resolveJobIdForChannel,
+} from "./suite-change-orders-outbound";
 
 function escapeHtml(s: string): string {
   return s
@@ -1430,6 +1437,18 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
       storage.linkAttachmentsToMessage(parsed.data.attachmentIds, msg.id, u.id);
     }
 
+    // Feature 2.1 — photo bridge to Ops. If this channel maps to a job_site
+    // work object whose attributes carry opsJobId, and the message linked at
+    // least one image attachment, fire-and-forget a POST to Ops so today's
+    // draft daily_log picks up the field photo. Never blocks send.
+    if (parsed.data.attachmentIds && parsed.data.attachmentIds.length > 0) {
+      firePhotoBridgeToOps({
+        channelId,
+        messageId: msg.id,
+        authorUserId: u.id,
+      });
+    }
+
     // Parse + persist mentions. DMs use channel_members for the audience
     // (members of THIS DM thread), regular channels use the project's
     // member roster.
@@ -1532,6 +1551,93 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     emitMessageUpdate(u.orgId, wire);
     emitMessageDelete(u.orgId, { channelId: msg.channelId, messageId: id });
     res.json({ ok: true, message: wire });
+  });
+
+  // Phase 2.2 (Feature 2.2) — Promote a chat message into a Contracts
+  // change-order draft. The source channel must be linked to a contract
+  // (channels.linkedContract populated by the contracts create-channel
+  // bridge). Contracts owns idempotency on (channelId, messageId), so
+  // calling this twice returns the same coId with existing:true.
+  //
+  // Body: { title?, description?, quotedText? }  All optional; quotedText
+  // defaults to the source message content.
+  app.post("/api/messages/:msgId/promote-to-change-order", requireAuth, async (req, res) => {
+    const u = (req as AuthedRequest).user;
+    const msgId = Number(req.params.msgId);
+    if (!Number.isFinite(msgId)) return res.status(400).json({ message: "Invalid message id" });
+
+    const src = storage.getMessage(msgId);
+    if (!src) return res.status(404).json({ message: "Message not found" });
+    const channelId = src.channelId;
+    const access = userCanAccessChannel(u.id, u.orgId, channelId, (req as AuthedRequest).access);
+    if (!access) return res.status(404).json({ message: "Channel not found" });
+
+    const linked = resolveContractForChannel(channelId);
+    if (!linked) return res.status(400).json({ message: "This channel isn't linked to a contract" });
+    const jobId = resolveJobIdForChannel(channelId) ?? undefined;
+
+    const bodyIn = (req.body ?? {}) as { title?: string; description?: string; quotedText?: string };
+    const quotedText = (typeof bodyIn.quotedText === "string" && bodyIn.quotedText.trim().length > 0)
+      ? bodyIn.quotedText
+      : (src.content ?? "").trim() || "(no message text)";
+    const title = typeof bodyIn.title === "string" ? bodyIn.title.slice(0, 200) : undefined;
+    const description = typeof bodyIn.description === "string" ? bodyIn.description.slice(0, 20000) : undefined;
+
+    const author = storage.getUser(u.id);
+    if (!author?.email) return res.status(400).json({ message: "Caller has no email on record" });
+
+    const result = await promoteMessageToChangeOrder({
+      channelId,
+      messageId: msgId,
+      quotedText,
+      authorEmail: author.email,
+      authorUserId: u.id,
+      orgId: u.orgId,
+      contractId: linked.contractId,
+      jobId,
+      title,
+      description,
+    });
+
+    if (!result.ok) {
+      return res.status(result.status).json({ message: result.message });
+    }
+
+    // Post a system card back into the channel so everyone sees the CO
+    // was promoted (or that it already existed). Best-effort; a failure
+    // here doesn't fail the API call — the CO is already created upstream.
+    try {
+      const card = buildChangeOrderPromotedSystemMessage({
+        coId: result.coId,
+        coNumber: result.coNumber,
+        contractId: linked.contractId,
+        contractTitle: linked.contractTitle,
+        deepLink: result.deepLink,
+        quotedText,
+        sourceMessageId: msgId,
+        existing: result.existing,
+      });
+      const sysMsg = storage.createMessage({
+        channelId,
+        userId: u.id,
+        content: card.content,
+        meta: card.meta,
+      });
+      const wire = buildWireMessage(sysMsg.id);
+      if (wire) emitMessageNew(u.orgId, wire);
+    } catch (err) {
+      console.warn("[promote-to-co] system card post failed:", (err as Error).message);
+    }
+
+    res.json({
+      ok: true,
+      coId: result.coId,
+      coNumber: result.coNumber,
+      deepLink: result.deepLink,
+      existing: result.existing,
+      contractId: linked.contractId,
+      contractTitle: linked.contractTitle,
+    });
   });
 
   // Phase 1.9.36 — admin-only "clear channel" bulk tombstone. Wipes every
