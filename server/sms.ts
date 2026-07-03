@@ -212,25 +212,33 @@ export function buildCallInviteSmsBody(p: {
 }
 
 /**
- * Build the SMS body for a scheduled-call invite. Includes the time in
- * the recipient's-likely timezone (we render as 'h:mm a TZ' — we don't
- * know their TZ for sure, so we pass the organizer's). RSVP via reply
- * Y / N / M (maybe), or tap the link to open the in-app RSVP card.
+ * Build the SMS body for a scheduled-call invite. Includes the time in the
+ * recipient's-likely timezone (we render as 'h:mm a TZ' — we don't know their
+ * TZ for sure, so we pass the organizer's). Two links: Join (drops them in
+ * the call) and RSVP (opens a web page with Yes/No/Maybe buttons, same page
+ * the email buttons hit). Reply-based RSVP was removed in SW 1.5.45 as
+ * confusing — parseRsvpSms still handles it if anyone replies "Y/N/M" but the
+ * SMS no longer advertises it.
+ *
+ * `rsvpCode` is retained in the signature for callers that still generate it
+ * (it's persisted on the invitee row for reply parsing) but is not rendered
+ * into the body.
  */
 export function buildScheduledCallSmsBody(p: {
   organizerName: string;
   title: string;
   whenLabel: string;       // pre-formatted, e.g. "Tue Jun 2 at 3:00 PM PDT"
   joinUrl: string;
-  rsvpCode: string;        // short code, e.g. "#A4F9" — user can reply with this + Y/N/M
+  rsvpCode: string;        // legacy: persisted on invitee row for reply parsing; unused in body
   shortUrl?: string;
+  rsvpUrl?: string;        // tappable RSVP page URL (opens Yes/No/Maybe web page)
 }): string {
-  // The tightened "Y/N/M" RSVP wording (vs. "${code} Y, ${code} N, or
-  // ${code} M") saves ~30 chars; parseRsvpSms already handles the "#A4F9 Y"
-  // reply shape. Exactly one URL: short link when present (Universal-Link
-  // routed), else the long join URL.
+  // Two-URL body: Join = one-tap into the call; RSVP = record response
+  // without joining. Most invites still fit in ~2 SMS segments; parity with
+  // the email UX (Join button + 3 RSVP buttons) is worth the extra segment.
   const link = p.shortUrl || p.joinUrl;
-  return `${p.organizerName} invited you to a Bulldog call: "${p.title}" on ${p.whenLabel}. Join: ${link}`;
+  const rsvpLine = p.rsvpUrl ? `\nRSVP: ${p.rsvpUrl}` : "";
+  return `${p.organizerName} invited you to a Bulldog call: "${p.title}" on ${p.whenLabel}. Join: ${link}${rsvpLine}`;
 }
 
 /**

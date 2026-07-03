@@ -1377,4 +1377,24 @@ export function runMigrations() {
   } catch (e) {
     console.warn("[migrate] v33 channel re-dedupe skipped:", e);
   }
+
+  // v34 (Phase 2.4) — scheduled-call invite retry columns. The initial
+  // dispatchInvites() call is fire-and-forget and had no auto-retry, so a
+  // transient SendGrid 5xx or network hiccup on the very first send would
+  // leave the invitee with invite_sent_at = NULL forever and no follow-up.
+  // These two columns let the reminder loop pick up failed invites and
+  // re-dispatch with backoff. Guarded ALTERs — idempotent per boot.
+  try {
+    const sciCols = rawDb.prepare("PRAGMA table_info(scheduled_call_invitees)").all() as { name: string }[];
+    if (!sciCols.find((c) => c.name === "invite_attempts")) {
+      rawDb.exec("ALTER TABLE scheduled_call_invitees ADD COLUMN invite_attempts INTEGER NOT NULL DEFAULT 0;");
+      console.log("[migrate] v34 added scheduled_call_invitees.invite_attempts column");
+    }
+    if (!sciCols.find((c) => c.name === "invite_next_retry_at")) {
+      rawDb.exec("ALTER TABLE scheduled_call_invitees ADD COLUMN invite_next_retry_at INTEGER;");
+      console.log("[migrate] v34 added scheduled_call_invitees.invite_next_retry_at column");
+    }
+  } catch (e: any) {
+    console.warn("[migrate v34] invite retry columns skipped:", e?.message);
+  }
 }
