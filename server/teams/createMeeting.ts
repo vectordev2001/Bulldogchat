@@ -27,6 +27,15 @@ export interface CreateTeamsMeetingInput {
 export interface TeamsMeeting {
   joinUrl: string;
   meetingId: string;
+  /**
+   * The lobby bypass scope Graph reported back after creation (post-verify).
+   * We always request "everyone", but tenant meeting policy can override it —
+   * in which case guests will land in the Teams lobby waiting to be admitted.
+   * When this differs from "everyone" a warning is logged; the field is
+   * surfaced so the caller (and eventually the UI) can render an in-app hint
+   * that the tenant policy is overriding the meeting setting.
+   */
+  lobbyBypassScope: string | null;
 }
 
 /**
@@ -93,10 +102,64 @@ export async function createTeamsMeeting(
       );
       return null;
     }
-    console.log(
-      `[teams] created online meeting id=${meetingId} for organizer.${organizer.kind}=${organizer.value} lobbyBypass=everyone allowedPresenters=everyone`,
-    );
-    return { joinUrl, meetingId };
+
+    // ─── Verify lobby bypass took effect ────────────────────────────────────
+    // Older Graph versions and some tenants silently ignore lobbyBypassSettings
+    // on the create call, and tenant Meeting policy can override the per-meeting
+    // setting entirely. Re-read the meeting to see what actually stuck, and try
+    // one explicit PATCH if the create call didn't honor it. If PATCH also can't
+    // land "everyone" (tenant policy override), log loudly — but never fail the
+    // meeting creation on this: guests can still be admitted manually from Teams.
+    let observedScope: string | null =
+      typeof res?.lobbyBypassSettings?.scope === "string"
+        ? String(res.lobbyBypassSettings.scope)
+        : null;
+
+    if (observedScope !== "everyone") {
+      // Attempt one PATCH to force it, then re-read.
+      try {
+        await client
+          .api(`/users/${encodeURIComponent(organizer.value)}/onlineMeetings/${meetingId}`)
+          .patch({
+            lobbyBypassSettings: {
+              scope: "everyone",
+              isDialInBypassEnabled: true,
+            },
+          });
+        const verify = await client
+          .api(`/users/${encodeURIComponent(organizer.value)}/onlineMeetings/${meetingId}`)
+          .select("id,lobbyBypassSettings")
+          .get();
+        observedScope =
+          typeof verify?.lobbyBypassSettings?.scope === "string"
+            ? String(verify.lobbyBypassSettings.scope)
+            : null;
+      } catch (patchErr) {
+        console.warn(
+          `[teams] lobbyBypass PATCH failed for meeting ${meetingId}: ${
+            (patchErr as Error)?.message ?? String(patchErr)
+          }`,
+        );
+      }
+    }
+
+    if (observedScope !== "everyone") {
+      // Tenant Meeting policy is overriding the per-meeting setting. Guests
+      // will land in the Teams lobby. Log the exact resolved scope so the
+      // next lobby incident is one-glance debuggable, and include a fix hint.
+      console.warn(
+        `[teams] TENANT POLICY OVERRIDE: meeting ${meetingId} has lobbyBypassSettings.scope="${observedScope}" ` +
+          `(requested "everyone"). Guests will wait in the Teams lobby. ` +
+          `Fix: Teams Admin Center → Meetings → Meeting policies → "Who can bypass the lobby" = Everyone ` +
+          `for the organizer's assigned policy.`,
+      );
+    } else {
+      console.log(
+        `[teams] created online meeting id=${meetingId} for organizer.${organizer.kind}=${organizer.value} lobbyBypass=everyone allowedPresenters=everyone (verified)`,
+      );
+    }
+
+    return { joinUrl, meetingId, lobbyBypassScope: observedScope };
   } catch (err) {
     // The Microsoft Graph SDK wraps errors in shapes where `.message` is
     // often empty; the diagnostic detail lives in `.statusCode`, `.code`,

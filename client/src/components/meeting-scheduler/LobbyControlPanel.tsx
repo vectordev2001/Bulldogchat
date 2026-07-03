@@ -34,7 +34,7 @@ import {
   useState,
   useCallback,
 } from "react";
-import { Loader2, Users, CheckCircle, XCircle, PhoneOff, PhoneCall, AlertCircle } from "lucide-react";
+import { Loader2, Users, CheckCircle, XCircle, PhoneOff, PhoneCall, AlertCircle, ExternalLink } from "lucide-react";
 import { PublicClientApplication } from "@azure/msal-browser";
 import { msalConfig, loginRequest } from "@/lib/msal-config";
 import { apiRequest } from "@/lib/queryClient";
@@ -149,7 +149,7 @@ function participantToWaiter(p: LobbyParticipant): Waiter {
 // Component
 // ---------------------------------------------------------------------------
 
-type PanelState = "idle" | "joining" | "live" | "error";
+type PanelState = "idle" | "joining" | "live" | "error" | "acs-unavailable";
 
 export function LobbyControlPanel({
   meetingId,
@@ -157,6 +157,10 @@ export function LobbyControlPanel({
 }: LobbyControlPanelProps) {
   const [panelState, setPanelState] = useState<PanelState>("idle");
   const [errorMsg, setErrorMsg] = useState<string>("");
+  // acsConfigured: null = not yet probed, true/false = probed result. When
+  // false we skip the ACS-backed panel entirely and render the "admit in
+  // Teams" fallback banner — clicking "Open lobby control" would 501 otherwise.
+  const [, setAcsConfigured] = useState<boolean | null>(null);
   const [waiters, setWaiters] = useState<Waiter[]>([]);
   const [knownEmails, setKnownEmails] = useState<Set<string>>(new Set());
   const [rejectTarget, setRejectTarget] = useState<Waiter | null>(null);
@@ -174,6 +178,33 @@ export function LobbyControlPanel({
   // subscribe time) always sees the current set without a stale closure.
   const knownEmailsRef = useRef<Set<string>>(new Set());
   useEffect(() => { knownEmailsRef.current = knownEmails; }, [knownEmails]);
+
+  // ── Probe ACS availability once on mount ──────────────────────────────────
+  // If ACS_CONNECTION_STRING / ACS_ENTRA_CLIENT_ID aren't set on the server,
+  // /api/teams/lobby/acs-token returns 501 and the ACS-backed panel is
+  // unusable. Probe up front so we can render the fallback "admit in Teams"
+  // banner instead of a broken button. Any error (network, 401, 404) is
+  // treated as "assume configured" so we don't silently degrade a healthy
+  // panel; the real acs-token call will surface a specific error.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await apiRequest<{ acsConfigured: boolean }>(
+          "GET",
+          "/api/teams/lobby/status",
+        );
+        if (cancelled) return;
+        setAcsConfigured(!!data.acsConfigured);
+        if (!data.acsConfigured) setPanelState("acs-unavailable");
+      } catch (err) {
+        if (cancelled) return;
+        console.warn("[LobbyControlPanel] status probe failed:", err);
+        setAcsConfigured(true); // fail-open — real errors surface on click
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   // ── Tick "waited Xs" labels every second while live ──────────────────────
   useEffect(() => {
@@ -366,6 +397,16 @@ export function LobbyControlPanel({
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Unknown error";
       console.error("[LobbyControlPanel] connect failed:", msg);
+      // 501 from /acs-token = server has no ACS credentials configured. Bail
+      // out to the fallback banner instead of surfacing the raw error —
+      // routes-teams-lobby.ts returns a stable "Teams Host View not configured"
+      // prefix that we match on here.
+      if (/Teams Host View not configured/i.test(msg)) {
+        setAcsConfigured(false);
+        setPanelState("acs-unavailable");
+        await disconnectLobbyImpl();
+        return;
+      }
       setErrorMsg(msg);
       setPanelState("error");
       await disconnectLobbyImpl();
@@ -417,6 +458,47 @@ export function LobbyControlPanel({
   }, [rejectTarget, selectedReason]);
 
   // ── Render ────────────────────────────────────────────────────────────────
+
+  // Fallback when ACS is not configured on the server — the ACS-backed panel
+  // would 501. Show a distinct amber banner that pushes the organizer straight
+  // to Teams (which has native Admit UI in its own Participants pane). This is
+  // the state a fresh Bulldog install hits today: guests in the Teams lobby,
+  // no in-Bulldog admit control yet, but the fix path is obvious.
+  if (panelState === "acs-unavailable") {
+    return (
+      <div
+        className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3"
+        data-testid="lobby-acs-unavailable-banner"
+      >
+        <div className="flex items-start gap-2">
+          <AlertCircle className="w-4 h-4 text-amber-300 shrink-0 mt-0.5" />
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-semibold text-white">
+              Teams lobby active — admit in Teams
+            </div>
+            <div className="text-[11px] text-[hsl(0_0%_78%)] mt-1 leading-snug">
+              Guests who joined via the Teams link may be waiting in the Microsoft
+              Teams lobby. Open the Teams meeting yourself and admit them from the
+              Participants pane. (Bulldog’s in-app admit control is not yet
+              configured on this server.)
+            </div>
+          </div>
+        </div>
+        <div className="flex gap-2 mt-3">
+          <a
+            href={teamsJoinUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="px-3 py-1.5 rounded-md bg-[#5b5fc7] hover:bg-[#4a4ea8] text-[11px] font-bold text-white flex items-center gap-1.5"
+            data-testid="button-lobby-open-teams"
+          >
+            <ExternalLink className="w-3.5 h-3.5" />
+            Open Teams to admit
+          </a>
+        </div>
+      </div>
+    );
+  }
 
   if (panelState === "idle") {
     return (

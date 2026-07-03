@@ -44,6 +44,26 @@ function getRawScheduledCall(id: number): Record<string, unknown> | null {
 // ---------------------------------------------------------------------------
 
 export function registerTeamsLobbyRoutes(app: Express): void {
+  // ─── GET /api/teams/lobby/status ─────────────────────────────────────────
+  //
+  // Cheap probe the client uses to decide whether the ACS-backed lobby control
+  // panel is available at all. When ACS_CONNECTION_STRING / ACS_ENTRA_CLIENT_ID
+  // are unset the /acs-token endpoint returns 501 — the panel would 501 on
+  // click. We surface this ahead of time so the UI can render an alternative
+  // "admit in Teams" affordance instead of a broken button.
+  //
+  // The user must be authed (same posture as the rest of the lobby endpoints)
+  // to avoid leaking configuration state to anonymous callers.
+  app.get(
+    "/api/teams/lobby/status",
+    requireAuth,
+    (_req, res) => {
+      const acsConfigured =
+        !!process.env.ACS_CONNECTION_STRING && !!process.env.ACS_ENTRA_CLIENT_ID;
+      return res.json({ acsConfigured });
+    },
+  );
+
   // ─── POST /api/teams/lobby/acs-token ─────────────────────────────────────
   //
   // Exchange the host's Entra AAD token for an ACS token. The browser
