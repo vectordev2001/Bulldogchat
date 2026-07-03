@@ -28,6 +28,7 @@ import "@livekit/components-styles";
 import {
   Mic, MicOff, Video, VideoOff, MonitorUp, Hand, MessageSquare, Users, Sparkles,
   X, Smile, PhoneOff, Send, MicOff as MicOffIcon, Aperture, Settings, DoorOpen, Check, UserPlus,
+  LayoutGrid, Rows3,
 } from "lucide-react";
 import { BulldogMark, PlatformLogo, initials } from "@/components/BulldogLogo";
 import { ThemeToggle } from "@/components/MeetingThemeToggle";
@@ -47,7 +48,7 @@ import { SharingFloatingBar, type SharingAnnotationTool } from "@/components/cal
 import { InviteToMeetingDialog } from "@/components/call/InviteToMeetingDialog";
 import { ScreenShareAnnotator, annotationsSupported } from "@/lib/screen-share-annotator";
 import { blurSupported, loadDevicePrefs, saveDevicePrefs, type DevicePrefs } from "@/lib/meet-devices";
-import { loadMeetPrefs, saveMeetPrefs, MEET_PREFS_EVENT, emitMeetPrefsChanged, type MeetPrefs } from "@/lib/meet-prefs";
+import { loadMeetPrefs, saveMeetPrefs, MEET_PREFS_EVENT, emitMeetPrefsChanged, type MeetPrefs, type MeetLayout } from "@/lib/meet-prefs";
 
 const REACTIONS = ["👍", "❤️", "😂", "🎉", "👏"];
 type SidebarTab = "chat" | "participants" | "transcript";
@@ -346,6 +347,25 @@ function BulldogMeetingUI({ code }: { code: string }) {
   const [floating, setFloating] = useState<FloatingReaction[]>([]);
   const [showChip, setShowChip] = useState(true);
   const reactionId = useRef(0);
+
+  // Stage layout choice (speaker vs grid). Persisted per-device in
+  // meet-prefs so switching pages / rejoining keeps the user's pick.
+  // Re-read whenever another tab flips it via the MEET_PREFS_EVENT bus
+  // so open Bulldog Meet windows stay in sync.
+  const [layout, setLayoutState] = useState<MeetLayout>(() => loadMeetPrefs().layout);
+  useEffect(() => {
+    const onChange = () => setLayoutState(loadMeetPrefs().layout);
+    window.addEventListener(MEET_PREFS_EVENT, onChange);
+    return () => window.removeEventListener(MEET_PREFS_EVENT, onChange);
+  }, []);
+  const setLayout = useCallback((next: MeetLayout) => {
+    setLayoutState(next);
+    saveMeetPrefs({ ...loadMeetPrefs(), layout: next });
+    emitMeetPrefsChanged();
+  }, []);
+  const toggleLayout = useCallback(() => {
+    setLayout(loadMeetPrefs().layout === "grid" ? "speaker" : "grid");
+  }, [setLayout]);
 
   const micOn = localParticipant?.isMicrophoneEnabled ?? false;
   const camOn = localParticipant?.isCameraEnabled ?? false;
@@ -913,7 +933,7 @@ function BulldogMeetingUI({ code }: { code: string }) {
 
       {/* BODY */}
       <div className="flex min-h-0 flex-1">
-        <main className="relative flex min-w-0 flex-1 flex-col p-3 sm:p-4">
+        <main className="relative flex min-w-0 flex-1 flex-col overflow-hidden p-3 sm:p-4">
           <AnimatePresence>
             {showChip && chipLabel && (
               <motion.div
@@ -937,10 +957,35 @@ function BulldogMeetingUI({ code }: { code: string }) {
             )}
           </AnimatePresence>
 
-          {/* main stage */}
-          <div className="relative min-h-0 flex-1">
-            {main ? (
-              <StageTile trackRef={main} />
+          {/* Main stage. Two layouts (Phase 1.9.31):
+              • speaker — one large "contain-fit" tile (letterboxed so the
+                camera aspect is preserved, never cropping the face out of
+                frame or blowing up backgrounds) + a bottom filmstrip of
+                everyone else.
+              • grid    — equal-sized tiles arranged in a responsive grid so
+                every participant is the same size.
+              Both share the floating-emoji overlay. The outer `min-h-0` +
+              `overflow-hidden` keeps tiles from bleeding past the toolbar
+              when the window is short/narrow (previously the featured tile
+              could visibly overflow its container). */}
+          <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
+            {layout === "grid" ? (
+              <GridStage tiles={sorted} />
+            ) : main ? (
+              <>
+                <div className="relative min-h-0 flex-1 overflow-hidden">
+                  <StageTile trackRef={main} />
+                </div>
+                {strip.length > 0 && (
+                  <div className="mt-3 grid shrink-0 grid-cols-2 gap-3 sm:grid-cols-4">
+                    {strip.map((t, i) => (
+                      <div key={`${t.participant?.identity}-${t.source}-${i}`} className="aspect-video">
+                        <StripTile trackRef={t} />
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>
             ) : (
               <div className="flex h-full items-center justify-center rounded-xl bg-slate-900 text-slate-400">
                 Connecting to participants…
@@ -963,16 +1008,6 @@ function BulldogMeetingUI({ code }: { code: string }) {
               ))}
             </AnimatePresence>
           </div>
-
-          {strip.length > 0 && (
-            <div className="mt-3 grid shrink-0 grid-cols-2 gap-3 sm:grid-cols-4">
-              {strip.map((t, i) => (
-                <div key={`${t.participant?.identity}-${t.source}-${i}`} className="aspect-video">
-                  <StripTile trackRef={t} />
-                </div>
-              ))}
-            </div>
-          )}
         </main>
 
         <MeetingSidebar tab={sidebar} onClose={() => setSidebar(null)} participants={participants} localIdentity={localParticipant?.identity} code={code} meetingTitle={meetingData?.meeting?.title} />
@@ -1108,6 +1143,17 @@ function BulldogMeetingUI({ code }: { code: string }) {
 
           <BarBtn testid="bar-hand" active={handRaised} onClick={toggleHand} label="Raise hand">
             <Hand size={18} />
+          </BarBtn>
+          {/* Layout switcher (Phase 1.9.31) — speaker ↔ grid. The icon
+              flips so the button always shows what you'll get if you tap
+              it (LayoutGrid when in speaker, Rows3 when in grid). */}
+          <BarBtn
+            testid="bar-layout"
+            active={layout === "grid"}
+            onClick={toggleLayout}
+            label={layout === "grid" ? "Speaker view" : "Grid view"}
+          >
+            {layout === "grid" ? <Rows3 size={18} /> : <LayoutGrid size={18} />}
           </BarBtn>
           <BarBtn testid="bar-chat" active={sidebar === "chat"} onClick={() => openTab("chat")} label="Chat">
             <MessageSquare size={18} />
@@ -1253,8 +1299,8 @@ function QualityDot({ p }: { p?: Participant }) {
 }
 
 function TileChrome({
-  trackRef, large,
-}: { trackRef: TrackReferenceOrPlaceholder; large: boolean }) {
+  trackRef, large, fit,
+}: { trackRef: TrackReferenceOrPlaceholder; large: boolean; fit?: "cover" | "contain" }) {
   const p = trackRef.participant;
   const name = p?.name || p?.identity || "Guest";
   const micEnabled = p?.isMicrophoneEnabled ?? false;
@@ -1263,6 +1309,19 @@ function TileChrome({
   const speaking = p?.isSpeaking ?? false;
   const hasVideo =
     isTrackReference(trackRef) && !!trackRef.publication && !trackRef.publication.isMuted;
+  // Fit strategy:
+  //  • Screen shares MUST be `contain` — cropping app content is unusable.
+  //  • Featured camera tiles default to `contain` so the person is never
+  //    cropped out of frame when the tile aspect doesn't match the camera
+  //    aspect (the exact regression Josh reported on 2026-07-03 — the
+  //    featured tile stretched across a wide-short leftover container and
+  //    `object-cover` hid the speaker).
+  //  • Filmstrip/grid thumbnails default to `cover` so tile edges align
+  //    into a clean grid without letterbox bars everywhere.
+  const fitClass =
+    (fit ?? (isShare ? "contain" : large ? "contain" : "cover")) === "contain"
+      ? "object-contain"
+      : "object-cover";
 
   // Subscribe to the local-only "stage glow" toggle (Settings → Stage glow).
   // Stored in localStorage; we re-read on the bulldog:meet-prefs-changed
@@ -1284,7 +1343,7 @@ function TileChrome({
       {hasVideo ? (
         <VideoTrack
           trackRef={trackRef as any}
-          className="h-full w-full object-cover"
+          className={`h-full w-full ${fitClass}`}
         />
       ) : (
         <div className="absolute inset-0 flex items-center justify-center bg-slate-800">
@@ -1325,6 +1384,44 @@ function StageTile({ trackRef }: { trackRef: TrackReferenceOrPlaceholder }) {
 }
 function StripTile({ trackRef }: { trackRef: TrackReferenceOrPlaceholder }) {
   return <TileChrome trackRef={trackRef} large={false} />;
+}
+
+/**
+ * GridStage — equal-sized tiles laid out in a responsive grid so every
+ * participant is the same size. Chooses the column count by participant
+ * count (1 → 1 col, 2–4 → 2 cols, 5–9 → 3 cols, 10+ → 4 cols). Each
+ * tile keeps a 16:9 aspect so the video isn't distorted by uneven leftover
+ * space, and `object-cover` on the video keeps tile edges clean.
+ *
+ * Screen-share tiles inside the sorted array still get `object-contain`
+ * via TileChrome so app windows aren't cropped mid-grid.
+ */
+function GridStage({ tiles }: { tiles: TrackReferenceOrPlaceholder[] }) {
+  if (tiles.length === 0) {
+    return (
+      <div className="flex h-full items-center justify-center rounded-xl bg-slate-900 text-slate-400">
+        Connecting to participants…
+      </div>
+    );
+  }
+  const cols = tiles.length <= 1 ? 1 : tiles.length <= 4 ? 2 : tiles.length <= 9 ? 3 : 4;
+  return (
+    <div className="flex min-h-0 flex-1 items-center justify-center" data-testid="grid-stage">
+      <div
+        className="grid w-full max-w-6xl gap-2 sm:gap-3"
+        style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}
+      >
+        {tiles.map((t, i) => (
+          <div key={`${t.participant?.identity}-${t.source}-${i}`} className="aspect-video">
+            {/* Force `cover` fit in grid layout so tiles align cleanly.
+                (Featured/speaker tile still uses `contain` so the primary
+                speaker is never cropped.) */}
+            <TileChrome trackRef={t} large={false} fit={t.source === Track.Source.ScreenShare ? "contain" : "cover"} />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 const TABS: { id: SidebarTab; label: string }[] = [

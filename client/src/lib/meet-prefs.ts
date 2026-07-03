@@ -11,6 +11,16 @@
 
 const PREFS_KEY = "bulldog.meet.prefs";
 
+/**
+ * Stage layout choice.
+ *  - "speaker": one large focused tile + a filmstrip of the rest along the
+ *    bottom. This is Bulldog Meet's traditional look.
+ *  - "grid":    equal-sized tiles arranged in a responsive grid so every
+ *    participant is the same size. Preferred for small meetings where every
+ *    face matters equally (Zoom's default, Meet's "Tiles").
+ */
+export type MeetLayout = "speaker" | "grid";
+
 export interface MeetPrefs {
   /**
    * When true, render the soft top-to-bottom gradient overlay on every
@@ -22,10 +32,18 @@ export interface MeetPrefs {
    * this from the in-meeting Settings menu.
    */
   stageGlow: boolean;
+  /**
+   * Which stage layout the local user prefers. Defaults to "speaker" to
+   * match the pre-existing behavior; users can flip to "grid" from the
+   * new toolbar Grid button (Phase 1.9.31). Choice is per-device, not
+   * synced across the meeting.
+   */
+  layout: MeetLayout;
 }
 
 const DEFAULTS: MeetPrefs = {
   stageGlow: true,
+  layout: "speaker",
 };
 
 export function loadMeetPrefs(): MeetPrefs {
@@ -34,7 +52,9 @@ export function loadMeetPrefs(): MeetPrefs {
     if (raw) {
       const parsed = JSON.parse(raw) as Partial<MeetPrefs>;
       if (parsed && typeof parsed === "object") {
-        return { ...DEFAULTS, ...parsed };
+        // Sanitize layout (older prefs blobs may lack it or hold a stale value).
+        const layout: MeetLayout = parsed.layout === "grid" ? "grid" : "speaker";
+        return { ...DEFAULTS, ...parsed, layout };
       }
     }
   } catch {
