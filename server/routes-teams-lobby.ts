@@ -26,6 +26,8 @@
 import type { Express } from "express";
 import { requireAuth, type AuthedRequest } from "./auth";
 import { rawDb } from "./db";
+import { getMeetingByCode } from "./storage/meetings";
+import { ensureLobbyBypass } from "./teams/lobbyBypass";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -217,6 +219,36 @@ export function registerTeamsLobbyRoutes(app: Express): void {
       }
 
       return res.json({ emails: Array.from(emails) });
+    },
+  );
+
+  // ─── POST /api/teams/lobby/heal/:code ───────────────────────────────
+  //
+  // Manual re-verify + PATCH of the Teams onlineMeeting's lobby-bypass
+  // scope. Useful when Josh sees a lobby-stuck user in a running meeting
+  // and wants to force-heal it without waiting for the next attendee
+  // join (which auto-triggers ensureLobbyBypassAsync). Returns the
+  // observed scope so the caller can render a diagnostic banner.
+  //
+  // Auth: requireAuth (any authed member of the meeting's org). The
+  // heal itself is idempotent and cannot escalate access — it only
+  // asks Graph to make bypass MORE permissive, which the tenant policy
+  // can still veto.
+  app.post(
+    "/api/teams/lobby/heal/:code",
+    requireAuth,
+    async (req, res) => {
+      const authed = (req as unknown as AuthedRequest).user;
+      const meeting = getMeetingByCode(String(req.params.code));
+      if (!meeting) return res.status(404).json({ message: "Meeting not found" });
+      if (meeting.orgId !== authed.orgId) {
+        return res.status(403).json({ message: "Meeting belongs to another organization" });
+      }
+      if (!meeting.teamsMeetingId) {
+        return res.status(400).json({ message: "Meeting is not linked to a Teams online meeting" });
+      }
+      const result = await ensureLobbyBypass(meeting.teamsMeetingId);
+      return res.json(result);
     },
   );
 }

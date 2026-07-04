@@ -22,6 +22,7 @@ import {
   listBridgeParticipants,
 } from "./storage/meetings";
 import { createTeamsMeeting } from "./teams/createMeeting";
+import { ensureLobbyBypassAsync } from "./teams/lobbyBypass";
 import {
   bridgeAvailable,
   dispatchBridge,
@@ -90,6 +91,16 @@ function publicMeetingShape(m: Meeting) {
     // consent hasn't been granted. UI uses teamsJoinUrl to render a
     // "Copy Teams link" button next to "Copy invite link".
     teamsJoinUrl: m.teamsJoinUrl ?? null,
+    // Surface the Graph online-meeting id so the client (and the /join
+    // handler's self-heal path) can look up lobby settings without an
+    // extra round-trip. Null when the meeting was created before Teams
+    // interop was configured, or when createTeamsMeeting failed.
+    teamsMeetingId: m.teamsMeetingId ?? null,
+    // Backing Bulldog channel (nullable). Scheduled meetings created from
+    // a channel card carry the channel_id forward; ad-hoc /r/:code meetings
+    // don't have one. The in-meeting AI Clerk button needs a channelId to
+    // POST to /api/channels/:id/meeting-notes/start.
+    channelId: m.channelId ?? null,
     bridgeStatus: m.bridgeStatus ?? null,
     bridgeParticipantCount,
   };
@@ -510,6 +521,17 @@ export function registerMeetingRoutes(app: Express) {
     }
     if (!livekitConfigured()) {
       return res.status(503).json({ message: "Calling unavailable: LiveKit not configured" });
+    }
+
+    // Teams lobby self-heal: for any meeting with a linked Graph online
+    // meeting id, re-verify (and PATCH once if needed) that the
+    // lobbyBypassSettings scope is "everyone". This closes the gap for
+    // meetings created before PR #85 shipped verify-on-create, and for
+    // tenant-policy overrides that landed post-create. Fire-and-forget so
+    // Graph latency never blocks the join; internal in-memory cache dedupes
+    // repeated calls for the same meetingId within 60s.
+    if (meeting.teamsMeetingId) {
+      ensureLobbyBypassAsync(meeting.teamsMeetingId);
     }
 
     const parsed = joinBodySchema.safeParse(req.body ?? {});
