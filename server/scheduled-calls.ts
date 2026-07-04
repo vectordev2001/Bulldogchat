@@ -33,7 +33,13 @@ import { sendNotificationToUsers } from "./push";
 import { createTeamsMeeting } from "./teams/createMeeting";
 import { emitOpsNotifications } from "./notify-ops";
 import type { ScheduledCall, ScheduledCallInvitee, ScheduledCallSystemMessageMeta, RsvpResponse } from "@shared/schema";
-import { getMeetingById } from "./storage/meetings";
+import {
+  getMeetingById,
+  setMeetingTeamsLink,
+  setMeetingBridge,
+} from "./storage/meetings";
+import { bridgeAvailable, dispatchBridge } from "./bridge/client";
+import { mintLivekitBotToken } from "./livekit";
 
 const CHAT_BASE_URL = process.env.CHAT_BASE_URL || "https://chat.bulldogops.com";
 
@@ -242,6 +248,102 @@ function setTeamsMeeting(id: number, joinUrl: string, meetingId: string) {
   rawDb.prepare(
     "UPDATE scheduled_calls SET teams_join_url = ?, teams_meeting_id = ?, updated_at = ? WHERE id = ?",
   ).run(joinUrl, meetingId, now, id);
+  // Mirror into the linked unified-meetings row so downstream reads that go
+  // through the canonical meeting shape (routes-meetings, bridge dispatch,
+  // in-room UI) see the Teams metadata. Without this, `GET /api/meetings/:code`
+  // returns teamsJoinUrl:null even though the scheduled_calls row has it,
+  // and the bridge never gets dispatched for scheduled meetings.
+  const linkedMeetingId = rawDb
+    .prepare("SELECT meeting_id FROM scheduled_calls WHERE id = ?")
+    .get(id) as { meeting_id?: string | null } | undefined;
+  if (linkedMeetingId?.meeting_id) {
+    try {
+      setMeetingTeamsLink(linkedMeetingId.meeting_id, joinUrl, meetingId);
+    } catch (e) {
+      console.warn(
+        `[scheduled-calls] setMeetingTeamsLink failed for meeting=${linkedMeetingId.meeting_id}:`,
+        (e as Error).message,
+      );
+    }
+  }
+}
+
+/**
+ * Dispatch the Bulldog Bridge for a scheduled call, wiring the parallel
+ * Teams meeting into the LiveKit room so external Teams guests land in
+ * the same audio/video call as Bulldog users instead of being stranded in
+ * the Teams lobby.
+ *
+ * Fire-and-forget: any error is logged and the meeting continues in the
+ * two-parallel-rooms fallback shape. Mirrors the dispatch block in
+ * routes-meetings.ts:291 but keyed off the scheduled_call → meeting link.
+ */
+async function dispatchBridgeForScheduledCall(
+  call: ScheduledCall,
+  teamsJoinUrl: string,
+  teamsMeetingId: string,
+): Promise<void> {
+  if (!bridgeAvailable()) return;
+  const linkedMeetingRow = rawDb
+    .prepare("SELECT meeting_id FROM scheduled_calls WHERE id = ?")
+    .get(call.id) as { meeting_id?: string | null } | undefined;
+  const meetingId = linkedMeetingRow?.meeting_id;
+  if (!meetingId) {
+    console.warn(
+      `[scheduled-calls] bridge dispatch skipped: scheduled_call#${call.id} has no linked meeting row`,
+    );
+    return;
+  }
+  const meeting = getMeetingById(meetingId);
+  if (!meeting) {
+    console.warn(
+      `[scheduled-calls] bridge dispatch skipped: meeting=${meetingId} not found`,
+    );
+    return;
+  }
+  const livekitWsUrl = process.env.LIVEKIT_WS_URL ?? "";
+  const durationMinutes = Math.max(
+    60,
+    Math.ceil((call.endAt.getTime() - call.startAt.getTime()) / 60_000),
+  );
+  try {
+    const botToken = await mintLivekitBotToken({
+      identity: `bridge-${meeting.id}`,
+      name: "Bulldog Bridge (recording)",
+      roomName: meeting.livekitRoomName,
+      ttlMinutes: durationMinutes,
+    });
+    const result = await dispatchBridge({
+      meetingId: meeting.id,
+      teamsJoinUrl,
+      teamsMeetingId,
+      livekitRoom: meeting.livekitRoomName,
+      livekitToken: botToken,
+      livekitWsUrl,
+      organizerId: call.organizerId ? String(call.organizerId) : null,
+      options: {
+        audioMode: "duplex",
+        videoMode: "duplex",
+        screenShareMode: "duplex",
+        announceOnJoin: true,
+        maxDurationMinutes: durationMinutes,
+      },
+    });
+    if (result) {
+      setMeetingBridge(meeting.id, result.bridgeId, result.status);
+      console.log(
+        `[scheduled-calls] bridge dispatched call=${call.id} meeting=${meeting.id} bridgeId=${result.bridgeId} status=${result.status}`,
+      );
+    } else {
+      setMeetingBridge(meeting.id, null, "failed");
+    }
+  } catch (e) {
+    console.warn(
+      `[scheduled-calls] bridge dispatch threw for call=${call.id}:`,
+      (e as Error).message,
+    );
+    setMeetingBridge(meeting.id, null, "failed");
+  }
 }
 
 // Retry backoff schedule: attempts 1..5 wait 30s, 2m, 10m, 30m, 60m before
@@ -1486,6 +1588,11 @@ export function registerScheduledCallRoutes(app: Express) {
           setTeamsMeeting(call.id, teams.joinUrl, teams.meetingId);
           call.teamsJoinUrl = teams.joinUrl;
           call.teamsMeetingId = teams.meetingId;
+          // Dispatch the Bulldog Bridge in the background so an external
+          // Teams guest joining via `teams.joinUrl` is joined by a bridge
+          // bot that relays their audio/video into the LiveKit room. Fire-
+          // and-forget: dispatch failures fall back to two parallel rooms.
+          void dispatchBridgeForScheduledCall(call, teams.joinUrl, teams.meetingId);
         }
       } catch (e) {
         console.warn("[scheduled-calls] teams meeting create error:", e);
