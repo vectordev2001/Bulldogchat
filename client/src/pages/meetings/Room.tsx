@@ -46,6 +46,7 @@ import { MeetSettingsModal } from "@/components/call/MeetSettingsModal";
 import { DeviceSelector } from "@/components/call/DeviceSelector";
 import { SharingFloatingBar, type SharingAnnotationTool } from "@/components/call/SharingFloatingBar";
 import { InviteToMeetingDialog } from "@/components/call/InviteToMeetingDialog";
+import { MeetingClerkButton } from "@/components/MeetingClerkButton";
 import { ScreenShareAnnotator, annotationsSupported } from "@/lib/screen-share-annotator";
 import { blurSupported, loadDevicePrefs, saveDevicePrefs, type DevicePrefs } from "@/lib/meet-devices";
 import { loadMeetPrefs, saveMeetPrefs, MEET_PREFS_EVENT, emitMeetPrefsChanged, type MeetPrefs, type MeetLayout } from "@/lib/meet-prefs";
@@ -554,7 +555,18 @@ function BulldogMeetingUI({ code }: { code: string }) {
 
   // ── Host lobby (server-side waiting room) ──
   const { user: authedUser } = useAuth();
-  const { data: meetingData } = useQuery<{ meeting: { waitingRoom: boolean; title?: string } }>({
+  // Meeting metadata (public shape). Includes channelId (for the AI Clerk
+  // button when the meeting is tied to a channel) and Teams interop fields
+  // so the sidebar can render the correct notes UI and lobby hint.
+  const { data: meetingData } = useQuery<{
+    meeting: {
+      waitingRoom: boolean;
+      title?: string;
+      channelId?: number | null;
+      teamsMeetingId?: string | null;
+      teamsJoinUrl?: string | null;
+    };
+  }>({
     queryKey: ["/api/meetings", code],
     enabled: !!code,
   });
@@ -1010,7 +1022,17 @@ function BulldogMeetingUI({ code }: { code: string }) {
           </div>
         </main>
 
-        <MeetingSidebar tab={sidebar} onClose={() => setSidebar(null)} participants={participants} localIdentity={localParticipant?.identity} code={code} meetingTitle={meetingData?.meeting?.title} />
+        <MeetingSidebar
+          tab={sidebar}
+          setTab={setSidebar}
+          onClose={() => setSidebar(null)}
+          participants={participants}
+          localIdentity={localParticipant?.identity}
+          code={code}
+          meetingTitle={meetingData?.meeting?.title}
+          channelId={meetingData?.meeting?.channelId ?? null}
+          roomName={room?.name}
+        />
       </div>
 
       {/* BOTTOM CONTROL BAR */}
@@ -1431,14 +1453,17 @@ const TABS: { id: SidebarTab; label: string }[] = [
 ];
 
 function MeetingSidebar({
-  tab, onClose, participants, localIdentity, code, meetingTitle,
+  tab, setTab, onClose, participants, localIdentity, code, meetingTitle, channelId, roomName,
 }: {
   tab: SidebarTab | null;
+  setTab: (tab: SidebarTab | null) => void;
   onClose: () => void;
   participants: Participant[];
   localIdentity?: string;
   code: string;
   meetingTitle?: string;
+  channelId?: number | null;
+  roomName?: string;
 }) {
   return (
     <AnimatePresence>
@@ -1453,15 +1478,21 @@ function MeetingSidebar({
         >
           <div className="flex shrink-0 items-center justify-between border-b border-border px-2">
             <div className="flex">
+              {/* Tab labels are now real buttons (Phase 1.9.31 UI polish):
+                  clicking "Chat", "Participants", or "Transcript" jumps to
+                  that section instead of forcing users back to the bottom
+                  toolbar. */}
               {TABS.map((t) => (
-                <span
+                <button
                   key={t.id}
+                  type="button"
                   data-testid={`tab-${t.id}`}
-                  className={`relative px-3 py-3 text-sm font-medium ${tab === t.id ? "text-foreground" : "text-muted-foreground"}`}
+                  onClick={() => setTab(t.id)}
+                  className={`relative rounded-md px-3 py-3 text-sm font-medium transition-colors hover-elevate ${tab === t.id ? "text-foreground" : "text-muted-foreground hover:text-foreground"}`}
                 >
                   {t.label}
                   {tab === t.id && <span className="absolute inset-x-2 bottom-0 h-0.5 rounded-full bg-primary" />}
-                </span>
+                </button>
               ))}
             </div>
             <button
@@ -1477,7 +1508,9 @@ function MeetingSidebar({
           <div className="min-h-0 flex-1">
             {tab === "chat" && <ChatTab localIdentity={localIdentity} />}
             {tab === "participants" && <ParticipantsTab participants={participants} localIdentity={localIdentity} code={code} meetingTitle={meetingTitle} />}
-            {tab === "transcript" && <TranscriptTab />}
+            {tab === "transcript" && (
+              <TranscriptTab channelId={channelId ?? null} roomName={roomName} />
+            )}
           </div>
         </motion.aside>
       )}
@@ -1609,7 +1642,54 @@ function ParticipantsTab({ participants, localIdentity, code, meetingTitle }: { 
   );
 }
 
-function TranscriptTab() {
+/**
+ * TranscriptTab — sidebar Transcript / AI-notes panel.
+ *
+ * When the meeting is tied to a Bulldog channel (channelId != null), we
+ * mount MeetingClerkButton so users can start / stop the AI clerk from
+ * inside the meeting. Clerk records the mic, transcribes via Deepgram,
+ * summarizes via Anthropic, and posts the summary back to the channel
+ * (and emails it to selected recipients) when it stops.
+ *
+ * For ad-hoc /r/:code meetings without a channelId, we keep the
+ * legacy placeholder — there's no channel to file notes back to.
+ */
+function TranscriptTab({ channelId, roomName }: { channelId: number | null; roomName?: string }) {
+  const { user: authedUser } = useAuth();
+  if (channelId != null) {
+    return (
+      <div className="flex h-full flex-col gap-4 overflow-y-auto p-4" data-testid="transcript-clerk">
+        <div className="flex items-center gap-3">
+          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-accent text-primary">
+            <Sparkles size={20} />
+          </div>
+          <div className="flex-1">
+            <h3 className="font-display text-base font-semibold">AI Meeting Clerk</h3>
+            <p className="text-xs text-muted-foreground">
+              Records the mic, transcribes, and posts a summary to the channel + emails
+              selected recipients when you stop.
+            </p>
+          </div>
+        </div>
+        {/* MeetingClerkButton is self-contained: it queries current active
+            notes, shows Start / Stop state, and pops the recipient picker
+            when the note is ready. `canControl` is gated to authed users
+            because Clerk needs a channel-member identity to attribute
+            the note run. Server enforces channel permissions on start. */}
+        <MeetingClerkButton
+          channelId={channelId}
+          canControl={!!authedUser}
+          roomName={roomName}
+          compact={false}
+        />
+        {!authedUser && (
+          <p className="text-xs text-muted-foreground">
+            Sign in to start the AI clerk.
+          </p>
+        )}
+      </div>
+    );
+  }
   return (
     <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center" data-testid="transcript-empty">
       <div className="flex h-12 w-12 items-center justify-center rounded-full bg-accent text-primary">
@@ -1617,8 +1697,8 @@ function TranscriptTab() {
       </div>
       <h3 className="font-display text-base font-semibold">AI notes coming soon</h3>
       <p className="text-sm text-muted-foreground">
-        Live transcript &amp; meeting summary will appear here. A summary is emailed to recipients
-        when the meeting ends.
+        Live transcript &amp; meeting summary will appear here. This meeting isn't linked to
+        a channel, so summaries aren't filed automatically.
       </p>
     </div>
   );

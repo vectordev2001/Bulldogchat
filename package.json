@@ -10,6 +10,7 @@
     "check": "tsc",
     "test": "tsx --test server/routes-attachments.test.ts",
     "smoke:scheduled-invites": "tsx scripts/smoke-scheduled-invites.ts",
+    "smoke:teams-lobby-bypass": "tsx scripts/smoke-teams-lobby-bypass.ts",
     "db:push": "drizzle-kit push"
   },
   "dependencies": {
