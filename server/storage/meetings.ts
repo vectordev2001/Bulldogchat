@@ -206,6 +206,20 @@ export function recordBridgeEvent(
 }
 
 /**
+ * Look up a meeting by the durable bridgeId returned by the signaling plane
+ * at dispatch time. Used by the bridge-events webhook when the bridge can't
+ * echo back Chat's meetingId (e.g. failure before the media worker returned
+ * a Graph call id).
+ */
+export function getMeetingByBridgeId(bridgeId: string): Meeting | undefined {
+  return db
+    .select()
+    .from(meetings)
+    .where(eq(meetings.bridgeId, bridgeId))
+    .get();
+}
+
+/**
  * Upsert a Teams participant the bridge is forwarding into LiveKit.
  * Idempotent on (meetingId, teamsParticipantId).
  */
