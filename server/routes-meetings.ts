@@ -17,6 +17,7 @@ import {
   setMeetingTeamsLink,
   setMeetingBridge,
   recordBridgeEvent,
+  getMeetingByBridgeId,
   upsertBridgeParticipant,
   markBridgeParticipantLeft,
   listBridgeParticipants,
@@ -959,9 +960,25 @@ export function registerMeetingRoutes(app: Express) {
       timestamp?: string | number;
       data?: { teamsParticipantId?: string; displayName?: string } | null;
     };
-    const { meetingId, event, timestamp, data } = body;
-    if (!meetingId || !event) {
+    const { bridgeId, event, timestamp, data } = body;
+    if (!event) {
       return res.status(400).json({ message: "Bad payload" });
+    }
+    // meetingId is the primary key, but the bridge may send an empty string on
+    // early failures (before the media worker returns a Graph call id). In that
+    // case fall back to the durable bridgeId that was set at dispatch time.
+    let meetingId = body.meetingId;
+    if (!meetingId && bridgeId) {
+      const row = getMeetingByBridgeId(bridgeId);
+      meetingId = row?.id;
+    }
+    if (!meetingId) {
+      console.warn(
+        `[bridge-events] cannot resolve meetingId for bridgeId=${bridgeId ?? "?"} event=${event}`,
+      );
+      // Ack with 202 so the bridge doesn't loop retrying — nothing we can do
+      // with an event we can't attribute to a meeting.
+      return res.status(202).json({ ok: false, reason: "no-meeting" });
     }
     const eventAt = (() => {
       if (!timestamp) return new Date();
