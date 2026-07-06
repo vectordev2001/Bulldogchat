@@ -159,6 +159,10 @@ function createScheduledCallRow(input: CreateInput): ScheduledCall {
       title: call.title,
       status: "scheduled",
       scheduledStartAt: call.startAt,
+      // MVP: Bulldog Meet is the only provider — guests (external attendees)
+      // must be able to join via the invite link without a Bulldog account.
+      // Waiting room stays on by default so the host controls admission.
+      allowGuests: true,
     });
     linkExistingCallToMeeting("scheduled_calls", call.id, meeting.id);
   } catch (e) {
