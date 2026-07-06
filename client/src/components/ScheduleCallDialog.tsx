@@ -47,7 +47,15 @@ export function ScheduleCallDialog({
   const [title, setTitle] = useState(defaultTitle ?? "");
   const [notes, setNotes] = useState("");
   const [kind, setKind] = useState<"voice" | "video">("video");
-  const [provider, setProvider] = useState<"bulldog" | "both" | "teams">("both");
+  // MVP scope decision (2026-07-06): default provider is "bulldog". The Teams
+  // bridging feature is parked until the MediaWorker media plane is finished;
+  // the UI selector is gated on VITE_TEAMS_BRIDGING_ENABLED so we can flip it
+  // back on without a code change. Server also enforces this via
+  // TEAMS_BRIDGING_ENABLED regardless of what the client submits.
+  const teamsBridgingEnabled =
+    String((import.meta as any)?.env?.VITE_TEAMS_BRIDGING_ENABLED ?? "false").toLowerCase() ===
+    "true";
+  const [provider, setProvider] = useState<"bulldog" | "both" | "teams">("bulldog");
   const [startLocal, setStartLocal] = useState<string>("");
   const [durationMin, setDurationMin] = useState<number>(defaultDurationMin ?? 30);
   const [channelId, setChannelId] = useState<number | null>(defaultChannelId ?? null);
@@ -259,49 +267,63 @@ export function ScheduleCallDialog({
               <div className="text-[10px] uppercase tracking-wider text-white/50 mb-1.5 font-semibold">
                 Video provider
               </div>
-              <div className="flex gap-1.5">
-                <button
-                  type="button"
-                  onClick={() => setProvider("bulldog")}
-                  className={`flex-1 px-3 py-2 rounded-md border text-[12px] font-semibold transition-colors ${
-                    provider === "bulldog"
-                      ? "bg-vs-blue/30 border-vs-blue text-white"
-                      : "bg-white/5 border-white/15 text-white/70 hover:bg-white/10"
-                  }`}
-                  data-testid="button-provider-bulldog"
+              {teamsBridgingEnabled ? (
+                <>
+                  <div className="flex gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setProvider("bulldog")}
+                      className={`flex-1 px-3 py-2 rounded-md border text-[12px] font-semibold transition-colors ${
+                        provider === "bulldog"
+                          ? "bg-vs-blue/30 border-vs-blue text-white"
+                          : "bg-white/5 border-white/15 text-white/70 hover:bg-white/10"
+                      }`}
+                      data-testid="button-provider-bulldog"
+                    >
+                      Bulldog only
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setProvider("both")}
+                      className={`flex-1 px-3 py-2 rounded-md border text-[12px] font-semibold transition-colors ${
+                        provider === "both"
+                          ? "bg-vs-blue/30 border-vs-blue text-white"
+                          : "bg-white/5 border-white/15 text-white/70 hover:bg-white/10"
+                      }`}
+                      data-testid="button-provider-both"
+                    >
+                      Both
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setProvider("teams")}
+                      className={`flex-1 px-3 py-2 rounded-md border text-[12px] font-semibold transition-colors ${
+                        provider === "teams"
+                          ? "bg-[#5b5fc7]/30 border-[#5b5fc7] text-white"
+                          : "bg-white/5 border-white/15 text-white/70 hover:bg-white/10"
+                      }`}
+                      data-testid="button-provider-teams"
+                    >
+                      Teams
+                    </button>
+                  </div>
+                  <div className="text-[10px] text-white/40 mt-1">
+                    {provider === "bulldog" && "Bulldog Meet only — no external links."}
+                    {provider === "both" && "Bulldog Meet + parallel Microsoft Teams link."}
+                    {provider === "teams" && "Primary: Microsoft Teams. Bulldog link still available as fallback."}
+                  </div>
+                </>
+              ) : (
+                <div
+                  className="px-3 py-2 rounded-md border border-white/15 bg-white/5 text-[12px] text-white/80"
+                  data-testid="provider-bulldog-only-lockedscope"
                 >
-                  Bulldog only
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setProvider("both")}
-                  className={`flex-1 px-3 py-2 rounded-md border text-[12px] font-semibold transition-colors ${
-                    provider === "both"
-                      ? "bg-vs-blue/30 border-vs-blue text-white"
-                      : "bg-white/5 border-white/15 text-white/70 hover:bg-white/10"
-                  }`}
-                  data-testid="button-provider-both"
-                >
-                  Both
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setProvider("teams")}
-                  className={`flex-1 px-3 py-2 rounded-md border text-[12px] font-semibold transition-colors ${
-                    provider === "teams"
-                      ? "bg-[#5b5fc7]/30 border-[#5b5fc7] text-white"
-                      : "bg-white/5 border-white/15 text-white/70 hover:bg-white/10"
-                  }`}
-                  data-testid="button-provider-teams"
-                >
-                  Teams
-                </button>
-              </div>
-              <div className="text-[10px] text-white/40 mt-1">
-                {provider === "bulldog" && "Bulldog Meet only — no external links."}
-                {provider === "both" && "Bulldog Meet + parallel Microsoft Teams link."}
-                {provider === "teams" && "Primary: Microsoft Teams. Bulldog link still available as fallback."}
-              </div>
+                  Bulldog Meet
+                  <div className="text-[10px] text-white/40 mt-1">
+                    One link. Works in any browser. No install, no account required for guests.
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
