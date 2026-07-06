@@ -1522,10 +1522,20 @@ export function registerScheduledCallRoutes(app: Express) {
     }
 
     const kind = body.kind === "voice" ? "voice" : "video";
-    const provider: "bulldog" | "both" | "teams" =
+    // MVP scope decision (2026-07-06): Bulldog Meet only. The Teams bridging
+    // feature is parked until the MediaWorker media plane is finished. Any
+    // non-"bulldog" provider from the client is coerced back to "bulldog"
+    // unless TEAMS_BRIDGING_ENABLED is explicitly set. See
+    // memory/knowledge/projects/bulldog-meeting-bridge.md.
+    const teamsBridgingEnabled =
+      String(process.env.TEAMS_BRIDGING_ENABLED ?? "false").toLowerCase() === "true";
+    const rawProvider: "bulldog" | "both" | "teams" =
       body.provider === "bulldog" || body.provider === "teams" || body.provider === "both"
         ? body.provider
-        : "both";
+        : "bulldog";
+    const provider: "bulldog" | "both" | "teams" = teamsBridgingEnabled
+      ? rawProvider
+      : "bulldog";
     const userIds = Array.isArray(body.userIds)
       ? Array.from(new Set((body.userIds as unknown[]).map((x) => Number(x)).filter((n) => Number.isFinite(n) && n > 0)))
       : [];
@@ -1574,7 +1584,9 @@ export function registerScheduledCallRoutes(app: Express) {
     // continue with the Bulldog-only flow — scheduling must never fail because
     // Teams is unavailable. We do this before dispatch so the link is present
     // in the very first invite email.
-    if (call.provider !== "bulldog") {
+    // Teams bridging is opt-in via TEAMS_BRIDGING_ENABLED (see above). When
+    // disabled, provider is coerced to "bulldog" so this block never fires.
+    if (teamsBridgingEnabled && call.provider !== "bulldog") {
       try {
         // Organizer resolution (GUID > email > admin@bulldogops.com default)
         // lives entirely in createTeamsMeeting via MS_GRAPH_DEFAULT_ORGANIZER_ID
