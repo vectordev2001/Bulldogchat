@@ -224,7 +224,10 @@ export function registerMeetingRoutes(app: Express) {
       title: body.title ?? null,
       hostUserId: u.id,
       channelId: body.channelId ?? null,
-      allowGuests: body.allowGuests,
+      // MVP: default guests to allowed so external attendees can join via
+      // the /m/:code invite link without a Bulldog account. Callers can
+      // still opt out by passing allowGuests:false explicitly.
+      allowGuests: body.allowGuests ?? true,
       waitingRoom: body.waitingRoom,
       recordingEnabled: body.recordingEnabled,
       transcriptEnabled: body.transcriptEnabled,
@@ -259,9 +262,14 @@ export function registerMeetingRoutes(app: Express) {
     // delay the meeting-create response. The bridge is dispatched in the
     // background; the client polls /api/meetings/:code for bridgeStatus
     // updates if it cares.
+    // MVP scope decision (2026-07-06): only mint a Teams onlineMeeting when
+    // TEAMS_BRIDGING_ENABLED is explicitly on. Default (flag off) is
+    // Bulldog Meet only — guests join via /m/:code with no account required.
+    const teamsBridgingEnabled =
+      String(process.env.TEAMS_BRIDGING_ENABLED ?? "false").toLowerCase() === "true";
     let teamsJoinUrl: string | null = null;
     let teamsMeetingId: string | null = null;
-    try {
+    if (teamsBridgingEnabled) try {
       const startUtc = meeting.scheduledStartAt ?? new Date();
       const endUtc = new Date(
         startUtc.getTime() + (meeting.maxDurationMinutes ?? 240) * 60_000,
