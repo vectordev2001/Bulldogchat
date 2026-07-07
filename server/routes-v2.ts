@@ -88,16 +88,28 @@ async function handleUpload(req: Request, res: Response, shape: "array" | "objec
     let height: number | null = null;
     if (f.mimetype.startsWith("image/")) {
       try {
-        const pipeline = sharp(f.buffer).rotate();
-        const meta = await pipeline.metadata();
-        // metadata() reads dimensions pre-rotation; after .rotate() the
-        // EXIF orientation is baked in, so swap when orientation is sideways.
+        // Read dimensions without applying .rotate() so we can gate GIF
+        // handling on the raw metadata (rotate() would silently pick the
+        // first frame and normalize animation state away).
+        const meta = await sharp(f.buffer).metadata();
         const sideways = (meta.orientation ?? 1) >= 5;
         width = (sideways ? meta.height : meta.width) ?? null;
         height = (sideways ? meta.width : meta.height) ?? null;
-        const thumbBuf = await sharp(f.buffer).rotate().resize(480, 480, { fit: "inside", withoutEnlargement: true }).webp({ quality: 80 }).toBuffer();
-        thumbnailKey = `${storageKey}.thumb.webp`;
-        await backend.upload(thumbBuf, thumbnailKey, "image/webp");
+
+        // GIF special case: animated GIFs must render as GIFs, not as a
+        // WebP still-frame thumbnail. Previously the client preferred the
+        // thumbnail over the original, so uploaded GIFs displayed as a
+        // frozen first-frame image (user-reported as "shows up as a PNG").
+        // We skip thumbnail generation entirely for GIFs so the client
+        // falls through to the original url and the browser plays the
+        // animation natively. GIFs are already size-bounded (25 MB per
+        // file) so serving the original is fine.
+        const isGif = f.mimetype === "image/gif" || (meta.format === "gif");
+        if (!isGif) {
+          const thumbBuf = await sharp(f.buffer).rotate().resize(480, 480, { fit: "inside", withoutEnlargement: true }).webp({ quality: 80 }).toBuffer();
+          thumbnailKey = `${storageKey}.thumb.webp`;
+          await backend.upload(thumbBuf, thumbnailKey, "image/webp");
+        }
       } catch (err) {
         console.warn("[uploads] thumbnail/metadata failed:", err);
       }

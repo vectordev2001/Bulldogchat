@@ -116,6 +116,18 @@ export interface CallEventPayload {
   callerHue: number;
   kind: "voice" | "video";
   roomName: string;
+  /**
+   * Channel context for the ringing UI. When the call originates from a
+   * text/voice channel (group call, huddle, add-to-active), we ship the
+   * channelId + channelName so the callee's incoming modal can show
+   * "Josh · from #general" and, on accept, the ActiveCallSession has the
+   * channelId ready — the MeetingClerk (records to channel) and in-call
+   * chat panel key off ActiveCallSession.channelId. 1:1 calls not tied to
+   * a channel leave both fields null/undefined and the modal falls back
+   * to the legacy "is calling you" copy.
+   */
+  channelId?: number | null;
+  channelName?: string | null;
 }
 
 function emitToUser(userId: number, event: string, data: unknown) {
