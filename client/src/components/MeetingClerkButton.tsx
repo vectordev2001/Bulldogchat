@@ -28,6 +28,16 @@ interface Props {
    * the in-call top toolbar buttons. Defaults to false (the original pill).
    */
   compact?: boolean;
+  /**
+   * When true, show a 5-second cancelable consent banner over the button on
+   * mount. If the countdown reaches zero without the user hitting Cancel,
+   * we call startMutation.mutate() so the clerk begins recording on its own.
+   * Set by CallOverlays when the caller starts a channel call (channelId +
+   * iAmCaller) so the AI clerk auto-opts-in for channel meetings unless the
+   * caller explicitly opts out. No-op if a clerk note is already running
+   * (activeFromServer) so we never race an in-progress recording.
+   */
+  autoStart?: boolean;
 }
 
 interface ClerkConfig {
@@ -59,7 +69,7 @@ interface NoteRow {
   } | null;
 }
 
-export function MeetingClerkButton({ channelId, canControl, roomName, compact }: Props) {
+export function MeetingClerkButton({ channelId, canControl, roomName, compact, autoStart }: Props) {
   const { user } = useAuth();
   const [error, setError] = useState<string | null>(null);
   const [activeNoteId, setActiveNoteId] = useState<number | null>(null);
@@ -262,6 +272,50 @@ export function MeetingClerkButton({ channelId, canControl, roomName, compact }:
     return () => stopLocalCapture();
   }, [stopLocalCapture]);
 
+  // ─── Auto-start consent (channel calls only) ───
+  // When `autoStart` is set (see prop docs), tick down 5 seconds and then
+  // fire startMutation. The banner is cancelable during those 5 seconds. We
+  // treat a manual Start click, an already-running clerk note, or an
+  // in-flight mutation as "user is engaged" and skip auto-start entirely so
+  // we never double-fire. autoStart is expected to flip false when the
+  // caller cancels; the effect cleans up its timer on any dep change.
+  const [autoCountdown, setAutoCountdown] = useState<number | null>(null);
+  const autoDismissedRef = useRef(false);
+  useEffect(() => {
+    // Reset dismissal when the caller re-arms auto-start (e.g. next call).
+    if (!autoStart) {
+      autoDismissedRef.current = false;
+      setAutoCountdown(null);
+      return;
+    }
+    if (autoDismissedRef.current) return;
+    if (activeFromServer) return; // clerk already running
+    if (startMutation.isPending) return;
+    if (!canControl) return;
+    setAutoCountdown(5);
+    const iv = window.setInterval(() => {
+      setAutoCountdown(prev => {
+        if (prev == null) return prev;
+        if (prev <= 1) {
+          window.clearInterval(iv);
+          // Fire on the next tick to avoid setState-during-render warnings
+          // if the mutation resolves synchronously in a test env.
+          window.setTimeout(() => {
+            if (!autoDismissedRef.current) startMutation.mutate();
+          }, 0);
+          return null;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => window.clearInterval(iv);
+  }, [autoStart, activeFromServer, startMutation.isPending, canControl, startMutation]);
+
+  const cancelAutoStart = useCallback(() => {
+    autoDismissedRef.current = true;
+    setAutoCountdown(null);
+  }, []);
+
   const isRecording = !!activeNoteId && activeFromServer?.status === "recording";
   const isProcessing = !!activeFromServer && ["transcribing", "summarizing", "rendering", "uploading"].includes(activeFromServer.status);
 
@@ -333,6 +387,24 @@ export function MeetingClerkButton({ channelId, canControl, roomName, compact }:
       );
     }
     if (canControl) {
+      // 5-second auto-start countdown (channel call, host). Cancel bails
+      // out of the auto-start; if the countdown reaches zero, the effect
+      // above fires startMutation and this branch will re-render as the
+      // recording state on the next poll.
+      if (autoCountdown != null) {
+        return (
+          <button
+            type="button"
+            onClick={cancelAutoStart}
+            className={`${baseClass} bg-vs-red/15 border border-vs-red/40 text-[hsl(var(--vs-accent))] hover:bg-vs-red/25`}
+            title={`Recording starts in ${autoCountdown}s — tap to cancel`}
+            data-testid="button-cancel-clerk-autostart"
+          >
+            <Bot className="w-5 h-5" />
+            <span className="text-[10px] font-medium">Rec in {autoCountdown}s</span>
+          </button>
+        );
+      }
       return (
         <>
           <button
