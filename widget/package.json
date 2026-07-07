@@ -1,7 +1,6 @@
 {
   "name": "@bulldog/chat-widget",
   "version": "0.1.0",
-  "private": true,
   "description": "Cross-app floating mini-chat widget for Bulldog Contracts/Ops. Mounts a collapsed pill that expands into a DM/channel panel backed by the same Bulldogchat API + SSE stream.",
   "type": "module",
   "main": "dist/index.cjs",
