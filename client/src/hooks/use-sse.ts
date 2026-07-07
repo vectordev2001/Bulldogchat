@@ -9,6 +9,10 @@ interface Handlers {
   onMessageDelete?: (data: any) => void;
   onReactionChange?: (data: any) => void;
   onChannelDelete?: (data: any) => void;
+  // Titled Chats (Phase 2.5): fired when a DM's title changes or a new
+  // titled DM is created, so any member's sidebar can invalidate ["/api/dms"].
+  onDmUpdated?: (data: any) => void;
+  onDmCreated?: (data: any) => void;
   // Fired after the EventSource is (re)opened following a visibility-driven
   // reconnect. Lets the consumer refetch anything that may have changed while
   // the stream was down (e.g. invalidate the active channel's messages so a
@@ -68,6 +72,12 @@ export function useSSE(enabled: boolean, handlers: Handlers): SSEStatus {
       });
       es.addEventListener("channel:delete", (e: MessageEvent) => {
         try { handlersRef.current.onChannelDelete?.(JSON.parse(e.data)); } catch {}
+      });
+      es.addEventListener("dm:updated", (e: MessageEvent) => {
+        try { handlersRef.current.onDmUpdated?.(JSON.parse(e.data)); } catch {}
+      });
+      es.addEventListener("dm:created", (e: MessageEvent) => {
+        try { handlersRef.current.onDmCreated?.(JSON.parse(e.data)); } catch {}
       });
 
       // Presence broadcasts (Phase 1.9). Re-emit as a window CustomEvent so any

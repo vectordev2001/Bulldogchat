@@ -77,6 +77,10 @@ export interface ApiChannel {
   scope?: ChannelScope;
   entityId?: string | null;
   teamRole?: UserRole | null;
+  // Titled Chats (Phase 2.5) — user-facing custom title for a DM channel.
+  // Null/undefined on a scope='dm' channel means the UI derives the label
+  // from the participant name list instead.
+  title?: string | null;
   // Phase 1.9.3 — attached contract metadata, when present.
   linkedContract?: ApiLinkedContract | null;
   createdAt: string;

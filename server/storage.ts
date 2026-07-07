@@ -102,6 +102,8 @@ export interface IStorage {
   listDmChannelsForUser(userId: number): Channel[];
   findDmChannelByMemberSet(memberIds: number[]): Channel | undefined;
   createDmChannel(input: { projectId: number; memberIds: number[]; createdByUserId: number }): Channel;
+  createTitledDmChannel(input: { projectId: number; memberIds: number[]; createdByUserId: number; title: string }): Channel;
+  setDmChannelTitle(channelId: number, title: string | null): Channel | undefined;
 
   /* Messages */
   listMessages(channelId: number, opts?: { before?: number; limit?: number }): Message[];
@@ -491,6 +493,38 @@ class DatabaseStorage implements IStorage {
     } as any).returning().get();
     this.addChannelMembers(ch.id, allMembers);
     return ch;
+  }
+
+  // Titled Chats (Phase 2.5) — always creates a NEW dm-scope channel, even
+  // if a DM with this exact member set already exists. This is what makes
+  // it distinct from createDmChannel/POST /api/dms: titled chats are
+  // topic-based, not participant-based, so multiple titled threads between
+  // the same people are allowed side-by-side.
+  createTitledDmChannel(input: { projectId: number; memberIds: number[]; createdByUserId: number; title: string }) {
+    const allMembers = Array.from(new Set([input.createdByUserId, ...input.memberIds]));
+    const internalName = `dm-${allMembers.sort((a, b) => a - b).join("-")}-${Date.now().toString(36)}`;
+    const ch = db.insert(channels).values({
+      projectId: input.projectId,
+      name: internalName,
+      type: "text",
+      topic: null,
+      position: 0,
+      scope: "dm",
+      entityId: null,
+      teamRole: null,
+      workObjectId: null,
+      title: input.title,
+      createdAt: new Date(),
+    } as any).returning().get();
+    this.addChannelMembers(ch.id, allMembers);
+    return ch;
+  }
+
+  // Titled Chats (Phase 2.5) — set or clear (pass null) a DM channel's
+  // user-facing title. Returns the updated channel row, or undefined if the
+  // channel doesn't exist.
+  setDmChannelTitle(channelId: number, title: string | null) {
+    return db.update(channels).set({ title }).where(eq(channels.id, channelId)).returning().get();
   }
 
   /* Messages */

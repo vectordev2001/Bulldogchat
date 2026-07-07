@@ -1,0 +1,48 @@
+{
+  "name": "@bulldog/chat-widget",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Cross-app floating mini-chat widget for Bulldog Contracts/Ops. Mounts a collapsed pill that expands into a DM/channel panel backed by the same Bulldogchat API + SSE stream.",
+  "type": "module",
+  "main": "dist/index.cjs",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./dist/style.css": "./dist/style.css"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup && npm run build:css",
+    "build:css": "tailwindcss -i ./src/styles.css -o ./dist/style.css --minify",
+    "dev": "tsup --watch",
+    "check": "tsc --noEmit",
+    "test": "tsx --test --test-force-exit src/BulldogChatWidget.test.ts"
+  },
+  "peerDependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "dependencies": {
+    "zustand": "^4.5.5"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.11",
+    "@types/react-dom": "^18.3.1",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.4.47",
+    "tailwindcss": "^3.4.13",
+    "tsup": "^8.3.0",
+    "tsx": "^4.19.1",
+    "typescript": "5.6.3"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  }
+}

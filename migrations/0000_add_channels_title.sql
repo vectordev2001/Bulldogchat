@@ -1,0 +1,12 @@
+-- Titled Chats (Phase 2.5)
+-- Adds a user-facing custom title column to `channels`. NULL on a
+-- scope='dm' channel means the UI derives the label from the participant
+-- name list (existing behavior). When set, the UI uses the title instead.
+--
+-- Note: this repo's production boot path applies schema changes via the
+-- idempotent guarded-ALTER runner in `server/migrate.ts` (see "v35"), which
+-- is safe to run repeatedly against an existing on-disk SQLite file. This
+-- drizzle-kit migration file is kept in sync with that change for teams
+-- that run `drizzle-kit migrate` / `db:push` directly against a fresh
+-- database instead of booting the server.
+ALTER TABLE `channels` ADD COLUMN `title` text;

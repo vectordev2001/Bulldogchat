@@ -165,6 +165,11 @@ export const channels = sqliteTable("channels", {
   scope: text("scope", { enum: channelScopes }).notNull().default("global"),
   entityId: text("entity_id"),
   teamRole: text("team_role", { enum: userRoles }),
+  // Titled chats (Phase 2.5). User-facing custom title for a DM channel.
+  // NULL on a scope='dm' channel means the UI derives the label from the
+  // participant name list (existing behavior). When set, the UI shows this
+  // instead. Max 80 chars, enforced at the API layer.
+  title: text("title"),
   // Phase 1.9.3 — contract linkage. When a channel is created from a
   // contract (or has one attached later), we cache its identity so chat
   // can render the contract banner + in-call "View contract" panel

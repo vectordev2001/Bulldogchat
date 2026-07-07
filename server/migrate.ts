@@ -1397,4 +1397,17 @@ export function runMigrations() {
   } catch (e: any) {
     console.warn("[migrate v34] invite retry columns skipped:", e?.message);
   }
+
+  // v35 (Titled Chats) — add channels.title. User-facing custom title for a
+  // DM channel. NULL means the UI falls back to the participant-name-list
+  // label. Idempotent guarded ALTER, same pattern as v16/v18/v34 above.
+  try {
+    const chCols = rawDb.prepare(`PRAGMA table_info(channels)`).all() as Array<{ name: string }>;
+    if (!chCols.find((c) => c.name === "title")) {
+      rawDb.exec(`ALTER TABLE channels ADD COLUMN title TEXT;`);
+      console.log("[migrate] v35 added channels.title column");
+    }
+  } catch (e: any) {
+    console.warn("[migrate v35] channels.title add skipped:", e?.message);
+  }
 }
