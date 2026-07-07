@@ -37,10 +37,13 @@ interface Props {
   // scan the rail at a glance without opening each company. See
   // `use-unread` for how this is computed + kept live.
   hasUnreadByProjectId?: Record<number, boolean>;
+  // Right-click a company pill to clear every unread signal for that
+  // company at once. Wired to POST /api/projects/:id/read in Home.tsx.
+  onMarkAllRead?: (projectId: number) => void;
   sseStatus: "connecting" | "open" | "closed";
 }
 
-export function ProjectRail({ projects, activeId, onSelect, unreadByProjectId, hasUnreadByProjectId, sseStatus }: Props) {
+export function ProjectRail({ projects, activeId, onSelect, unreadByProjectId, hasUnreadByProjectId, onMarkAllRead, sseStatus }: Props) {
   const { user, logout } = useAuth();
   const { presence, manualPresence, setManualPresence } = usePresence();
   const [inviteOpen, setInviteOpen] = useState(false);
@@ -74,6 +77,7 @@ export function ProjectRail({ projects, activeId, onSelect, unreadByProjectId, h
             unread={unreadByProjectId?.[p.id] ?? 0}
             hasUnread={!!hasUnreadByProjectId?.[p.id]}
             onClick={() => onSelect(p.id)}
+            onMarkAllRead={onMarkAllRead ? () => onMarkAllRead(p.id) : undefined}
           />
         ))}
       </div>
@@ -194,12 +198,14 @@ function ProjectPill({
   unread,
   hasUnread,
   onClick,
+  onMarkAllRead,
 }: {
   project: ApiProject;
   active: boolean;
   unread: number;
   hasUnread: boolean;
   onClick: () => void;
+  onMarkAllRead?: () => void;
 }) {
   const c1 = `hsl(${project.hue} 70% 55%)`;
   const c2 = `hsl(${(project.hue + 30) % 360} 60% 30%)`;
@@ -208,7 +214,13 @@ function ProjectPill({
     <button
       type="button"
       onClick={onClick}
-      title={project.name}
+      onContextMenu={(e) => {
+        if (!onMarkAllRead) return;
+        e.preventDefault();
+        if (!hasUnread && (unread ?? 0) === 0) return;
+        onMarkAllRead();
+      }}
+      title={onMarkAllRead ? `${project.name} — right-click to mark all read` : project.name}
       data-testid={`button-project-${project.id}`}
       className={[
         "relative group w-12 h-12 transition-all flex items-center justify-center",

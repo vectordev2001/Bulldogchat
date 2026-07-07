@@ -48,6 +48,13 @@ interface Props {
    */
   pendingCallRoom?: string | null;
   onDismissPendingCall?: () => void;
+  /**
+   * When true, the header's channel-name text is hidden (the icon and
+   * topic separator still render). Used by the DM view in Home.tsx which
+   * overlays its own label + rename control on top of this header; without
+   * this, both labels stacked and produced a garbled title.
+   */
+  hideHeaderTitle?: boolean;
 }
 
 const ROLE_COLOR: Record<UserRole, string> = {
@@ -79,7 +86,7 @@ interface MentionMatch {
   startIdx: number;
 }
 
-export function TextChannelView({ channel, messages, loading, me, orgMembers, membersOpen, onToggleMembers, workObjectsOpen, onToggleWorkObjects, onSlashSchedule, pendingCallRoom, onDismissPendingCall }: Props) {
+export function TextChannelView({ channel, messages, loading, me, orgMembers, membersOpen, onToggleMembers, workObjectsOpen, onToggleWorkObjects, onSlashSchedule, pendingCallRoom, onDismissPendingCall, hideHeaderTitle }: Props) {
   const [draft, setDraft] = useState("");
   const { pending: pendingAtts, addFiles, remove: removePending, clear: clearPending, uploading, readyIds, atCapacity } = useAttachmentUploader({ max: 8 });
   const [threadParent, setThreadParent] = useState<ApiMessage | null>(null);
@@ -526,8 +533,10 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers, me
       onDrop={onDrop}
     >
       <header className="h-14 px-4 max-md:pl-14 flex items-center gap-3 border-b border-border shadow-sm shrink-0 bg-secondary/80 backdrop-blur-sm">
-        <Hash className="w-5 h-5 text-[hsl(var(--vs-text-muted))]" />
-        <div className="font-display text-[hsl(var(--vs-text))] text-base" data-testid="text-channel-name">{channel.name}</div>
+        {!hideHeaderTitle && <Hash className="w-5 h-5 text-[hsl(var(--vs-text-muted))]" />}
+        {!hideHeaderTitle && (
+          <div className="font-display text-[hsl(var(--vs-text))] text-base" data-testid="text-channel-name">{channel.name}</div>
+        )}
         {channel.topic && (
           <>
             <span className="w-px h-5 bg-border" />

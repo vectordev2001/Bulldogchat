@@ -103,7 +103,7 @@ export default function Home() {
   // window event (fired by SSE onMessageNew below and by missed-call flow
   // in CallContext). `markChannelRead` is fired when the user opens a
   // channel to persist a read receipt.
-  const { byProjectId: unreadByProject, markChannelRead } = useUnread({ enabled: !!user });
+  const { byProjectId: unreadByProject, markChannelRead, markProjectRead } = useUnread({ enabled: !!user });
   const hasUnreadByProjectId = useMemo(() => {
     const map: Record<number, boolean> = {};
     for (const [pid, entry] of Object.entries(unreadByProject)) {
@@ -358,6 +358,10 @@ export default function Home() {
   const selectDm = (id: number) => {
     setActiveDmId(id);
     setMobileNavOpen(false);
+    // DMs are channels with scope='dm', so the same read-receipt endpoint
+    // clears their unread state. Without this, opening a DM would leave the
+    // sidebar star lit forever for the parent company.
+    markChannelRead(id);
   };
 
   // Phase 1.9: Escape-to-text behavior is no longer needed — every channel
@@ -445,6 +449,7 @@ export default function Home() {
           onSelect={selectProject}
           unreadByProjectId={unreadCountByProjectId}
           hasUnreadByProjectId={hasUnreadByProjectId}
+          onMarkAllRead={markProjectRead}
           sseStatus={sseStatus}
         />
         {activeProject && user && (
@@ -574,7 +579,16 @@ export default function Home() {
                 </button>
               </div>
               <TextChannelView
+                // For DMs we render the label ourselves in the absolute
+                // overlay above (with a pencil rename button). Setting
+                // hideHeaderTitle prevents TextChannelView's own header
+                // from stacking a second copy of the label on top of the
+                // overlay (which caused a garbled "hastJustinBJieller"
+                // effect). channel.name is still passed through so the
+                // composer placeholder / welcome banner keep a sensible
+                // label.
                 channel={{ ...dmChannelQ.data, name: dmDisplayLabel }}
+                hideHeaderTitle
                 messages={dmMessagesQ.data ?? []}
                 loading={dmMessagesQ.isLoading}
                 me={user as ApiUser}

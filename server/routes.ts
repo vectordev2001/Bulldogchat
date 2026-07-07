@@ -621,6 +621,13 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     //    belong to. We can't just SELECT COUNT() from messages joined on
     //    read_receipts because it'd leak counts from channels the user has
     //    no access to (e.g. private channels they're not a member of).
+    //
+    //    We ALSO fold in the caller's DM channels (scope='dm'). DMs are
+    //    channel rows in the same table, so a message with id >
+    //    last_read_message_id is unread the same way. Their `projectId`
+    //    slots into the same per-company rollup that powers the sidebar
+    //    star, so opening a DM (and marking it read) will clear its parent
+    //    company's count just like a regular channel.
     const projects = storage.listProjectsForUserInOrg(u.id, u.orgId);
     const visibleChannels: { id: number; projectId: number }[] = [];
     for (const p of projects) {
@@ -629,6 +636,15 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
         list = list.filter(c => mtCanSeeChannel(access, c.projectId, c.regionId ?? null));
       }
       for (const c of list) visibleChannels.push({ id: c.id, projectId: c.projectId });
+    }
+    const dmChannels = storage.listDmChannelsForUser(u.id);
+    const projectIds = new Set(projects.map(p => p.id));
+    for (const c of dmChannels) {
+      // Only count DMs whose parent project is one the caller belongs to,
+      // so the org boundary is preserved.
+      if (c.projectId != null && projectIds.has(c.projectId)) {
+        visibleChannels.push({ id: c.id, projectId: c.projectId });
+      }
     }
 
     const byChannelId: Record<number, number> = {};
@@ -667,13 +683,16 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     //    a channelId (group-channel-<id>-<ts> or vector-<n>-channel-<id>) and
     //    roll up to that channel's projectId. Rows without a resolvable
     //    channelId are dropped — they'll show elsewhere in the UI.
+    //
+    //    Window: 24h. Older misses stop cluttering the sidebar and can be
+    //    reviewed from the calls history page instead.
     const missedRows = rawDb
       .prepare(
         `SELECT room_name AS roomName
            FROM direct_calls
           WHERE callee_id = ?
             AND status = 'missed'
-            AND started_at > (strftime('%s','now') - 7*86400)`
+            AND started_at > (strftime('%s','now') - 24*3600)`
       )
       .all(u.id) as { roomName: string }[];
     const chanToProjectAll = new Map(visibleChannels.map(c => [c.id, c.projectId]));
@@ -732,6 +751,82 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
       storage.setReadReceipt(channelId, u.id, target);
     }
     res.json({ ok: true, messageId });
+  });
+
+  // ──────────────────────────────────────────────────────────────────────
+  // POST /api/projects/:id/read
+  //
+  // Clear the sidebar star for an entire company. Advances the caller's
+  // read receipt to the current tip of every visible channel + DM in the
+  // project, and marks the caller's missed calls (whose room maps back to
+  // any of those channels) as "seen" by rewriting them to status='ended'.
+  // Best-effort per row; a single failure doesn't fail the batch.
+  // ──────────────────────────────────────────────────────────────────────
+  app.post("/api/projects/:id/read", requireAuth, (req, res) => {
+    const u = (req as AuthedRequest).user;
+    const access = (req as AuthedRequest).access;
+    const projectId = Number(req.params.id);
+    if (!Number.isFinite(projectId) || projectId <= 0) {
+      return res.status(400).json({ message: "invalid projectId" });
+    }
+    if (!userCanAccessProject(u.id, u.orgId, projectId, access)) {
+      return res.status(404).json({ message: "Not found" });
+    }
+
+    // Collect every channel this user can see under the project, including
+    // DMs (they're channel rows with scope='dm').
+    let list = storage.listChannelsForUserInProject(projectId, u.id);
+    if (access) {
+      list = list.filter(c => mtCanSeeChannel(access, c.projectId, c.regionId ?? null));
+    }
+    const projectChannelIds = new Set<number>(list.map(c => c.id));
+    const dmChannels = storage.listDmChannelsForUser(u.id);
+    for (const c of dmChannels) {
+      if (c.projectId === projectId) projectChannelIds.add(c.id);
+    }
+
+    let advanced = 0;
+    for (const cid of Array.from(projectChannelIds)) {
+      try {
+        const tip = rawDb
+          .prepare(`SELECT MAX(id) AS tip FROM messages WHERE channel_id = ?`)
+          .get(cid) as { tip: number | null } | undefined;
+        const tipId = tip?.tip ?? 0;
+        if (tipId <= 0) continue;
+        const existing = rawDb
+          .prepare(`SELECT last_read_message_id AS m FROM read_receipts WHERE channel_id = ? AND user_id = ?`)
+          .get(cid, u.id) as { m: number | null } | undefined;
+        const target = Math.max(tipId, existing?.m ?? 0);
+        storage.setReadReceipt(cid, u.id, target);
+        advanced += 1;
+      } catch {
+        /* per-channel best-effort */
+      }
+    }
+
+    // Ack missed calls that map back to a channel in this project.
+    let missedAcked = 0;
+    try {
+      const missed = rawDb
+        .prepare(
+          `SELECT id, room_name AS roomName FROM direct_calls
+            WHERE callee_id = ? AND status = 'missed'
+              AND started_at > (strftime('%s','now') - 24*3600)`
+        )
+        .all(u.id) as Array<{ id: number; roomName: string }>;
+      for (const row of missed) {
+        const m = row.roomName?.match(/(?:group-channel-|vector-\d+-channel-)(\d+)/);
+        if (!m) continue;
+        const cid = Number(m[1]);
+        if (!projectChannelIds.has(cid)) continue;
+        rawDb.prepare(`UPDATE direct_calls SET status = 'ended' WHERE id = ?`).run(row.id);
+        missedAcked += 1;
+      }
+    } catch {
+      /* best-effort */
+    }
+
+    res.json({ ok: true, channelsAdvanced: advanced, missedCallsAcked: missedAcked });
   });
 
   // Multi-tenant: list regions for a project. Returns only regions the user
