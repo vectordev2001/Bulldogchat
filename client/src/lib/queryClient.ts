@@ -48,6 +48,19 @@ export async function apiRequest<T = unknown>(
   return (await res.text()) as unknown as T;
 }
 
+// Titled Chats (Phase 2.5) — always creates a NEW DM channel (never
+// find-or-create), distinct from the plain "New DM" picker.
+export async function apiCreateTitledDm<T = unknown>(input: { title: string; memberIds: number[] }): Promise<T> {
+  return apiRequest<T>("POST", "/api/dms/titled", input);
+}
+
+// Titled Chats (Phase 2.5) — set (string) or clear (null) a DM's custom
+// title. Used by both the "New titled chat" create flow follow-up renames
+// and the DM row's "Rename..." context-menu action.
+export async function apiRenameDm<T = unknown>(id: number, title: string | null): Promise<T> {
+  return apiRequest<T>("PATCH", `/api/dms/${id}`, { title });
+}
+
 export async function apiUpload<T = unknown>(
   url: string,
   formData: FormData,

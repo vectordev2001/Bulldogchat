@@ -19,6 +19,46 @@ declare module "http" {
   }
 }
 
+// Cross-App Mini-Chat Widget (Phase 2.5): Contracts and Ops embed a widget
+// that calls this API cross-origin with credentials (the shared
+// bulldog_access cookie, Domain=.bulldogops.com). Browsers require an
+// explicit allowlisted Origin (not "*") whenever a request carries
+// credentials, so we mirror the request's Origin back only when it's on
+// the allowlist. CORS_ALLOWED_ORIGINS is a comma-separated list, e.g.
+// "https://contracts.bulldogops.com,https://ops.bulldogops.com". Local dev
+// origins are included by default so `npm run dev` works without env setup.
+const DEFAULT_DEV_ORIGINS = [
+  "http://localhost:5173",
+  "http://localhost:5000",
+  "http://127.0.0.1:5173",
+  "http://127.0.0.1:5000",
+];
+const corsAllowedOrigins = new Set([
+  ...DEFAULT_DEV_ORIGINS,
+  ...(process.env.CORS_ALLOWED_ORIGINS ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean),
+]);
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (origin && corsAllowedOrigins.has(origin)) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Access-Control-Allow-Credentials", "true");
+    res.setHeader("Vary", "Origin");
+    res.setHeader("Access-Control-Allow-Methods", "GET,POST,PATCH,PUT,DELETE,OPTIONS");
+    res.setHeader(
+      "Access-Control-Allow-Headers",
+      req.headers["access-control-request-headers"] ?? "Content-Type, Authorization",
+    );
+  }
+  if (req.method === "OPTIONS") {
+    res.sendStatus(204);
+    return;
+  }
+  next();
+});
+
 app.use(
   express.json({
     // File uploads go through multer (multipart), not here — this limit is

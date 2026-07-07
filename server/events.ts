@@ -103,6 +103,37 @@ export function emitChannelDelete(
   fanoutChannel(orgId, payload.channelId, "channel:delete", payload);
 }
 
+// Titled Chats (Phase 2.5). Broadcast that a DM channel's title changed
+// (set, changed, or cleared back to null) so every member's sidebar/header
+// updates live without a manual refresh. We target members directly rather
+// than going through fanoutChannel's org-wide loop + canSeeChannel, since a
+// freshly-created or freshly-renamed DM's scope/member set is exactly what
+// we already have on hand from the route handler — no extra DB round-trip.
+export function emitDmUpdated(
+  orgId: number,
+  payload: { channelId: number; title: string | null; memberIds: number[] },
+) {
+  for (const sub of subscribers) {
+    if (sub.orgId !== orgId) continue;
+    if (!payload.memberIds.includes(sub.userId)) continue;
+    send(sub, "dm:updated", payload);
+  }
+}
+
+// Titled Chats (Phase 2.5). Broadcast that a brand-new DM/titled-chat
+// channel was created so every member's sidebar picks it up immediately
+// (mirrors emitDmUpdated's per-member targeting).
+export function emitDmCreated(
+  orgId: number,
+  payload: { channelId: number; title: string | null; memberIds: number[] },
+) {
+  for (const sub of subscribers) {
+    if (sub.orgId !== orgId) continue;
+    if (!payload.memberIds.includes(sub.userId)) continue;
+    send(sub, "dm:created", payload);
+  }
+}
+
 /**
  * 1:1 call events. We target the specific user (callee or caller) by id
  * so we don't leak ringing across the org. SSE clients subscribe by

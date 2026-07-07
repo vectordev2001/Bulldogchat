@@ -1,8 +1,21 @@
 import { useMemo, useRef, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { ChevronDown, ChevronRight, Plus, MessageSquare, Search, X, Loader2, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronRight, Plus, MessageSquare, Search, X, Loader2, Trash2, Pencil, Tag } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Avatar } from "./Avatar";
+import { TitledChatDialog } from "./TitledChatDialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "./ui/dropdown-menu";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from "./ui/context-menu";
 import type { ApiUser, ApiDmChannel } from "@/types/api";
 
 interface Props {
@@ -21,6 +34,10 @@ interface Props {
 export function DmSection({ me, orgMembers, activeDmId, onSelectDm }: Props) {
   const [open, setOpen] = useState(true);
   const [pickerOpen, setPickerOpen] = useState(false);
+  // Titled Chats (Phase 2.5): "New titled chat" dialog from the "+" menu,
+  // and the per-row "Rename..." dialog (dmId set when open, else null).
+  const [titledCreateOpen, setTitledCreateOpen] = useState(false);
+  const [renameDmId, setRenameDmId] = useState<number | null>(null);
 
   const dmsQ = useQuery<ApiDmChannel[]>({
     queryKey: ["/api/dms"],
@@ -49,17 +66,31 @@ export function DmSection({ me, orgMembers, activeDmId, onSelectDm }: Props) {
         >
           {open ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
           <span className="flex-1 text-left">Direct Messages</span>
-          <span
-            role="button"
-            tabIndex={0}
-            onClick={(e) => { e.stopPropagation(); setPickerOpen(true); }}
-            onKeyDown={(e) => { if (e.key === "Enter") { e.stopPropagation(); setPickerOpen(true); } }}
-            className="opacity-70 hover:opacity-100 hover:text-white p-0.5 rounded cursor-pointer"
-            title="New direct message"
-            data-testid="button-new-dm"
-          >
-            <Plus className="w-3.5 h-3.5" />
-          </span>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <span
+                role="button"
+                tabIndex={0}
+                onClick={(e) => e.stopPropagation()}
+                onKeyDown={(e) => { if (e.key === "Enter") e.stopPropagation(); }}
+                className="opacity-70 hover:opacity-100 hover:text-white p-0.5 rounded cursor-pointer"
+                title="New direct message"
+                data-testid="button-new-dm"
+              >
+                <Plus className="w-3.5 h-3.5" />
+              </span>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="w-44">
+              <DropdownMenuItem onClick={() => setPickerOpen(true)} data-testid="menuitem-new-dm">
+                <MessageSquare className="w-3.5 h-3.5 mr-2" />
+                New DM
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setTitledCreateOpen(true)} data-testid="menuitem-new-titled-chat">
+                <Tag className="w-3.5 h-3.5 mr-2" />
+                New titled chat
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </button>
 
         {open && (
@@ -80,6 +111,7 @@ export function DmSection({ me, orgMembers, activeDmId, onSelectDm }: Props) {
                 userById={userById}
                 active={dm.id === activeDmId}
                 onClick={() => onSelectDm(dm.id)}
+                onRename={() => setRenameDmId(dm.id)}
               />
             ))}
             {/* Note: the trash button on each row deletes the DM for
@@ -104,6 +136,29 @@ export function DmSection({ me, orgMembers, activeDmId, onSelectDm }: Props) {
           }}
         />
       )}
+
+      {titledCreateOpen && (
+        <TitledChatDialog
+          mode="create"
+          me={me}
+          orgMembers={orgMembers}
+          onClose={() => setTitledCreateOpen(false)}
+          onDone={(dmId) => {
+            setTitledCreateOpen(false);
+            onSelectDm(dmId);
+          }}
+        />
+      )}
+
+      {renameDmId != null && (
+        <TitledChatDialog
+          mode="rename"
+          dmId={renameDmId}
+          currentTitle={dms.find((d) => d.id === renameDmId)?.title ?? null}
+          onClose={() => setRenameDmId(null)}
+          onDone={() => setRenameDmId(null)}
+        />
+      )}
     </>
   );
 }
@@ -114,6 +169,7 @@ interface RowProps {
   userById: Map<number, ApiUser>;
   active: boolean;
   onClick: () => void;
+  onRename: () => void;
 }
 
 // Long-press / touch-hold duration that surfaces the row delete button on
@@ -123,13 +179,16 @@ const LONG_PRESS_MS = 450;
 // Each row shows a stacked avatar (1:1) or a group icon (3+ members) plus
 // a comma-joined member name string. We intentionally do NOT render the
 // internal `dm-<ids>-<ts>` channel name — that's just a database handle.
-function DmRow({ dm, me, userById, active, onClick }: RowProps) {
+function DmRow({ dm, me, userById, active, onClick, onRename }: RowProps) {
   const others = dm.memberIds.filter(id => id !== me.id);
   const otherUsers = others.map(id => userById.get(id)).filter(Boolean) as ApiUser[];
   const isGroup = otherUsers.length > 1;
-  const label = otherUsers.length === 0
+  const participantLabel = otherUsers.length === 0
     ? "Just you"
     : otherUsers.map(u => u.name).join(", ");
+  // Titled Chats (Phase 2.5): a custom title takes priority over the
+  // derived participant-name-list label.
+  const label = dm.title || participantLabel;
   const previewUser = otherUsers[0];
 
   // Long-press to surface the delete button on mobile. Desktop uses hover.
@@ -167,55 +226,72 @@ function DmRow({ dm, me, userById, active, onClick }: RowProps) {
   };
 
   return (
-    <div
-      className={`group relative w-full rounded-md transition-colors ${
-        active
-          ? "bg-[hsl(220_55%_22%)] text-white"
-          : "text-[hsl(0_0%_75%)] hover:bg-[hsl(220_45%_25%)] hover:text-white"
-      }`}
-      onTouchStart={onTouchStart}
-      onTouchEnd={onTouchEnd}
-      onTouchCancel={onTouchEnd}
-    >
-      <button
-        type="button"
-        onClick={onClick}
-        className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-left"
-        data-testid={`button-dm-${dm.id}`}
-        title={label}
-      >
-        {isGroup ? (
-          <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-[hsl(220_45%_30%)] shrink-0">
-            <MessageSquare className="w-3.5 h-3.5 text-white" />
+    <ContextMenu>
+      <ContextMenuTrigger asChild>
+        <div
+          className={`group relative w-full rounded-md transition-colors ${
+            active
+              ? "bg-[hsl(220_55%_22%)] text-white"
+              : "text-[hsl(0_0%_75%)] hover:bg-[hsl(220_45%_25%)] hover:text-white"
+          }`}
+          onTouchStart={onTouchStart}
+          onTouchEnd={onTouchEnd}
+          onTouchCancel={onTouchEnd}
+        >
+          <button
+            type="button"
+            onClick={onClick}
+            className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-left"
+            data-testid={`button-dm-${dm.id}`}
+            title={label}
+          >
+            {isGroup ? (
+              <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-[hsl(220_45%_30%)] shrink-0">
+                <MessageSquare className="w-3.5 h-3.5 text-white" />
+              </span>
+            ) : previewUser ? (
+              <Avatar
+                member={{ name: previewUser.name, hue: previewUser.hue, status: previewUser.presence ?? "offline" }}
+                size={24}
+                showStatus
+              />
+            ) : (
+              <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-[hsl(220_45%_30%)] shrink-0">
+                <MessageSquare className="w-3.5 h-3.5 text-white" />
+              </span>
+            )}
+            <span className="text-sm truncate min-w-0 flex-1 pr-6">{label}</span>
+            {/* Small visual cue that this row has a custom title (vs. derived
+                participant names), matching the pencil affordance in the
+                Home header for the active titled chat. */}
+            {dm.title && <Tag className="w-3 h-3 text-[hsl(0_0%_55%)] shrink-0 mr-5" />}
+          </button>
+          <span
+            role="button"
+            tabIndex={0}
+            onClick={onDelete}
+            onKeyDown={(e) => { if (e.key === "Enter") onDelete(e); }}
+            className={`absolute right-1.5 top-1/2 -translate-y-1/2 p-1 rounded text-[hsl(0_0%_55%)] hover:text-vs-red hover:bg-[hsl(220_45%_15%)] transition-opacity cursor-pointer ${
+              touchActionsOpen ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+            } ${deleteMut.isPending ? "opacity-30 pointer-events-none" : ""}`}
+            title="Delete chat for everyone"
+            aria-label={`Delete ${label}`}
+            data-testid={`button-delete-dm-${dm.id}`}
+          >
+            <Trash2 className="w-3.5 h-3.5" />
           </span>
-        ) : previewUser ? (
-          <Avatar
-            member={{ name: previewUser.name, hue: previewUser.hue, status: previewUser.presence ?? "offline" }}
-            size={24}
-            showStatus
-          />
-        ) : (
-          <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-[hsl(220_45%_30%)] shrink-0">
-            <MessageSquare className="w-3.5 h-3.5 text-white" />
-          </span>
-        )}
-        <span className="text-sm truncate min-w-0 flex-1 pr-6">{label}</span>
-      </button>
-      <span
-        role="button"
-        tabIndex={0}
-        onClick={onDelete}
-        onKeyDown={(e) => { if (e.key === "Enter") onDelete(e); }}
-        className={`absolute right-1.5 top-1/2 -translate-y-1/2 p-1 rounded text-[hsl(0_0%_55%)] hover:text-vs-red hover:bg-[hsl(220_45%_15%)] transition-opacity cursor-pointer ${
-          touchActionsOpen ? "opacity-100" : "opacity-0 group-hover:opacity-100"
-        } ${deleteMut.isPending ? "opacity-30 pointer-events-none" : ""}`}
-        title="Delete chat for everyone"
-        aria-label={`Delete ${label}`}
-        data-testid={`button-delete-dm-${dm.id}`}
-      >
-        <Trash2 className="w-3.5 h-3.5" />
-      </span>
-    </div>
+        </div>
+      </ContextMenuTrigger>
+      {/* Rename is available to any member of the DM — same "no owner" model
+          used for delete. Shown for both plain DMs (sets a title for the
+          first time) and already-titled chats (change/clear). */}
+      <ContextMenuContent className="w-44">
+        <ContextMenuItem onClick={onRename} data-testid={`menuitem-rename-dm-${dm.id}`}>
+          <Pencil className="w-3.5 h-3.5 mr-2" />
+          Rename...
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
   );
 }
 

@@ -15,7 +15,9 @@ import { WorkObjectsListDialog } from "@/components/WorkObjectsListDialog";
 import { ScheduleCallDialog, MeetingsListDialog } from "@/components/ScheduleCallDialog";
 import { UnifiedHeader } from "@/components/UnifiedHeader";
 import { VectorLogo } from "@/components/VectorLogo";
-import type { ApiProject, ApiChannel, ApiMessage, ApiUser } from "@/types/api";
+import { Pencil } from "lucide-react";
+import { TitledChatDialog } from "@/components/TitledChatDialog";
+import type { ApiProject, ApiChannel, ApiMessage, ApiUser, ApiDmChannel } from "@/types/api";
 
 export default function Home() {
   const { user } = useAuth();
@@ -188,6 +190,35 @@ export default function Home() {
     enabled: !!activeDmId,
   });
 
+  // Titled Chats (Phase 2.5): the sidebar's DmSection already keeps
+  // ["/api/dms"] warm (it polls + invalidates on SSE), so we just read the
+  // same cache here to get memberIds + title for the header without a
+  // second network round-trip. GET /api/channels/:id (used for dmChannelQ
+  // above) doesn't decorate with memberIds, so this is the only place that
+  // has what we need to derive "Alice, Bob" or show a custom title.
+  const dmsQ = useQuery<ApiDmChannel[]>({
+    queryKey: ["/api/dms"],
+    enabled: !!user,
+  });
+  const activeDmRow = useMemo(
+    () => dmsQ.data?.find((d) => d.id === activeDmId) ?? null,
+    [dmsQ.data, activeDmId],
+  );
+  const [renameDmOpen, setRenameDmOpen] = useState(false);
+  // Titled Chats (Phase 2.5): mirrors DmRow's label logic in DmSection.tsx
+  // (title takes priority, else comma-joined other-participant names).
+  const dmDisplayLabel = useMemo(() => {
+    if (!activeDmId) return "";
+    if (activeDmRow?.title) return activeDmRow.title;
+    const meId = (user as ApiUser)?.id;
+    const otherIds = (activeDmRow?.memberIds ?? []).filter((id) => id !== meId);
+    if (otherIds.length === 0) return dmChannelQ.data?.name ?? "Direct message";
+    const names = otherIds
+      .map((id) => membersQ.data?.find((m) => m.id === id)?.name)
+      .filter(Boolean) as string[];
+    return names.length > 0 ? names.join(", ") : (dmChannelQ.data?.name ?? "Direct message");
+  }, [activeDmId, activeDmRow, membersQ.data, user, dmChannelQ.data]);
+
   // SSE: invalidate messages on relevant events. New DM messages also kick
   // the DM list query so the sender re-sorts to the top of the section.
   const sseStatus = useSSE(!!user, {
@@ -238,6 +269,19 @@ export default function Home() {
       queryClient.invalidateQueries({ queryKey: ["/api/channels"] });
       // Drop cached messages for the gone channel.
       queryClient.removeQueries({ queryKey: ["/api/channels", cid] });
+    },
+    // Titled Chats (Phase 2.5): a DM's title changed, or a new titled DM
+    // was created — either way, refresh the DM list so sidebars/header
+    // pick up the new label. Also refresh the single-channel fetch behind
+    // the active DM view in case the title change affects what's showing.
+    onDmUpdated: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/dms"] });
+      if (data?.channelId) {
+        queryClient.invalidateQueries({ queryKey: ["/api/channels", data.channelId] });
+      }
+    },
+    onDmCreated: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/dms"] });
     },
     // The SSE stream just reconnected after the WebView regained visibility.
     // Anything that changed while we were dark (e.g. an admin clearing this
@@ -455,22 +499,55 @@ export default function Home() {
               <Loader2 className="w-5 h-5 animate-spin text-vs-blue" />
             </div>
           ) : (
-            <TextChannelView
-              channel={dmChannelQ.data}
-              messages={dmMessagesQ.data ?? []}
-              loading={dmMessagesQ.isLoading}
-              me={user as ApiUser}
-              orgMembers={members}
-              membersOpen={membersOpen}
-              onToggleMembers={() => setMembersOpen((v) => !v)}
-              workObjectsOpen={false}
-              onToggleWorkObjects={() => {}}
-              onSlashSchedule={(hint) => {
-                setScheduleHint(hint);
-                setScheduleChannelId(dmChannelQ.data?.id ?? null);
-                setScheduleOpen(true);
-              }}
-            />
+            <div className="flex-1 min-h-0 flex flex-col relative">
+              {/* Titled Chats (Phase 2.5): TextChannelView's header always
+                  renders `channel.name` verbatim, which for a DM is the
+                  internal `dm-<ids>-<ts>` identifier, not a display label.
+                  We overlay the real title/participant-list here (matching
+                  DmSection's row label logic) plus a pencil icon that opens
+                  the same TitledChatDialog used for create/rename in the
+                  sidebar. This sits directly on top of TextChannelView's
+                  14px-tall header so no changes are needed there. */}
+              <div className="absolute top-0 left-0 right-0 h-14 pl-14 md:pl-4 pr-4 flex items-center gap-1.5 pointer-events-none z-10">
+                <span className="font-display text-[hsl(var(--vs-text))] text-base truncate max-w-[45vw] pointer-events-none">
+                  {dmDisplayLabel}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setRenameDmOpen(true)}
+                  className="p-1 rounded hover-elevate text-[hsl(var(--vs-text-muted))] hover:text-[hsl(var(--vs-accent))] pointer-events-auto"
+                  title={activeDmRow?.title ? "Rename chat" : "Add a title"}
+                  data-testid="button-rename-active-dm"
+                >
+                  <Pencil className="w-3.5 h-3.5" />
+                </button>
+              </div>
+              <TextChannelView
+                channel={{ ...dmChannelQ.data, name: dmDisplayLabel }}
+                messages={dmMessagesQ.data ?? []}
+                loading={dmMessagesQ.isLoading}
+                me={user as ApiUser}
+                orgMembers={members}
+                membersOpen={membersOpen}
+                onToggleMembers={() => setMembersOpen((v) => !v)}
+                workObjectsOpen={false}
+                onToggleWorkObjects={() => {}}
+                onSlashSchedule={(hint) => {
+                  setScheduleHint(hint);
+                  setScheduleChannelId(dmChannelQ.data?.id ?? null);
+                  setScheduleOpen(true);
+                }}
+              />
+              {renameDmOpen && activeDmId != null && (
+                <TitledChatDialog
+                  mode="rename"
+                  dmId={activeDmId}
+                  currentTitle={activeDmRow?.title ?? null}
+                  onClose={() => setRenameDmOpen(false)}
+                  onDone={() => setRenameDmOpen(false)}
+                />
+              )}
+            </div>
           )
         ) : channelsQ.isLoading ? (
           <div className="flex-1 flex items-center justify-center">

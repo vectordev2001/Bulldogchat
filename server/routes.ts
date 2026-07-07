@@ -8,7 +8,7 @@ import {
 } from "@shared/schema";
 import { hashPassword, verifyPassword, signJwt, requireAuth, requireRole, requireCap, setAuthCookie, clearAuthCookie, AuthedRequest, AUTH_COOKIE } from "./auth";
 import { can } from "@shared/permissions";
-import { addSubscriber, removeSubscriber, emitMessageNew, emitMessageDelete, emitMessageUpdate, emitReactionChange, emitChannelDelete, emitCallIncoming, emitCallAccepted, emitCallEnded, emitPresenceChange, type CallEventPayload, WireMessage } from "./events";
+import { addSubscriber, removeSubscriber, emitMessageNew, emitMessageDelete, emitMessageUpdate, emitReactionChange, emitChannelDelete, emitDmUpdated, emitDmCreated, emitCallIncoming, emitCallAccepted, emitCallEnded, emitPresenceChange, type CallEventPayload, WireMessage } from "./events";
 import { generateLivekitToken, livekitConfigured, listRoomParticipantIdentities } from "./livekit";
 import { setupWebPush, pushConfigured, getPublicVapidKey, sendNotificationToUsers } from "./push";
 import { runMigrations } from "./migrate";
@@ -1257,6 +1257,9 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
 
   // List every DM channel the caller is part of, decorated with member ids
   // and counts so the sidebar can render names without a second round-trip.
+  // `title` rides along on the spread (`...c`) since it's now a plain column
+  // on the channels row — null unless the caller (or another member) set a
+  // custom title via PATCH /api/dms/:id or POST /api/dms/titled.
   app.get("/api/dms", requireAuth, (req, res) => {
     const u = (req as AuthedRequest).user;
     const chs = storage.listDmChannelsForUser(u.id);
@@ -1265,6 +1268,62 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
       memberIds: storage.listChannelMemberIds(c.id),
     }));
     res.json(wire);
+  });
+
+  // Titled Chats (Phase 2.5) — always creates a NEW DM channel with a
+  // required title, even if a DM with this member set already exists.
+  // Distinct from POST /api/dms (which is find-or-create / participant-
+  // keyed): titled chats are topic-based, so multiple titled threads with
+  // the same people are allowed side by side.
+  app.post("/api/dms/titled", requireAuth, (req, res) => {
+    const u = (req as AuthedRequest).user;
+    const body = req.body ?? {};
+    const rawTitle = typeof body.title === "string" ? body.title.trim() : "";
+    if (rawTitle.length < 1) {
+      return res.status(400).json({ message: "Title is required" });
+    }
+    if (rawTitle.length > 80) {
+      return res.status(400).json({ message: "Title must be 80 characters or fewer" });
+    }
+
+    const rawIds = Array.isArray(body.memberIds) ? body.memberIds : [];
+    const memberIds: number[] = [];
+    for (const v of rawIds) {
+      const n = Number(v);
+      if (Number.isFinite(n) && n > 0 && n !== u.id) memberIds.push(n);
+    }
+    if (memberIds.length === 0) {
+      return res.status(400).json({ message: "At least one other member is required" });
+    }
+    if (memberIds.length > 20) {
+      return res.status(400).json({ message: "Group DMs are capped at 20 other members" });
+    }
+
+    // Same org-membership validation as POST /api/dms.
+    const targets = storage.listUsersByIds(memberIds);
+    const okIds = new Set(targets.filter(t => t.orgId === u.orgId).map(t => t.id));
+    const cleaned = memberIds.filter(id => okIds.has(id));
+    if (cleaned.length === 0) {
+      return res.status(400).json({ message: "No valid recipients in your organization" });
+    }
+
+    const homeProjects = storage.listProjectsForUserInOrg(u.id, u.orgId);
+    const homeProject = homeProjects[0];
+    if (!homeProject) return res.status(400).json({ message: "No home project — contact an admin" });
+
+    const ch = storage.createTitledDmChannel({
+      projectId: homeProject.id,
+      memberIds: cleaned,
+      createdByUserId: u.id,
+      title: rawTitle,
+    });
+    const allMemberIds = storage.listChannelMemberIds(ch.id);
+    emitDmCreated(u.orgId, { channelId: ch.id, title: ch.title ?? null, memberIds: allMemberIds });
+    res.json({
+      ...ch,
+      memberIds: allMemberIds,
+      created: true,
+    });
   });
 
   // Find-or-create a DM channel for the given member set. The caller is
@@ -1354,6 +1413,49 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
       console.error("[delete-dm]", err);
       res.status(500).json({ message: "Failed to delete DM" });
     }
+  });
+
+  // Titled Chats (Phase 2.5) — set or clear a DM channel's custom title.
+  // Pass `title: null` to clear it (falls back to the participant-name-list
+  // label in the UI). Any member of the DM can rename it — same "no owner"
+  // model as delete.
+  app.patch("/api/dms/:id", requireAuth, (req, res) => {
+    const u = (req as AuthedRequest).user;
+    const channelId = Number(req.params.id);
+    if (!Number.isFinite(channelId)) return res.status(400).json({ message: "Invalid id" });
+    const channel = storage.getChannel(channelId);
+    if (!channel) return res.status(404).json({ message: "Not found" });
+    if (channel.scope !== "dm") {
+      return res.status(400).json({ message: "Not a DM channel" });
+    }
+    if (!storage.isChannelMember(channelId, u.id)) {
+      return res.status(403).json({ message: "Not a member of this DM" });
+    }
+
+    const body = req.body ?? {};
+    if (!("title" in body)) {
+      return res.status(400).json({ message: "title is required (string or null)" });
+    }
+    let title: string | null;
+    if (body.title === null) {
+      title = null;
+    } else if (typeof body.title === "string") {
+      const trimmed = body.title.trim();
+      if (trimmed.length > 80) {
+        return res.status(400).json({ message: "Title must be 80 characters or fewer" });
+      }
+      // Trimming to "" is treated the same as clearing — an empty title isn't
+      // useful and would render as a blank sidebar row.
+      title = trimmed.length > 0 ? trimmed : null;
+    } else {
+      return res.status(400).json({ message: "title must be a string or null" });
+    }
+
+    const updated = storage.setDmChannelTitle(channelId, title);
+    if (!updated) return res.status(404).json({ message: "Not found" });
+    const memberIds = storage.listChannelMemberIds(channelId);
+    emitDmUpdated(u.orgId, { channelId, title: updated.title ?? null, memberIds });
+    res.json({ ...updated, memberIds, title: updated.title ?? null });
   });
 
   // ── MESSAGES ──
