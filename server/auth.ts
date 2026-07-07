@@ -150,13 +150,32 @@ export function setAuthCookie(res: Response, token: string) {
     `${AUTH_COOKIE}=${encodeURIComponent(token)}`,
     "Path=/",
     "HttpOnly",
-    "SameSite=Lax",
+    // SameSite=None + Domain=.bulldogops.com lets the cookie flow from
+    // chat.bulldogops.com to contracts/ops subdomains so the mini chat
+    // widget can authenticate cross-origin with credentials:include.
+    // SameSite=None requires Secure (enforced below in prod).
+    isProd ? "SameSite=None" : "SameSite=Lax",
     `Max-Age=${TOKEN_TTL_SECONDS}`,
   ];
-  if (isProd) parts.push("Secure");
+  if (isProd) {
+    parts.push("Secure");
+    parts.push("Domain=.bulldogops.com");
+  }
   res.setHeader("Set-Cookie", parts.join("; "));
 }
 
 export function clearAuthCookie(res: Response) {
-  res.setHeader("Set-Cookie", `${AUTH_COOKIE}=; Path=/; HttpOnly; Max-Age=0; SameSite=Lax`);
+  const isProd = process.env.NODE_ENV === "production";
+  const parts = [
+    `${AUTH_COOKIE}=`,
+    "Path=/",
+    "HttpOnly",
+    "Max-Age=0",
+    isProd ? "SameSite=None" : "SameSite=Lax",
+  ];
+  if (isProd) {
+    parts.push("Secure");
+    parts.push("Domain=.bulldogops.com");
+  }
+  res.setHeader("Set-Cookie", parts.join("; "));
 }
