@@ -32,6 +32,11 @@ export default function Home() {
   // (from push notifications) and cleared when the user taps Join or
   // Dismiss on the banner.
   const [pendingCallByChannel, setPendingCallByChannel] = useState<Record<number, string>>({});
+  // Keyed by channelId (or DM id — same numeric keyspace since DMs are channels
+  // with scope='dm') — when set, TextChannelView scrolls the matching message
+  // into view and briefly highlights it. Populated by the /m/<msgId> SMS deep
+  // link and cleared by TextChannelView once it has done the scroll.
+  const [pendingScrollByChannel, setPendingScrollByChannel] = useState<Record<number, number>>({});
   // Phase 1.9.1: Active DM selection. When non-null we render the DM thread
   // INSTEAD of the project channel — DMs are a parallel "view" that lives
   // above Jobs in the sidebar. Selecting a project channel clears the DM,
@@ -143,22 +148,43 @@ export default function Home() {
       setDeepLinkPending(false);
       return;
     }
-    const { channelId, callRoom } = parsed;
+    const { channelId, callRoom, messageId } = parsed;
     let cancelled = false;
     (async () => {
       try {
-        const ch = await apiRequest<{ id: number; projectId: number }>(
-          "GET",
-          `/api/channels/${channelId}`,
-        );
-        if (cancelled || !ch?.projectId) return;
-        setActiveProjectId(ch.projectId);
-        setChannelByProject((prev) => ({ ...prev, [ch.projectId]: ch.id }));
+        // Fetch the channel row so we know (a) whether this is a DM (scope='dm')
+        // vs a project channel, and (b) its projectId for the project-rail
+        // selection. DMs don't have a projectId, so we route them into activeDmId
+        // instead of channelByProject.
+        const ch = await apiRequest<{
+          id: number;
+          projectId: number | null;
+          scope?: string | null;
+        }>("GET", `/api/channels/${channelId}`);
+        if (cancelled || !ch) return;
+        if (ch.scope === "dm") {
+          // DM deep link — open the DM thread. This clears any per-project
+          // channel selection because the DM view is exclusive.
+          setActiveDmId(ch.id);
+        } else if (ch.projectId) {
+          setActiveProjectId(ch.projectId);
+          setChannelByProject((prev) => ({ ...prev, [ch.projectId as number]: ch.id }));
+        } else {
+          return;
+        }
         if (callRoom) {
           // Stash the pending call room name in a keyed store the channel
           // view reads to render its "Join call" banner. Keyed by channel
           // id so the banner only shows in the right channel.
           setPendingCallByChannel((prev) => ({ ...prev, [ch.id]: callRoom }));
+        }
+        if (messageId) {
+          // Stash the target message id keyed by channel id. TextChannelView
+          // reads this and scrolls the message into view (with a brief
+          // highlight flash) once the message list has loaded. It's cleared
+          // by the view after the scroll runs so a manual re-render doesn't
+          // re-scroll.
+          setPendingScrollByChannel((prev) => ({ ...prev, [ch.id]: messageId }));
         }
       } catch {
         /* fall through to default project */
@@ -602,6 +628,23 @@ export default function Home() {
                   setScheduleChannelId(dmChannelQ.data?.id ?? null);
                   setScheduleOpen(true);
                 }}
+                // SMS chat-mirror deep link: /#/dms/<id>/m/<msgId> stashes the
+                // target message id in pendingScrollByChannel. Hand it to the
+                // channel view so it can scroll + briefly highlight, then
+                // clear it via onDidScrollToMessage.
+                scrollToMessageId={
+                  dmChannelQ.data?.id ? pendingScrollByChannel[dmChannelQ.data.id] ?? null : null
+                }
+                onDidScrollToMessage={() => {
+                  const cid = dmChannelQ.data?.id;
+                  if (!cid) return;
+                  setPendingScrollByChannel((prev) => {
+                    if (!(cid in prev)) return prev;
+                    const next = { ...prev };
+                    delete next[cid];
+                    return next;
+                  });
+                }}
               />
               {renameDmOpen && activeDmId != null && (
                 <TitledChatDialog
@@ -656,6 +699,21 @@ export default function Home() {
             onDismissPendingCall={() => {
               if (!activeChannelId) return;
               setPendingCallByChannel((prev) => {
+                if (!(activeChannelId in prev)) return prev;
+                const next = { ...prev };
+                delete next[activeChannelId];
+                return next;
+              });
+            }}
+            // SMS chat-mirror deep link: /#/channels/<id>/m/<msgId> stashes
+            // the target message id in pendingScrollByChannel. See the DM
+            // branch above for the mirroring code path.
+            scrollToMessageId={
+              activeChannelId ? pendingScrollByChannel[activeChannelId] ?? null : null
+            }
+            onDidScrollToMessage={() => {
+              if (!activeChannelId) return;
+              setPendingScrollByChannel((prev) => {
                 if (!(activeChannelId in prev)) return prev;
                 const next = { ...prev };
                 delete next[activeChannelId];
