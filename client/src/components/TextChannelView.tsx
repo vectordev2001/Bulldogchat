@@ -49,6 +49,20 @@ interface Props {
   pendingCallRoom?: string | null;
   onDismissPendingCall?: () => void;
   /**
+   * Deep-link plumbing #2 — when an SMS chat-mirror link opened this channel
+   * with `/#/channels/<id>/m/<msgId>` (or the DM form `/#/dms/<id>/m/<msgId>`),
+   * Home.tsx passes the target message id here. Once the message list finishes
+   * loading we scroll the matching message into view and briefly highlight it
+   * with a ring flash, then call `onDidScrollToMessage` so Home clears the
+   * pending scroll (prevents re-scroll on unrelated re-renders). If the
+   * message isn't in the currently loaded page we still fire the callback
+   * to clear the pending state — the user drops at the latest message like
+   * a normal open (v1 behavior; loading more history for older messages is a
+   * follow-up if it turns out to matter).
+   */
+  scrollToMessageId?: number | null;
+  onDidScrollToMessage?: () => void;
+  /**
    * When true, the header's channel-name text is hidden (the icon and
    * topic separator still render). Used by the DM view in Home.tsx which
    * overlays its own label + rename control on top of this header; without
@@ -86,7 +100,7 @@ interface MentionMatch {
   startIdx: number;
 }
 
-export function TextChannelView({ channel, messages, loading, me, orgMembers, membersOpen, onToggleMembers, workObjectsOpen, onToggleWorkObjects, onSlashSchedule, pendingCallRoom, onDismissPendingCall, hideHeaderTitle }: Props) {
+export function TextChannelView({ channel, messages, loading, me, orgMembers, membersOpen, onToggleMembers, workObjectsOpen, onToggleWorkObjects, onSlashSchedule, pendingCallRoom, onDismissPendingCall, scrollToMessageId, onDidScrollToMessage, hideHeaderTitle }: Props) {
   const [draft, setDraft] = useState("");
   const { pending: pendingAtts, addFiles, remove: removePending, clear: clearPending, uploading, readyIds, atCapacity } = useAttachmentUploader({ max: 8 });
   const [threadParent, setThreadParent] = useState<ApiMessage | null>(null);
@@ -275,6 +289,49 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers, me
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [messages.length, channel.id]);
+
+  // SMS chat-mirror deep link — scroll the target message into view and flash
+  // a ring highlight. Runs after the auto-scroll-to-bottom effect above so we
+  // override that bottom-scroll. If the target isn't in the currently loaded
+  // page we still call `onDidScrollToMessage` so Home clears the pending
+  // scroll and future re-renders don't keep re-attempting. Deps intentionally
+  // include `messages.length` so a late-arriving message page can still catch
+  // the target row on first render.
+  useEffect(() => {
+    if (!scrollToMessageId) return;
+    if (loading) return;
+    // Use rAF so the scroll happens after the browser has laid out the newly
+    // rendered row — without this the scrollIntoView calculation runs against
+    // the pre-layout height and lands slightly off.
+    const raf = window.requestAnimationFrame(() => {
+      const container = scrollRef.current;
+      if (!container) {
+        onDidScrollToMessage?.();
+        return;
+      }
+      const target = container.querySelector<HTMLElement>(
+        `[data-message-id="${scrollToMessageId}"]`,
+      );
+      if (!target) {
+        // Target isn't in the current page — clear the pending scroll so the
+        // user drops at the latest message like a normal open. (v1: no
+        // pagination-back-to-msg support; add if it becomes a common miss.)
+        onDidScrollToMessage?.();
+        return;
+      }
+      target.scrollIntoView({ behavior: "smooth", block: "center" });
+      // Ring flash — same pattern as scrollToPinned so the affordance feels
+      // consistent. 1600ms is a hair longer than the pinned flash because the
+      // user is coming from an SMS tap (not a same-app click) and needs a
+      // beat to reorient.
+      target.classList.add("ring-2", "ring-vs-accent", "bg-accent/60");
+      window.setTimeout(() => {
+        target.classList.remove("ring-2", "ring-vs-accent", "bg-accent/60");
+      }, 1600);
+      onDidScrollToMessage?.();
+    });
+    return () => window.cancelAnimationFrame(raf);
+  }, [scrollToMessageId, loading, messages.length, channel.id, onDidScrollToMessage]);
 
   // Scroll-affordance state. Shows a floating "jump to latest" chevron when
   // the user is scrolled meaningfully above the bottom of the message list.
@@ -1338,6 +1395,10 @@ function MessageRow({ msg, grouped, isMe, meId, myRole, canPromoteToChangeOrder,
         grouped ? "" : "mt-4",
       ].join(" ")}
       data-testid={`message-${msg.id}`}
+      // Scroll target for the SMS chat-mirror deep link (see TextChannelView
+      // scrollToMessageId effect). Kept as a data attribute so tests + the
+      // scroll effect can locate a row without depending on internal layout.
+      data-message-id={msg.id}
     >
       <div className="w-10 shrink-0">
         {!grouped ? (

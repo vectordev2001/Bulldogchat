@@ -138,6 +138,7 @@ test("parseDeepLink: legacy ?channel=<id> form", async () => {
   assert.deepEqual(parseDeepLink("https://chat.bulldogops.com/?channel=42"), {
     channelId: 42,
     callRoom: null,
+    messageId: null,
   });
 });
 
@@ -148,6 +149,7 @@ test("parseDeepLink: push-notif /#/channels/<id>?call=<room> form", async () => 
   assert.deepEqual(parseDeepLink(href), {
     channelId: 42,
     callRoom: "group-channel-42-1720291000000",
+    messageId: null,
   });
 });
 
@@ -156,13 +158,45 @@ test("parseDeepLink: hash-path without ?call resolves channel only", async () =>
   assert.deepEqual(parseDeepLink("https://chat.bulldogops.com/#/channels/7"), {
     channelId: 7,
     callRoom: null,
+    messageId: null,
   });
+});
+
+test("parseDeepLink: SMS mirror /#/channels/<id>/m/<msgId> form", async () => {
+  // The chat-message SMS mirror in server/routes.ts emits this shape so tapping
+  // the SMS link opens the channel AND scrolls to the specific message.
+  const { parseDeepLink } = await import("../client/src/lib/deep-link");
+  assert.deepEqual(
+    parseDeepLink("https://chat.bulldogops.com/#/channels/42/m/9001"),
+    { channelId: 42, callRoom: null, messageId: 9001 },
+  );
+});
+
+test("parseDeepLink: SMS mirror /#/dms/<id>/m/<msgId> form", async () => {
+  // DMs are just channels with scope='dm' server-side, so this parses to the
+  // same shape and routes through the same channel loader in Home.tsx.
+  const { parseDeepLink } = await import("../client/src/lib/deep-link");
+  assert.deepEqual(
+    parseDeepLink("https://chat.bulldogops.com/#/dms/17/m/9002"),
+    { channelId: 17, callRoom: null, messageId: 9002 },
+  );
+});
+
+test("parseDeepLink: /m/ with bogus msgId still resolves the channel", async () => {
+  // A malformed msgId shouldn't block the channel open — we just skip the
+  // scroll-to step and drop the user at the latest message like normal.
+  const { parseDeepLink } = await import("../client/src/lib/deep-link");
+  assert.deepEqual(
+    parseDeepLink("https://chat.bulldogops.com/#/channels/42/m/abc"),
+    { channelId: 42, callRoom: null, messageId: null },
+  );
 });
 
 test("parseDeepLink: bogus channel id returns null", async () => {
   const { parseDeepLink } = await import("../client/src/lib/deep-link");
   assert.equal(parseDeepLink("https://chat.bulldogops.com/#/channels/abc"), null);
   assert.equal(parseDeepLink("https://chat.bulldogops.com/?channel=-5"), null);
+  assert.equal(parseDeepLink("https://chat.bulldogops.com/#/dms/abc/m/1"), null);
 });
 
 test("hasDeepLink is a boolean fast-path aligned with parseDeepLink", async () => {
@@ -171,6 +205,8 @@ test("hasDeepLink is a boolean fast-path aligned with parseDeepLink", async () =
     "https://chat.bulldogops.com/",
     "https://chat.bulldogops.com/?channel=7",
     "https://chat.bulldogops.com/#/channels/9?call=group-channel-9-1",
+    "https://chat.bulldogops.com/#/channels/9/m/123",
+    "https://chat.bulldogops.com/#/dms/9/m/123",
     "https://chat.bulldogops.com/#/settings",
   ];
   for (const h of hrefs) {

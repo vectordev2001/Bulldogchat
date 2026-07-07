@@ -2595,6 +2595,31 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
       tag: `call-${row.id}`,
     });
 
+    // Dual-ring: in addition to the browser/PWA ring above, dial the
+    // callee's saved cell number via Twilio SIP so their phone rings at
+    // the same time. Whichever leg they answer on wins; both can also
+    // stay connected (phone as a companion audio device). Best-effort:
+    // failures are logged and never break the call itself.
+    const calleePhone = (callee as { phone?: string | null }).phone ?? null;
+    if (calleePhone && sipConfigured()) {
+      void (async () => {
+        try {
+          const ident = await dialPhoneIntoRoom({
+            phone: calleePhone,
+            roomName,
+            displayName: callee.name,
+            channelLabel: `call with ${u.name}`,
+          });
+          if (!ident) {
+            console.warn(`[calls] SIP dial-out to ${callee.name} skipped — trunk unavailable`);
+          }
+        } catch (err) {
+          const msg = (err as { message?: string })?.message ?? "failed";
+          console.warn(`[calls] SIP dial-out to ${callee.name} failed: ${msg}`);
+        }
+      })();
+    }
+
     // Auto-miss after 45s if not answered. Setinterval/timeout is fine
     // for a single-instance Render deployment; if we ever scale out
     // we'll need a job queue.
@@ -2909,6 +2934,43 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
             const msg = (err as { message?: string })?.message ?? "failed";
             dialWarnings.push(`dial ${phone}: ${msg}`);
           }
+        }
+      }
+    }
+
+    // Dual-ring: for every app-invitee with a saved phone, also dial their
+    // cell so their phone rings alongside the app. Skip invitees already in
+    // phoneInviteeRecords (caller explicitly picked 'via Phone' — handled
+    // above) to avoid double-dialing the same number. Best-effort.
+    if (validInvitees.length > 0 && sipConfigured()) {
+      const explicitlyDialedUserIds = new Set(phoneInviteeRecords.map((r) => r.id));
+      const autoDialRecords = validInvitees
+        .map((id) => ({ id, user: storage.getUser(id) }))
+        .filter((x) => x.user && !explicitlyDialedUserIds.has(x.id))
+        .map((x) => ({
+          id: x.id,
+          name: x.user!.name,
+          phone: (x.user as { phone?: string | null }).phone ?? null,
+        }))
+        .filter((r) => !!r.phone) as Array<{ id: number; name: string; phone: string }>;
+      for (const rec of autoDialRecords) {
+        try {
+          const ident = await dialPhoneIntoRoom({
+            phone: rec.phone,
+            roomName: groupRoomName,
+            displayName: rec.name,
+            channelLabel,
+          });
+          if (ident) {
+            dialedUserIds.push(rec.id);
+            dialedPhones.push(rec.phone);
+          }
+          // Silent failure for auto-dial: the app-ring already fired, so the
+          // callee will still be notified. Only warn on explicit 'via Phone'
+          // failures (handled above).
+        } catch (err) {
+          const msg = (err as { message?: string })?.message ?? "failed";
+          console.warn(`[calls] auto-dial ${rec.name} failed: ${msg}`);
         }
       }
     }
