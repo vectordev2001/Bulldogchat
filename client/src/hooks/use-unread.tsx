@@ -115,5 +115,25 @@ export function useUnread({ enabled }: Options) {
     scheduleRefetch();
   }, [scheduleRefetch]);
 
-  return { byChannelId, byProjectId, markChannelRead, refetch: doFetch };
+  /**
+   * Clear every unread signal (chat backlog + missed calls) for one
+   * company. Optimistically zeroes the local counts so the sidebar star
+   * disappears immediately, then persists to the server and refetches to
+   * pick up any changes we didn't compute locally.
+   */
+  const markProjectRead = useCallback(async (projectId: number) => {
+    setByProjectId(prev => {
+      const existing = prev[projectId];
+      if (!existing) return prev;
+      return { ...prev, [projectId]: { chat: 0, calls: 0, hasUnread: false } };
+    });
+    try {
+      await apiRequest("POST", `/api/projects/${projectId}/read`, {});
+    } catch {
+      /* healed by refetch */
+    }
+    scheduleRefetch();
+  }, [scheduleRefetch]);
+
+  return { byChannelId, byProjectId, markChannelRead, markProjectRead, refetch: doFetch };
 }
