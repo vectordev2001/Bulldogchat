@@ -1,4 +1,4 @@
-import { Plus, Settings, LogOut, Check, Circle } from "lucide-react";
+import { Plus, Settings, LogOut, Check, Circle, Star } from "lucide-react";
 import { VectorLogo } from "./VectorLogo";
 import type { ApiProject, UserPresence } from "@/types/api";
 import { useAuth } from "@/lib/auth";
@@ -32,10 +32,15 @@ interface Props {
   activeId: number | null;
   onSelect: (id: number) => void;
   unreadByProjectId?: Record<number, number>;
+  // Companies that have any unread signal (chat or missed call). Rendered
+  // as a small star overlay in the pill's top-right corner so the user can
+  // scan the rail at a glance without opening each company. See
+  // `use-unread` for how this is computed + kept live.
+  hasUnreadByProjectId?: Record<number, boolean>;
   sseStatus: "connecting" | "open" | "closed";
 }
 
-export function ProjectRail({ projects, activeId, onSelect, unreadByProjectId, sseStatus }: Props) {
+export function ProjectRail({ projects, activeId, onSelect, unreadByProjectId, hasUnreadByProjectId, sseStatus }: Props) {
   const { user, logout } = useAuth();
   const { presence, manualPresence, setManualPresence } = usePresence();
   const [inviteOpen, setInviteOpen] = useState(false);
@@ -67,6 +72,7 @@ export function ProjectRail({ projects, activeId, onSelect, unreadByProjectId, s
             project={p}
             active={p.id === activeId}
             unread={unreadByProjectId?.[p.id] ?? 0}
+            hasUnread={!!hasUnreadByProjectId?.[p.id]}
             onClick={() => onSelect(p.id)}
           />
         ))}
@@ -186,11 +192,13 @@ function ProjectPill({
   project,
   active,
   unread,
+  hasUnread,
   onClick,
 }: {
   project: ApiProject;
   active: boolean;
   unread: number;
+  hasUnread: boolean;
   onClick: () => void;
 }) {
   const c1 = `hsl(${project.hue} 70% 55%)`;
@@ -232,6 +240,25 @@ function ProjectPill({
       {unread > 0 && !active && (
         <span className="absolute -bottom-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-vs-red text-white text-[10px] font-bold flex items-center justify-center ring-2 ring-[hsl(220_60%_9%)]">
           {unread > 99 ? "99+" : unread}
+        </span>
+      )}
+
+      {/*
+         Unread-star overlay. Fires whenever this company has ANY unread
+         signal (new chat or missed call), regardless of whether it's
+         also the active company. That way the star is a stable at-a-glance
+         indicator on the rail even for the pill you're currently viewing
+         (it clears once the channel is marked read). Uses vs-amber so it
+         doesn't clash with the red numeric badge above.
+       */}
+      {hasUnread && (
+        <span
+          className="absolute -top-1 -right-1 w-4 h-4 flex items-center justify-center rounded-full bg-[hsl(220_60%_9%)] ring-2 ring-[hsl(220_60%_9%)]"
+          data-testid={`badge-unread-star-${project.id}`}
+          title="New activity"
+          aria-label="New activity"
+        >
+          <Star className="w-3 h-3 text-vs-amber fill-vs-amber" />
         </span>
       )}
     </button>

@@ -89,7 +89,22 @@ function IncomingCallModal() {
           </div>
         </div>
         <div className="text-xl font-display text-white mb-1">{incoming.callerName}</div>
-        <div className="text-xs text-[hsl(0_0%_60%)] font-mono mb-6">is calling you</div>
+        {incoming.channelName ? (
+          // Show the channel this call is coming from so the callee has
+          // context before picking up. Uses monospace for the #handle to
+          // match the rest of the app's channel-label styling.
+          <div
+            className="text-xs text-[hsl(0_0%_70%)] font-mono mb-1"
+            data-testid="text-incoming-channel"
+          >
+            from <span className="text-vs-blue-light">#{incoming.channelName}</span>
+          </div>
+        ) : null}
+        <div className="text-xs text-[hsl(0_0%_60%)] font-mono mb-6">
+          {incoming.channelName
+            ? `${incoming.kind === "video" ? "Video" : "Voice"} call · tap to join`
+            : "is calling you"}
+        </div>
         <div className="flex gap-3 justify-center">
           <button
             type="button"
@@ -464,10 +479,21 @@ function ActiveCallOverlay() {
             testid="call-toolbar-effects"
           />
 
-          {/* AI Meeting Clerk — inline button so it's always visible (Phase 1.9.25) */}
+          {/* AI Meeting Clerk — inline button so it's always visible (Phase 1.9.25).
+              For channel calls where the current user is the caller (started or
+              joined via the Join banner as the effective host), we auto-arm a
+              5-second consent banner so the clerk begins recording unless the
+              caller cancels. This mirrors the flow other meeting tools use for
+              "record by default" — the room owner opts out, not in. */}
           {hasChannel && (
             <div className="flex items-center" data-testid="call-toolbar-clerk">
-              <MeetingClerkButton channelId={channelId} canControl={true} roomName={active.roomName} compact />
+              <MeetingClerkButton
+                channelId={channelId}
+                canControl={true}
+                roomName={active.roomName}
+                compact
+                autoStart={!!active.iAmCaller}
+              />
             </div>
           )}
 

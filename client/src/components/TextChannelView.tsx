@@ -37,6 +37,17 @@ interface Props {
   workObjectsOpen?: boolean;
   onToggleWorkObjects?: () => void;
   onSlashSchedule?: (titleHint: string) => void;
+  /**
+   * Deep-link plumbing: when a call push notification opened this channel
+   * with `?call=<room>`, Home.tsx passes the room name here. We render a
+   * dismissible "Join call" banner. If the incoming-call SSE ringer is
+   * already firing for the same room, this banner is a redundant path
+   * to the same accept action — but on a cold app-open (from a killed
+   * push) the SSE ringer hasn't landed yet and this banner is the only
+   * way in. Cleared by tapping Join OR Dismiss.
+   */
+  pendingCallRoom?: string | null;
+  onDismissPendingCall?: () => void;
 }
 
 const ROLE_COLOR: Record<UserRole, string> = {
@@ -68,7 +79,7 @@ interface MentionMatch {
   startIdx: number;
 }
 
-export function TextChannelView({ channel, messages, loading, me, orgMembers, membersOpen, onToggleMembers, workObjectsOpen, onToggleWorkObjects, onSlashSchedule }: Props) {
+export function TextChannelView({ channel, messages, loading, me, orgMembers, membersOpen, onToggleMembers, workObjectsOpen, onToggleWorkObjects, onSlashSchedule, pendingCallRoom, onDismissPendingCall }: Props) {
   const [draft, setDraft] = useState("");
   const { pending: pendingAtts, addFiles, remove: removePending, clear: clearPending, uploading, readyIds, atCapacity } = useAttachmentUploader({ max: 8 });
   const [threadParent, setThreadParent] = useState<ApiMessage | null>(null);
@@ -82,7 +93,7 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers, me
   // Feature 2.2 — promote-to-change-order dialog. Set to the source message
   // when the user picks the action from the per-message menu.
   const [promoteMsg, setPromoteMsg] = useState<ApiMessage | null>(null);
-  const { active: activeCall, outgoing: outgoingCall, startGroupCall } = useCalls();
+  const { active: activeCall, outgoing: outgoingCall, startGroupCall, joinChannelCall } = useCalls();
   const callBusy = !!activeCall || !!outgoingCall;
   const [huddleStarting, setHuddleStarting] = useState(false);
 
@@ -694,6 +705,60 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers, me
           </div>
         </div>
       </header>
+
+      {/* Join-call banner. Rendered when a deep link (/#/channels/<id>?call=<room>)
+          or a live channel-call SSE event stashed a pending call room in
+          Home.tsx (pendingCallByChannel[channel.id]). One-tap: mint a token via
+          /api/channels/:id/group-call/join and drop the user into the same
+          LiveKit room the caller is already in. Dismiss just clears the state
+          for this channel; the user can still hit the header Phone/Video
+          buttons to start a new call. */}
+      {pendingCallRoom && !activeCall && !outgoingCall && (
+        <div
+          className="px-4 py-2.5 bg-[hsl(var(--vs-accent)/0.12)] border-b border-[hsl(var(--vs-accent)/0.3)] flex items-center gap-3 text-sm"
+          data-testid="banner-join-channel-call"
+        >
+          <Phone className="w-4 h-4 text-vs-red shrink-0" />
+          <div className="text-[hsl(var(--vs-text))] leading-snug flex-1 min-w-0">
+            <span className="font-semibold">Call in progress</span>
+            <span className="text-[hsl(var(--vs-text-muted))]"> — tap Join to hop into #{channel.name}</span>
+          </div>
+          <button
+            type="button"
+            onClick={async () => {
+              try {
+                await joinChannelCall({
+                  channelId: channel.id,
+                  channelName: channel.name,
+                  roomName: pendingCallRoom,
+                  kind: "voice",
+                });
+                onDismissPendingCall?.();
+              } catch (err) {
+                channelToast({
+                  title: "Couldn't join call",
+                  description: (err as { message?: string })?.message ?? "Please try again.",
+                  variant: "destructive",
+                });
+              }
+            }}
+            disabled={callBusy}
+            className="px-3 py-1.5 rounded bg-vs-red text-white text-xs font-medium hover:brightness-110 disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-1.5"
+            data-testid="button-join-channel-call"
+          >
+            <Phone className="w-3.5 h-3.5" /> Join
+          </button>
+          <button
+            type="button"
+            onClick={() => onDismissPendingCall?.()}
+            className="p-1 rounded hover-elevate text-[hsl(var(--vs-text-muted))]"
+            title="Dismiss"
+            data-testid="button-dismiss-channel-call"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
 
       {/* Phase 1.9.3 — contract banner. Renders above the pinned-message
           banner so the contract context is the first thing members see. */}

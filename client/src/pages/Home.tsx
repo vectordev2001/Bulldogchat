@@ -4,7 +4,9 @@ import { Loader2 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "@/lib/auth";
 import { queryClient, apiRequest } from "@/lib/queryClient";
+import { hasDeepLink, parseDeepLink, stripDeepLinkFromUrl } from "@/lib/deep-link";
 import { useSSE } from "@/hooks/use-sse";
+import { useUnread } from "@/hooks/use-unread";
 import { ProjectRail } from "@/components/ProjectRail";
 import { ChannelSidebar } from "@/components/ChannelSidebar";
 import { CreateChannelDialog } from "@/components/CreateChannelDialog";
@@ -25,6 +27,11 @@ export default function Home() {
   // Project + channel selection
   const [activeProjectId, setActiveProjectId] = useState<number | null>(null);
   const [channelByProject, setChannelByProject] = useState<Record<number, number>>({});
+  // Keyed by channelId — when set, TextChannelView renders a "Join call"
+  // banner for that room name. Populated by the ?call=<room> deep-link
+  // (from push notifications) and cleared when the user taps Join or
+  // Dismiss on the banner.
+  const [pendingCallByChannel, setPendingCallByChannel] = useState<Record<number, string>>({});
   // Phase 1.9.1: Active DM selection. When non-null we render the DM thread
   // INSTEAD of the project channel — DMs are a parallel "view" that lives
   // above Jobs in the sidebar. Selecting a project channel clears the DM,
@@ -91,22 +98,52 @@ export default function Home() {
     refetchOnWindowFocus: true,
   });
 
-  // Deep-link: ?channel=<id> — fired by contracts "Create chat meeting" button.
-  // Run once on mount; resolve the channel, jump to its project, select it, then
-  // strip the param so a refresh doesn't keep re-applying it.
+  // Per-company unread rollup for the star badge on the left sidebar rail.
+  // The hook fetches `/api/me/unread` on mount + on any `unread:refresh`
+  // window event (fired by SSE onMessageNew below and by missed-call flow
+  // in CallContext). `markChannelRead` is fired when the user opens a
+  // channel to persist a read receipt.
+  const { byProjectId: unreadByProject, markChannelRead } = useUnread({ enabled: !!user });
+  const hasUnreadByProjectId = useMemo(() => {
+    const map: Record<number, boolean> = {};
+    for (const [pid, entry] of Object.entries(unreadByProject)) {
+      if (entry?.hasUnread) map[Number(pid)] = true;
+    }
+    return map;
+  }, [unreadByProject]);
+  const unreadCountByProjectId = useMemo(() => {
+    const map: Record<number, number> = {};
+    for (const [pid, entry] of Object.entries(unreadByProject)) {
+      // Combine chat + calls into a single numeric badge; the star already
+      // carries the boolean signal, so this just gives the user a
+      // magnitude hint.
+      const total = (entry?.chat ?? 0) + (entry?.calls ?? 0);
+      if (total > 0) map[Number(pid)] = total;
+    }
+    return map;
+  }, [unreadByProject]);
+
+  // Deep-link entrypoints:
+  //   (a) legacy ?channel=<id>            — fired by contracts "Create chat meeting" button.
+  //   (b) /#/channels/<id>?call=<room>    — fired by call push notifications.
+  //
+  // Both resolve to a target channel; (b) also stashes the ?call room name in
+  // window-scoped state that TextChannelView reads to render a "Join call"
+  // banner. Run once on mount and then strip the params so refreshes don't
+  // re-apply the deep link. The hash-path form uses wouter's hash router
+  // (window.location.hash) so parsing is manual (URL API doesn't split hashes).
   const [deepLinkPending, setDeepLinkPending] = useState<boolean>(() => {
     if (typeof window === "undefined") return false;
-    return new URL(window.location.href).searchParams.has("channel");
+    return hasDeepLink(window.location.href);
   });
   useEffect(() => {
     if (!deepLinkPending) return;
-    const url = new URL(window.location.href);
-    const raw = url.searchParams.get("channel");
-    const channelId = raw ? Number(raw) : NaN;
-    if (!Number.isFinite(channelId)) {
+    const parsed = parseDeepLink(window.location.href);
+    if (!parsed || !Number.isFinite(parsed.channelId)) {
       setDeepLinkPending(false);
       return;
     }
+    const { channelId, callRoom } = parsed;
     let cancelled = false;
     (async () => {
       try {
@@ -117,12 +154,17 @@ export default function Home() {
         if (cancelled || !ch?.projectId) return;
         setActiveProjectId(ch.projectId);
         setChannelByProject((prev) => ({ ...prev, [ch.projectId]: ch.id }));
+        if (callRoom) {
+          // Stash the pending call room name in a keyed store the channel
+          // view reads to render its "Join call" banner. Keyed by channel
+          // id so the banner only shows in the right channel.
+          setPendingCallByChannel((prev) => ({ ...prev, [ch.id]: callRoom }));
+        }
       } catch {
         /* fall through to default project */
       } finally {
         if (!cancelled) {
-          url.searchParams.delete("channel");
-          window.history.replaceState({}, "", url.pathname + (url.search ? url.search : "") + url.hash);
+          stripDeepLinkFromUrl();
           setDeepLinkPending(false);
         }
       }
@@ -228,6 +270,10 @@ export default function Home() {
         // Cheap: always poke the DM list. The server returns 0 rows for
         // users who aren't in any DM channel, so the cost is negligible.
         queryClient.invalidateQueries({ queryKey: ["/api/dms"] });
+        // Nudge the unread hook so the star-badge rail refreshes. Debounced
+        // inside the hook so a burst of messages collapses to one HTTP
+        // call.
+        window.dispatchEvent(new CustomEvent("unread:refresh", { detail: { channelId: data.channelId } }));
       }
     },
     onMessageUpdate: (data) => {
@@ -305,6 +351,9 @@ export default function Home() {
     setChannelByProject((prev) => ({ ...prev, [activeProjectId]: id }));
     setActiveDmId(null); // Picked a channel — leave the DM view.
     setMobileNavOpen(false);
+    // Persist a read receipt on channel open. Also clears the star badge
+    // locally (optimistic) via the useUnread hook.
+    markChannelRead(id);
   };
   const selectDm = (id: number) => {
     setActiveDmId(id);
@@ -394,6 +443,8 @@ export default function Home() {
           projects={projects}
           activeId={activeProjectId}
           onSelect={selectProject}
+          unreadByProjectId={unreadCountByProjectId}
+          hasUnreadByProjectId={hasUnreadByProjectId}
           sseStatus={sseStatus}
         />
         {activeProject && user && (
@@ -582,6 +633,20 @@ export default function Home() {
               setScheduleHint(hint);
               setScheduleChannelId(activeChannelId);
               setScheduleOpen(true);
+            }}
+            // If a call push deep-linked us here with ?call=<room>, hand
+            // the room name to the channel view so it can render the
+            // one-tap "Join call" banner. The channel view calls
+            // onDismissPendingCall() to clear it once the user acts.
+            pendingCallRoom={activeChannelId ? pendingCallByChannel[activeChannelId] ?? null : null}
+            onDismissPendingCall={() => {
+              if (!activeChannelId) return;
+              setPendingCallByChannel((prev) => {
+                if (!(activeChannelId in prev)) return prev;
+                const next = { ...prev };
+                delete next[activeChannelId];
+                return next;
+              });
             }}
           />
         )}

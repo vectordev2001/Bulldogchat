@@ -22,7 +22,9 @@ const SUITE_INTERNAL_SECRET = process.env.SUITE_INTERNAL_SECRET;
 export type EventKey =
   | "meeting_invite"      // scheduled-call invite
   | "meeting_reminder"    // scheduled-call ~5min reminder
-  | "live_call_invite";   // immediate ring on outbound dial
+  | "live_call_invite"    // immediate ring on outbound dial
+  | "chat_dm_notify"      // DM received (opt-in SMS mirror of push)
+  | "chat_mention_notify";// @-mention in a channel (opt-in SMS mirror of push)
 
 export interface ConsentLookup {
   allowed: boolean;          // overall: is SMS permitted?
@@ -110,6 +112,12 @@ export async function checkSmsConsent(
         case "meeting_reminder":
         case "live_call_invite":
           return data.prefs?.smsMeetingInvite;
+        case "chat_dm_notify":
+        case "chat_mention_notify":
+          // No dedicated auth flag yet — gate on master + consent + phone.
+          // Once bulldog-auth adds a smsChatDmMentions preference, map it here.
+          // Fail-closed on missing master flag is enough for TCPA compliance.
+          return undefined;
         default:
           return undefined;
       }

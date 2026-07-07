@@ -165,6 +165,65 @@ function userCanAccessChannel(userId: number, orgId: number, channelId: number, 
   return { channel, project };
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// POST /api/channels/:id/group-call/join
+//
+// Extracted to a stand-alone registrar so unit tests can mount JUST this
+// endpoint against a bare Express app, without booting the full route tree
+// (which runs migrations + seeds and hangs a Node test worker).
+//
+// See the comment above the `registerGroupCallJoinRoute(app)` call inside
+// `registerRoutes` for the semantic contract. Behaviour is intentionally
+// paranoid: reject unknown room shapes, mismatched channelIds embedded in
+// the room name, and any channel the caller can't see. When LiveKit isn't
+// configured we return 503 rather than a fake token, mirroring the other
+// call endpoints.
+// ─────────────────────────────────────────────────────────────────────────
+export function registerGroupCallJoinRoute(app: Express) {
+  app.post("/api/channels/:id/group-call/join", requireAuth, async (req, res) => {
+    const u = (req as AuthedRequest).user;
+    const channelId = Number(req.params.id);
+    if (!Number.isFinite(channelId) || channelId <= 0) {
+      return res.status(400).json({ message: "invalid channelId" });
+    }
+    const roomName = typeof req.body?.roomName === "string" ? req.body.roomName : "";
+    // Whitelist the room-name shapes we mint elsewhere. Anything else is
+    // either a client bug or an attempt to grab a token for an unrelated
+    // room, so 400 rather than trying to "be helpful."
+    const ROOM_RE = /^(direct-\d+|group-channel-\d+-\d+|vector-\d+-channel-\d+|bdc-[a-hj-km-np-z2-9]{3}-[a-hj-km-np-z2-9]{4}-[a-hj-km-np-z2-9]{3}|sched-\d+-\d+)$/;
+    if (!ROOM_RE.test(roomName)) {
+      return res.status(400).json({ message: "invalid roomName" });
+    }
+    const access = userCanAccessChannel(u.id, u.orgId, channelId, (req as AuthedRequest).access);
+    if (!access) return res.status(403).json({ message: "forbidden" });
+    if (!livekitConfigured()) {
+      return res.status(503).json({
+        message: "LiveKit not configured — preview mode only. Add LIVEKIT_API_KEY, LIVEKIT_API_SECRET, LIVEKIT_WS_URL to environment.",
+      });
+    }
+    // If the room name embeds a channelId (`group-channel-<id>-<ts>`), it
+    // MUST match the URL param. Prevents a caller with access to channel A
+    // from being handed a token to channel B's live room by manipulating
+    // the body.
+    const groupChannelMatch = roomName.match(/^group-channel-(\d+)-\d+$/);
+    if (groupChannelMatch && Number(groupChannelMatch[1]) !== channelId) {
+      return res.status(403).json({ message: "room does not belong to this channel" });
+    }
+    const token = await generateLivekitToken({
+      userId: u.id, userName: u.name, roomName, canPublish: true,
+    });
+    const kind: "video" | "audio" = "video";
+    res.json({
+      roomName,
+      token,
+      ws_url: process.env.LIVEKIT_WS_URL,
+      kind,
+      channelId,
+      channelName: access.channel!.name,
+    });
+  });
+}
+
 // ─────────────────── ROUTES ───────────────────
 export async function registerRoutes(_httpServer: Server, app: Express) {
   runMigrations();
@@ -534,6 +593,145 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
       list = list.filter(c => mtCanSeeChannel(access, c.projectId, c.regionId ?? null));
     }
     res.json(list);
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // GET /api/me/unread
+  //
+  // Per-company unread rollup that powers the star badge on the left
+  // sidebar's company rail. Aggregates two signals:
+  //
+  //   1. Chat: any channel message with id > read_receipts.last_read_message_id
+  //      (or ANY message when no receipt row exists yet), filtered to channels
+  //      the caller can actually see.
+  //   2. Calls: missed direct_calls where I'm the callee, whose room name
+  //      embeds a channelId we can map back to a project. 1:1 direct calls
+  //      (no channel context) currently aren't attributed to a company — they
+  //      surface elsewhere in the UI.
+  //
+  // Returns byChannelId (raw chat counts) and byProjectId ({chat, calls,
+  // hasUnread}). Kept intentionally cheap: two aggregate SQL statements +
+  // one channel-list read; runs in a few ms on a hot cache.
+  // ─────────────────────────────────────────────────────────────────────────
+  app.get("/api/me/unread", requireAuth, (req, res) => {
+    const u = (req as AuthedRequest).user;
+    const access = (req as AuthedRequest).access;
+
+    // 1. Enumerate the channels the caller can see across every company they
+    //    belong to. We can't just SELECT COUNT() from messages joined on
+    //    read_receipts because it'd leak counts from channels the user has
+    //    no access to (e.g. private channels they're not a member of).
+    const projects = storage.listProjectsForUserInOrg(u.id, u.orgId);
+    const visibleChannels: { id: number; projectId: number }[] = [];
+    for (const p of projects) {
+      let list = storage.listChannelsForUserInProject(p.id, u.id);
+      if (access) {
+        list = list.filter(c => mtCanSeeChannel(access, c.projectId, c.regionId ?? null));
+      }
+      for (const c of list) visibleChannels.push({ id: c.id, projectId: c.projectId });
+    }
+
+    const byChannelId: Record<number, number> = {};
+    const byProjectId: Record<number, { chat: number; calls: number; hasUnread: boolean }> = {};
+    for (const p of projects) byProjectId[p.id] = { chat: 0, calls: 0, hasUnread: false };
+
+    if (visibleChannels.length > 0) {
+      // Batch the count query so we don't fire N statements. We COUNT() per
+      // channel where message.id > COALESCE(last_read_message_id, 0), and
+      // exclude the caller's own messages (a user's own send should never
+      // light up their sidebar).
+      const channelIds = visibleChannels.map(c => c.id);
+      const placeholders = channelIds.map(() => "?").join(",");
+      const rows = rawDb
+        .prepare(
+          `SELECT m.channel_id AS channelId, COUNT(*) AS n
+             FROM messages m
+             LEFT JOIN read_receipts r
+               ON r.channel_id = m.channel_id AND r.user_id = ?
+            WHERE m.channel_id IN (${placeholders})
+              AND m.user_id != ?
+              AND m.deleted_at IS NULL
+              AND m.id > COALESCE(r.last_read_message_id, 0)
+            GROUP BY m.channel_id`
+        )
+        .all(u.id, ...channelIds, u.id) as { channelId: number; n: number }[];
+      const chanToProject = new Map(visibleChannels.map(c => [c.id, c.projectId]));
+      for (const row of rows) {
+        byChannelId[row.channelId] = row.n;
+        const pid = chanToProject.get(row.channelId);
+        if (pid !== undefined) byProjectId[pid].chat += row.n;
+      }
+    }
+
+    // 2. Missed direct_calls where I'm the callee. Map the room name back to
+    //    a channelId (group-channel-<id>-<ts> or vector-<n>-channel-<id>) and
+    //    roll up to that channel's projectId. Rows without a resolvable
+    //    channelId are dropped — they'll show elsewhere in the UI.
+    const missedRows = rawDb
+      .prepare(
+        `SELECT room_name AS roomName
+           FROM direct_calls
+          WHERE callee_id = ?
+            AND status = 'missed'
+            AND started_at > (strftime('%s','now') - 7*86400)`
+      )
+      .all(u.id) as { roomName: string }[];
+    const chanToProjectAll = new Map(visibleChannels.map(c => [c.id, c.projectId]));
+    for (const row of missedRows) {
+      const m = row.roomName?.match(/(?:group-channel-|vector-\d+-channel-)(\d+)/);
+      if (!m) continue;
+      const cid = Number(m[1]);
+      const pid = chanToProjectAll.get(cid);
+      if (pid === undefined) continue;
+      byProjectId[pid].calls += 1;
+    }
+
+    for (const pid of Object.keys(byProjectId)) {
+      const b = byProjectId[Number(pid)];
+      b.hasUnread = b.chat > 0 || b.calls > 0;
+    }
+
+    res.json({ byChannelId, byProjectId, updatedAt: Date.now() });
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // POST /api/channels/:id/read
+  //
+  // Advance the caller's read receipt to the given message id (or, when
+  // omitted, to the latest message in the channel). Clears the star badge
+  // for this channel in the caller's sidebar. Best-effort: never rejects a
+  // stale message id, since receipts only move forward.
+  // ─────────────────────────────────────────────────────────────────────────
+  app.post("/api/channels/:id/read", requireAuth, (req, res) => {
+    const u = (req as AuthedRequest).user;
+    const channelId = Number(req.params.id);
+    if (!Number.isFinite(channelId) || channelId <= 0) {
+      return res.status(400).json({ message: "invalid channelId" });
+    }
+    const access = userCanAccessChannel(u.id, u.orgId, channelId, (req as AuthedRequest).access);
+    if (!access) return res.status(403).json({ message: "forbidden" });
+
+    // Prefer the body's messageId; otherwise use the current tip of the
+    // channel. `MAX(id)` is fine here because messages.id is monotonic and
+    // we only ever move receipts forward.
+    let messageId = Number(req.body?.messageId);
+    if (!Number.isFinite(messageId) || messageId <= 0) {
+      const tip = rawDb
+        .prepare(`SELECT MAX(id) AS tip FROM messages WHERE channel_id = ?`)
+        .get(channelId) as { tip: number | null } | undefined;
+      messageId = tip?.tip ?? 0;
+    }
+    if (messageId > 0) {
+      // Existing storage helper does an upsert. Idempotent even if the caller
+      // is already ahead of the requested id — the SET moves the timestamp
+      // forward but the observable behaviour is unchanged.
+      const existing = rawDb
+        .prepare(`SELECT last_read_message_id AS m FROM read_receipts WHERE channel_id = ? AND user_id = ?`)
+        .get(channelId, u.id) as { m: number | null } | undefined;
+      const target = Math.max(messageId, existing?.m ?? 0);
+      storage.setReadReceipt(channelId, u.id, target);
+    }
+    res.json({ ok: true, messageId });
   });
 
   // Multi-tenant: list regions for a project. Returns only regions the user
@@ -1613,6 +1811,41 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
         },
         { channelId },
       );
+
+      // Opt-in SMS mirror for DMs + @-mentions. Fires only when the recipient
+      // has smsConsentStatus="granted" AND smsMasterEnabled in bulldog-auth.
+      // No dedicated per-event flag yet — tracked in server/auth-consent.ts.
+      // Fail-closed: any lookup failure just skips SMS. Push still lands.
+      if (smsAvailable()) {
+        void (async () => {
+          const recipients = storage.listUsersByIds(Array.from(recipientIds));
+          const preview = parsed.data.content.replace(/\s+/g, " ").trim().slice(0, 120);
+          for (const r of recipients) {
+            if (!r.email) continue;
+            const wasMention = userMentions.has(r.id) || hasEveryone || hasHere;
+            const eventKey: "chat_dm_notify" | "chat_mention_notify" =
+              isDm ? "chat_dm_notify" : "chat_mention_notify";
+            try {
+              const consent = await checkSmsConsent(r.email, eventKey);
+              if (!consent.allowed || !consent.phoneE164) continue;
+              const label = isDm
+                ? `${u.name}`
+                : `${u.name} · #${access.channel!.name}`;
+              const openUrl = isDm
+                ? `https://chat.bulldogops.com/#/dms/${channelId}/m/${msg.id}`
+                : `https://chat.bulldogops.com/#/channels/${channelId}/m/${msg.id}`;
+              // Keep the SMS terse: sender + preview + one deep link. No
+              // marketing copy — TCPA compliance is easier when the body is
+              // clearly a transactional relay of an in-app event.
+              const smsBody = `Bulldog: ${label}\n${preview}\n${openUrl}`;
+              await sendSms({ to: consent.phoneE164, body: smsBody });
+            } catch {
+              /* best-effort */
+              void wasMention;
+            }
+          }
+        })();
+      }
     }
 
     res.json(wire);
@@ -2719,6 +2952,23 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
   });
 
   // ─────────────────────────────────────────────────────────────────────────
+  // Join an EXISTING channel group call by roomName. Used by the in-channel
+  // "Join call" banner that a client shows when it lands via a push-notif
+  // deep link (/#/channels/<id>?call=<room>) or when another user starts a
+  // call while this user is already scrolling the channel.
+  //
+  // Unlike /api/calls/active/invite (which invites OTHERS), this endpoint
+  // mints a LiveKit token for the CALLER themselves so they can walk into
+  // the room. It's a thin, purpose-built entry point so the banner doesn't
+  // have to reuse group-call/start (which would spin up a fresh room) or
+  // fake a 1:1 accept flow.
+  //
+  // Registered via `registerGroupCallJoinRoute` (exported below) so tests
+  // can mount it directly without booting the full route tree.
+  // ─────────────────────────────────────────────────────────────────────────
+  registerGroupCallJoinRoute(app);
+
+  // ─────────────────────────────────────────────────────────────────────────
   // Invite more people into an ALREADY-RUNNING call. Mirrors
   // group-call/start but joins the existing room (1:1 "direct-<callId>"
   // OR a previously-started "group-channel-<id>-<ts>") instead of
@@ -2833,6 +3083,16 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
       if (ch) channelLabel = `#${ch.name}`;
     }
 
+    // Resolve channel context from the shared room name once, hoisted above
+    // the ringing loop so downstream branches (SSE payload, add-invitee
+    // push notification) can share it without recomputing. Falls back to
+    // (null, null) when the room isn't channel-bound.
+    const activeChanMatch = roomName.match(/(?:group-channel-|vector-\d+-channel-)(\d+)/);
+    const activeChanId: number | null = activeChanMatch ? Number(activeChanMatch[1]) : null;
+    const activeChanName: string | null = activeChanId
+      ? (storage.getChannel(activeChanId)?.name ?? null)
+      : null;
+
     // Create per-invitee ringing rows (so the standard incoming-call UI
     // fires on each invitee's device). All rows share the existing room.
     for (const calleeId of validInvitees) {
@@ -2847,15 +3107,9 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
       } catch {
         /* best-effort */
       }
-      // Best-effort: resolve channel context from the shared room name so
-      // the incoming modal shows the source channel. `channelLabel` above
-      // (derived from the same regex) is already used for SIP branding, so
-      // this is just re-exposing it to the SSE payload.
-      const activeChanMatch = roomName.match(/(?:group-channel-|vector-\d+-channel-)(\d+)/);
-      const activeChanId = activeChanMatch ? Number(activeChanMatch[1]) : null;
-      const activeChanName = activeChanId
-        ? (storage.getChannel(activeChanId)?.name ?? null)
-        : null;
+      // `activeChanId`/`activeChanName` are hoisted above the loop so both
+      // the SSE payload and the add-invitee notification below can share
+      // them.
       const payload: CallEventPayload = {
         callId: row.id, callerId: u.id, calleeId,
         callerName: u.name, callerHue: u.hue,

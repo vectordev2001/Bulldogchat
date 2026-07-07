@@ -27,6 +27,16 @@ export interface IncomingCallData {
   callerHue: number;
   kind: "voice" | "video";
   roomName: string;
+  /**
+   * Channel context populated by the server SSE payload when the call
+   * originated from a channel (group-call/start or add-to-active). null
+   * for genuine 1:1 direct calls. Used by IncomingCallModal to show
+   * "from #<channel>" and by acceptIncoming() below to seed the
+   * ActiveCallSession so the MeetingClerk + in-call chat panel work
+   * without regex-parsing the room name.
+   */
+  channelId?: number | null;
+  channelName?: string | null;
 }
 
 export interface ActiveCallSession {
@@ -43,6 +53,8 @@ export interface ActiveCallSession {
   active: boolean;
   /** Channel this call is scoped to (enables chat panel + MeetingClerk). */
   channelId?: number | null;
+  /** Human-readable channel name for the header / clerk banner. */
+  channelName?: string | null;
 }
 
 export interface OutgoingCallState {
@@ -127,6 +139,20 @@ interface CallCtxValue {
    * mounts. Used by the /call-join SPA route when someone taps an SMS link.
    */
   joinByToken(token: string): Promise<void>;
+  /**
+   * Join an EXISTING channel group call by roomName. Used by the in-channel
+   * "Join call" banner (surfaced after a push-notif deep link
+   * /#/channels/<id>?call=<room> or when a channel call starts while this
+   * user is already viewing the channel). Server mints a fresh LiveKit
+   * token for the caller against the given room and returns the ws_url.
+   * No-op if the user is already in a call.
+   */
+  joinChannelCall(opts: {
+    channelId: number;
+    channelName: string;
+    roomName: string;
+    kind?: "voice" | "video";
+  }): Promise<void>;
 }
 
 const CallCtx = createContext<CallCtxValue | null>(null);
@@ -359,6 +385,8 @@ export function CallProvider({ children }: { children: ReactNode }) {
         kind: resp.kind,
         iAmCaller: true,
         active: true,
+        channelId,
+        channelName,
       });
     }
     return { meetingCode: resp.meetingCode ?? null, joinUrl: resp.joinUrl ?? null };
@@ -377,11 +405,19 @@ export function CallProvider({ children }: { children: ReactNode }) {
       roomName: resp.roomName,
       token: resp.token,
       wsUrl: resp.ws_url,
-      otherName: inc.callerName,
-      otherHue: inc.callerHue,
+      // If this was a channel call, show "#channel" as the "other party"
+      // banner label (matches the outbound group-call convention above).
+      // Fall back to the caller's name for 1:1 calls.
+      otherName: inc.channelName ? `#${inc.channelName}` : inc.callerName,
+      otherHue: inc.channelName ? 215 : inc.callerHue,
       kind: inc.kind,
       iAmCaller: false,
       active: true,
+      // Seed channel context from the SSE payload so the MeetingClerk
+      // auto-consent banner and in-call chat panel key off the same id
+      // the server already resolved. Fallbacks to null for 1:1 calls.
+      channelId: inc.channelId ?? null,
+      channelName: inc.channelName ?? null,
     });
   }, [stopRing]);
 
@@ -438,6 +474,37 @@ export function CallProvider({ children }: { children: ReactNode }) {
 
   const clearLastEnded = useCallback(() => setLastEnded(null), []);
 
+  // Join an existing channel call by roomName. The Join-call banner in
+  // TextChannelView calls this after a deep link surfaces a pending call.
+  // Server-side we hit the dedicated /api/channels/:id/group-call/join
+  // endpoint (as opposed to /group-call/start which would mint a new room).
+  const joinChannelCall = useCallback<CallCtxValue["joinChannelCall"]>(async ({
+    channelId, channelName, roomName, kind = "voice",
+  }) => {
+    if (active || outgoing) return;
+    const resp = await apiRequest<{
+      roomName: string;
+      token: string;
+      ws_url: string;
+      kind: "voice" | "video";
+      channelId: number;
+      channelName: string | null;
+    }>("POST", `/api/channels/${channelId}/group-call/join`, { roomName, kind });
+    setActive({
+      callId: 0,
+      roomName: resp.roomName,
+      token: resp.token,
+      wsUrl: resp.ws_url,
+      otherName: `#${resp.channelName ?? channelName}`,
+      otherHue: 215,
+      kind: resp.kind,
+      iAmCaller: false,
+      active: true,
+      channelId: resp.channelId,
+      channelName: resp.channelName ?? channelName,
+    });
+  }, [active, outgoing]);
+
   const joinByToken = useCallback<CallCtxValue["joinByToken"]>(async (token) => {
     if (active || outgoing) return;
     const resp = await apiRequest<{
@@ -468,7 +535,7 @@ export function CallProvider({ children }: { children: ReactNode }) {
     <CallCtx.Provider value={{
       incoming, outgoing, active, lastEnded,
       startCall, startGroupCall, acceptIncoming, declineIncoming, endActive, cancelOutgoing, clearLastEnded,
-      inviteToActiveCall, joinByToken,
+      inviteToActiveCall, joinByToken, joinChannelCall,
     }}>
       {children}
     </CallCtx.Provider>
