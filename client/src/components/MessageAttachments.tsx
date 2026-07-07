@@ -13,6 +13,21 @@ function isImage(a: ApiAttachment): boolean {
   return a.contentType.startsWith("image/");
 }
 
+function isGif(a: ApiAttachment): boolean {
+  return a.contentType === "image/gif" || a.filename.toLowerCase().endsWith(".gif");
+}
+
+// For animated GIFs we ALWAYS render the original url in the grid preview.
+// Historical uploads still carry a WebP thumbnail (baked pre-fix), which is
+// a still first-frame — rendering the thumbnail would freeze the animation
+// and the user would see it as a static image ("why is my GIF a PNG"). New
+// uploads skip thumbnail generation for GIFs server-side, so this is just
+// belt + suspenders for both paths.
+function previewSrc(a: ApiAttachment): string {
+  if (isGif(a)) return a.url;
+  return a.thumbnailUrl ?? a.thumbUrl ?? a.url;
+}
+
 function isPdf(a: ApiAttachment): boolean {
   return a.contentType === "application/pdf" || a.filename.toLowerCase().endsWith(".pdf");
 }
@@ -65,7 +80,7 @@ export function MessageAttachments({ atts }: { atts: ApiAttachment[] }) {
                 data-testid={`attachment-image-${a.id}`}
               >
                 <img
-                  src={a.thumbnailUrl ?? a.thumbUrl ?? a.url}
+                  src={previewSrc(a)}
                   alt={a.filename}
                   className="w-full h-auto max-h-80 object-cover"
                   loading="lazy"

@@ -2379,6 +2379,11 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
         callerHue: u.hue,
         kind,
         roomName: groupRoomName,
+        // Channel context so the callee's incoming modal shows "from #general"
+        // and, on accept, the ActiveCallSession has channelId ready for the
+        // MeetingClerk + in-call chat panel without regex parsing.
+        channelId,
+        channelName: access.channel?.name ?? null,
       };
       emitCallIncoming(payload);
 
@@ -2395,13 +2400,22 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
 
     // Fire a single batched push to all invitees with the group-call label.
     if (validInvitees.length > 0) {
+      // Deep-link into the channel with a ?call=<roomName> hint so tapping
+      // the push opens the channel chat AND surfaces the join banner. The
+      // client's channel view reads the hint on mount and offers a one-tap
+      // "Join call" button. Falls back to the legacy group route for calls
+      // that somehow have no channel bound.
+      const chanName = access.channel?.name ?? null;
+      const deepUrl = channelId
+        ? `/#/channels/${channelId}?call=${encodeURIComponent(groupRoomName)}`
+        : `/#/call/group/${encodeURIComponent(groupRoomName)}`;
       void sendNotificationToUsers(validInvitees, {
-        title: `\ud83d\udcde ${u.name} is calling`,
+        title: `\ud83d\udcde ${u.name} is calling` + (chanName ? ` · #${chanName}` : ""),
         body:
           kind === "video"
-            ? `Group video call — ${access.channel?.name ? "#" + access.channel.name : "channel"}`
-            : `Group voice call — ${access.channel?.name ? "#" + access.channel.name : "channel"}`,
-        url: `/#/call/group/${encodeURIComponent(groupRoomName)}`,
+            ? `Group video call — ${chanName ? "#" + chanName : "channel"}`
+            : `Group voice call — ${chanName ? "#" + chanName : "channel"}`,
+        url: deepUrl,
         tag: `group-call-${groupRoomName}`,
       });
     }
@@ -2731,10 +2745,21 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
       } catch {
         /* best-effort */
       }
+      // Best-effort: resolve channel context from the shared room name so
+      // the incoming modal shows the source channel. `channelLabel` above
+      // (derived from the same regex) is already used for SIP branding, so
+      // this is just re-exposing it to the SSE payload.
+      const activeChanMatch = roomName.match(/(?:group-channel-|vector-\d+-channel-)(\d+)/);
+      const activeChanId = activeChanMatch ? Number(activeChanMatch[1]) : null;
+      const activeChanName = activeChanId
+        ? (storage.getChannel(activeChanId)?.name ?? null)
+        : null;
       const payload: CallEventPayload = {
         callId: row.id, callerId: u.id, calleeId,
         callerName: u.name, callerHue: u.hue,
         kind, roomName,
+        channelId: activeChanId,
+        channelName: activeChanName,
       };
       emitCallIncoming(payload);
       setTimeout(() => {
@@ -2747,10 +2772,15 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     }
 
     if (validInvitees.length > 0) {
+      // Prefer the channel deep link when we can resolve one from the room
+      // name; otherwise fall back to the legacy group route.
+      const addUrl = activeChanId
+        ? `/#/channels/${activeChanId}?call=${encodeURIComponent(roomName)}`
+        : `/#/call/group/${encodeURIComponent(roomName)}`;
       void sendNotificationToUsers(validInvitees, {
-        title: `\ud83d\udcde ${u.name} is calling`,
+        title: `\ud83d\udcde ${u.name} is calling` + (activeChanName ? ` · #${activeChanName}` : ""),
         body: kind === "video" ? `Adding you to a video call — ${channelLabel}` : `Adding you to a voice call — ${channelLabel}`,
-        url: `/#/call/group/${encodeURIComponent(roomName)}`,
+        url: addUrl,
         tag: `call-add-${roomName}`,
       });
     }
