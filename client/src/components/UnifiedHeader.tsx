@@ -1,9 +1,11 @@
-import { Menu, X, LogOut, User } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Menu, X, LogOut, User, Volume2, VolumeX } from "lucide-react";
 import { BulldogLogo } from "./BulldogLogo";
 import { NotificationsButton } from "./NotificationsButton";
 import { AppSwitcher } from "@/lib/AppSwitcher";
 import { Avatar } from "./Avatar";
 import { useAuth } from "@/lib/auth";
+import { loadMeetPrefs, saveMeetPrefs, emitMeetPrefsChanged, MEET_PREFS_EVENT } from "@/lib/meet-prefs";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -30,6 +32,26 @@ interface Props {
  */
 export function UnifiedHeader({ navOpen, onToggleNav, onLogoClick }: Props) {
   const { user, logout } = useAuth();
+  // Local mirror of the persisted `callSoundsEnabled` pref so the dropdown
+  // item shows the current state without a route change. Subscribes to the
+  // meet-prefs "changed" event so a toggle from anywhere (e.g. an in-call
+  // settings modal, future) keeps this menu in sync.
+  const [callSoundsOn, setCallSoundsOn] = useState<boolean>(() => loadMeetPrefs().callSoundsEnabled);
+  useEffect(() => {
+    const onChange = () => setCallSoundsOn(loadMeetPrefs().callSoundsEnabled);
+    try { window.addEventListener(MEET_PREFS_EVENT, onChange); } catch { /* ignore */ }
+    return () => {
+      try { window.removeEventListener(MEET_PREFS_EVENT, onChange); } catch { /* ignore */ }
+    };
+  }, []);
+  const toggleCallSounds = () => {
+    const next = !callSoundsOn;
+    setCallSoundsOn(next);
+    saveMeetPrefs({ ...loadMeetPrefs(), callSoundsEnabled: next });
+    // Broadcast so CallContext (which owns the ring loops) stops in-flight
+    // sounds immediately, and any other subscribers re-read.
+    emitMeetPrefsChanged();
+  };
 
   return (
     <header
@@ -108,6 +130,27 @@ export function UnifiedHeader({ navOpen, onToggleNav, onLogoClick }: Props) {
             >
               <User className="w-3.5 h-3.5 mr-2" /> Profile
             </DropdownMenuItem>
+            {/* Call sounds toggle — flips the local `callSoundsEnabled`
+                pref that gates the outgoing ringback + incoming chime in
+                CallContext. Not a settings page, just a one-tap mute so
+                users can silence rings when they're in another meeting.
+                onSelect returns false-y so the menu stays open, letting
+                the user see the icon change before dismissing. */}
+            <DropdownMenuItem
+              onSelect={(e) => { e.preventDefault(); toggleCallSounds(); }}
+              className="text-sm cursor-pointer focus:bg-accent focus:text-accent-foreground"
+              data-testid="menu-call-sounds"
+              aria-checked={callSoundsOn}
+            >
+              {callSoundsOn
+                ? <Volume2 className="w-3.5 h-3.5 mr-2" />
+                : <VolumeX className="w-3.5 h-3.5 mr-2" />}
+              <span className="flex-1">Call sounds</span>
+              <span className="ml-2 text-[10px] font-mono uppercase tracking-wider text-[hsl(var(--vs-text-subtle))]">
+                {callSoundsOn ? "On" : "Off"}
+              </span>
+            </DropdownMenuItem>
+            <DropdownMenuSeparator className="bg-border" />
             <DropdownMenuItem
               onClick={() => logout()}
               className="text-sm cursor-pointer focus:bg-accent focus:text-accent-foreground text-vs-danger"

@@ -39,11 +39,24 @@ export interface MeetPrefs {
    * synced across the meeting.
    */
   layout: MeetLayout;
+  /**
+   * When true, play call ringtones — outgoing ringback for the caller and
+   * an incoming chime for the callee. Both play through the standard media
+   * output (system speakers unless the user has picked a specific speaker
+   * in MeetSettings). Defaults ON so users know a call is actually going
+   * through / that they're being called; users can mute from the profile
+   * dropdown when they need silence (e.g. already on another meeting).
+   *
+   * Per-device localStorage — not synced. That matches how notification
+   * mute state works today.
+   */
+  callSoundsEnabled: boolean;
 }
 
 const DEFAULTS: MeetPrefs = {
   stageGlow: true,
   layout: "speaker",
+  callSoundsEnabled: true,
 };
 
 export function loadMeetPrefs(): MeetPrefs {
@@ -54,7 +67,13 @@ export function loadMeetPrefs(): MeetPrefs {
       if (parsed && typeof parsed === "object") {
         // Sanitize layout (older prefs blobs may lack it or hold a stale value).
         const layout: MeetLayout = parsed.layout === "grid" ? "grid" : "speaker";
-        return { ...DEFAULTS, ...parsed, layout };
+        // Sanitize callSoundsEnabled — fall back to default when the field is
+        // missing from an older prefs blob so existing users get sounds on.
+        const callSoundsEnabled =
+          typeof parsed.callSoundsEnabled === "boolean"
+            ? parsed.callSoundsEnabled
+            : DEFAULTS.callSoundsEnabled;
+        return { ...DEFAULTS, ...parsed, layout, callSoundsEnabled };
       }
     }
   } catch {

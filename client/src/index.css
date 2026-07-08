@@ -343,4 +343,13 @@
      mobile (Phase 1.9.26). Hides the scrollbar but keeps the scroll behavior. */
   .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
   .no-scrollbar::-webkit-scrollbar { display: none; }
+
+  /* Outgoing-call "Ringing..." dot animation. Three spans share this class
+     with staggered animation-delay values so they pulse in a wave. Kept in
+     the same @layer components block so Tailwind's purge doesn't strip it. */
+  @keyframes vs-call-ring-dot {
+    0%, 100% { opacity: 0.25; }
+    50% { opacity: 1; }
+  }
+  .call-ring-dot { animation: vs-call-ring-dot 1.2s ease-in-out infinite; }
 }
