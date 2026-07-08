@@ -40,6 +40,13 @@ export interface ApiMessage {
   deletedAt?: string | null;
 }
 
+export interface ApiCallSession {
+  callId: number;
+  roomName: string;
+  token: string;
+  ws_url: string;
+}
+
 export class ApiError extends Error {
   status: number;
   constructor(status: number, message: string) {
@@ -113,12 +120,25 @@ export class ChatApiClient {
     return this.request("PATCH", `/api/dms/${id}`, { title });
   }
 
-  // Auth-check helper: widgets mount immediately on app load, often before
-  // the host app knows whether the user's session is valid. Consumers can
-  // use this to decide whether to render the pill at all (spec doesn't
-  // mandate hiding when logged out, but a 401 here means /api/events will
-  // also fail — this lets BulldogChatWidget fail soft instead of retrying
-  // forever).
+  // ── Calling ──────────────────────────────────────────────────────────────
+
+  /** Start a 1:1 call. Returns a LiveKit token + room for the caller. */
+  startCall(calleeId: number, kind: "video" | "voice" = "video"): Promise<ApiCallSession> {
+    return this.request("POST", "/api/calls/start", { calleeId, kind });
+  }
+
+  /** Accept an incoming call — get a token to join the already-created room. */
+  acceptCall(callId: number): Promise<{ roomName: string; token: string; ws_url: string }> {
+    return this.request("POST", `/api/calls/${callId}/accept`);
+  }
+
+  /** End / decline a call. */
+  endCall(callId: number): Promise<void> {
+    return this.request("POST", `/api/calls/${callId}/end`);
+  }
+
+  // ── Auth-check ────────────────────────────────────────────────────────────
+
   async isAuthenticated(): Promise<boolean> {
     try {
       await this.me();

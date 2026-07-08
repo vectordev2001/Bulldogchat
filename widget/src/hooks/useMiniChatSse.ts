@@ -19,6 +19,8 @@ interface Handlers {
   onDmCreated?: (data: any) => void;
   onChannelDelete?: (data: any) => void;
   onReopen?: () => void;
+  /** Fired when another user initiates a call to the current user. */
+  onCallIncoming?: (data: any) => void;
 }
 
 export function useMiniChatSse(apiBaseUrl: string, enabled: boolean, handlers: Handlers): SSEStatus {
@@ -72,6 +74,10 @@ export function useMiniChatSse(apiBaseUrl: string, enabled: boolean, handlers: H
       });
       es.addEventListener("channel:delete", (e: MessageEvent) => {
         try { handlersRef.current.onChannelDelete?.(JSON.parse(e.data)); } catch {}
+      });
+      // Incoming call from another user — widget shows accept/decline banner.
+      es.addEventListener("call:incoming", (e: MessageEvent) => {
+        try { handlersRef.current.onCallIncoming?.(JSON.parse(e.data)); } catch {}
       });
     };
 

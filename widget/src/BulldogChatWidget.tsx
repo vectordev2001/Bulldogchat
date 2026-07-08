@@ -3,6 +3,7 @@ import { ChatApiClient, type ApiDmChannel, type ApiMessage, type ApiUser } from 
 import { useWidgetStore, type ConversationRef } from "./state";
 import { ChatSyncBridge } from "./sync";
 import { useMiniChatSse } from "./hooks/useMiniChatSse";
+import { CallView } from "./CallView";
 
 export interface BulldogChatWidgetProps {
   /** Base URL of the Chat app, e.g. "https://chat.bulldogops.com". */
@@ -40,6 +41,12 @@ export function BulldogChatWidget({ apiBaseUrl, hidden }: BulldogChatWidgetProps
   const unreadCount = useWidgetStore((s) => s.unreadCount);
   const incrementUnread = useWidgetStore((s) => s.incrementUnread);
   const clearUnread = useWidgetStore((s) => s.clearUnread);
+  const pillPosition = useWidgetStore((s) => s.pillPosition);
+  const setPillPosition = useWidgetStore((s) => s.setPillPosition);
+  const activeCall = useWidgetStore((s) => s.activeCall);
+  const setActiveCall = useWidgetStore((s) => s.setActiveCall);
+  const incomingCall = useWidgetStore((s) => s.incomingCall);
+  const setIncomingCall = useWidgetStore((s) => s.setIncomingCall);
 
   const [authed, setAuthed] = useState<boolean | null>(null);
   const [me, setMe] = useState<ApiUser | null>(null);
@@ -49,11 +56,41 @@ export function BulldogChatWidget({ apiBaseUrl, hidden }: BulldogChatWidgetProps
   const [messagesLoading, setMessagesLoading] = useState(false);
   const [composerValue, setComposerValue] = useState("");
   const [sending, setSending] = useState(false);
+  const [startingCall, setStartingCall] = useState(false);
 
-  // Auth check + initial data load. Fails soft: if the shared JWT cookie
-  // isn't valid (or CORS isn't configured yet), the pill still renders but
-  // clicking it shows a "sign in on Chat" placeholder instead of infinitely
-  // retrying network calls.
+  // ── Draggable pill ────────────────────────────────────────────────────────
+  const pillRef = useRef<HTMLButtonElement>(null);
+  const dragState = useRef<{ startX: number; startY: number; startRight: number; startBottom: number } | null>(null);
+
+  const onPillPointerDown = (e: React.PointerEvent<HTMLButtonElement>) => {
+    if (open) return;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    dragState.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      startRight: pillPosition.right,
+      startBottom: pillPosition.bottom,
+    };
+  };
+
+  const onPillPointerMove = (e: React.PointerEvent<HTMLButtonElement>) => {
+    if (!dragState.current) return;
+    const dx = e.clientX - dragState.current.startX;
+    const dy = e.clientY - dragState.current.startY;
+    const newRight = Math.max(8, Math.min(window.innerWidth - 64, dragState.current.startRight - dx));
+    const newBottom = Math.max(8, Math.min(window.innerHeight - 64, dragState.current.startBottom + dy));
+    setPillPosition({ right: newRight, bottom: newBottom });
+  };
+
+  const onPillPointerUp = (e: React.PointerEvent<HTMLButtonElement>) => {
+    const wasDrag = dragState.current
+      ? Math.abs(e.clientX - dragState.current.startX) > 4 || Math.abs(e.clientY - dragState.current.startY) > 4
+      : false;
+    dragState.current = null;
+    if (!wasDrag) setOpen(true);
+  };
+
+  // Auth check + initial data load.
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -72,17 +109,13 @@ export function BulldogChatWidget({ apiBaseUrl, hidden }: BulldogChatWidgetProps
         setMembers(membersRes);
         setDms(dmsRes);
       } catch {
-        /* leave lists empty; panel shows an error/empty state */
+        /* leave lists empty */
       }
     })();
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, [api]);
 
-  // Restore last-opened conversation from localStorage on mount (state
-  // persistence requirement) — but only if the store doesn't already have
-  // one (e.g. set by a sync broadcast that arrived first).
+  // Restore last-opened conversation from localStorage on mount.
   useEffect(() => {
     if (activeConversation) return;
     const last = sync.readLastConversation();
@@ -90,8 +123,7 @@ export function BulldogChatWidget({ apiBaseUrl, hidden }: BulldogChatWidgetProps
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Cross-tab sync: mirror conversation changes from the main Chat app tab
-  // (or another widget instance on the same origin).
+  // Cross-tab sync.
   useEffect(() => {
     return sync.subscribe((msg) => {
       if (msg.type === "conversation:changed") {
@@ -103,19 +135,14 @@ export function BulldogChatWidget({ apiBaseUrl, hidden }: BulldogChatWidgetProps
   }, [sync, setActiveConversation]);
 
   const refreshDms = async () => {
-    try {
-      setDms(await api.listDms());
-    } catch {
-      /* keep stale list on transient failure */
-    }
+    try { setDms(await api.listDms()); } catch { /* keep stale */ }
   };
 
   const loadMessages = async (conv: ConversationRef) => {
     if (!conv) return;
     setMessagesLoading(true);
     try {
-      const channelId = conv.id;
-      const msgs = await api.listMessages(channelId);
+      const msgs = await api.listMessages(conv.id);
       setMessages(msgs);
     } catch {
       setMessages([]);
@@ -125,15 +152,11 @@ export function BulldogChatWidget({ apiBaseUrl, hidden }: BulldogChatWidgetProps
   };
 
   useEffect(() => {
-    if (activeConversation && open) {
-      loadMessages(activeConversation);
-    }
+    if (activeConversation && open) loadMessages(activeConversation);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeConversation?.id, activeConversation?.kind, open]);
 
-  // SSE: mirrors use-sse.ts patterns from the main app. Only connects once
-  // we know the user is authenticated (avoids a guaranteed-401 EventSource
-  // spinning forever pre-login).
+  // SSE.
   useMiniChatSse(apiBaseUrl, authed === true, {
     onMessageNew: (data) => {
       if (activeConversation && data?.channelId === activeConversation.id && open) {
@@ -145,38 +168,41 @@ export function BulldogChatWidget({ apiBaseUrl, hidden }: BulldogChatWidgetProps
       refreshDms();
     },
     onMessageUpdate: (data) => {
-      if (activeConversation && data?.channelId === activeConversation.id) {
-        loadMessages(activeConversation);
-      }
+      if (activeConversation && data?.channelId === activeConversation.id) loadMessages(activeConversation);
     },
     onMessageDelete: (data) => {
-      if (activeConversation && data?.channelId === activeConversation.id) {
-        loadMessages(activeConversation);
-      }
+      if (activeConversation && data?.channelId === activeConversation.id) loadMessages(activeConversation);
     },
     onDmUpdated: refreshDms,
     onDmCreated: refreshDms,
     onChannelDelete: (data) => {
-      if (activeConversation && data?.channelId === activeConversation.id) {
-        setActiveConversation(null);
-      }
+      if (activeConversation && data?.channelId === activeConversation.id) setActiveConversation(null);
       refreshDms();
     },
     onReopen: () => {
       refreshDms();
       if (activeConversation) loadMessages(activeConversation);
     },
+    // Incoming call from SSE
+    onCallIncoming: (data) => {
+      if (data?.callId && data?.callerName) {
+        setIncomingCall({
+          callId: data.callId,
+          callerId: data.callerId,
+          callerName: data.callerName,
+          callerHue: data.callerHue,
+          kind: data.kind ?? "video",
+        });
+        setOpen(true);
+      }
+    },
   });
 
-  // Keyboard shortcuts: Esc collapses, Cmd/Ctrl+/ toggles.
+  // Keyboard shortcuts.
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && open) {
-        setOpen(false);
-      } else if (e.key === "/" && (e.metaKey || e.ctrlKey)) {
-        e.preventDefault();
-        toggleOpen();
-      }
+      if (e.key === "Escape" && open) setOpen(false);
+      else if (e.key === "/" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); toggleOpen(); }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
@@ -199,10 +225,44 @@ export function BulldogChatWidget({ apiBaseUrl, hidden }: BulldogChatWidgetProps
       setComposerValue("");
       await loadMessages(activeConversation);
     } catch {
-      /* leave composerValue populated so the user can retry */
+      /* leave composer populated */
     } finally {
       setSending(false);
     }
+  };
+
+  // ── Start a 1:1 video call ────────────────────────────────────────────────
+  const handleStartCall = async () => {
+    if (!activeDm || !me || startingCall) return;
+    const calleeId = activeDm.memberIds.find((id) => id !== me.id);
+    if (!calleeId) return;
+    setStartingCall(true);
+    try {
+      const session = await api.startCall(calleeId, "video");
+      setActiveCall({ callId: session.callId, roomName: session.roomName, token: session.token, wsUrl: session.ws_url });
+    } catch (err) {
+      console.warn("[widget] startCall failed", err);
+    } finally {
+      setStartingCall(false);
+    }
+  };
+
+  // ── Accept / decline incoming call ───────────────────────────────────────
+  const handleAcceptCall = async () => {
+    if (!incomingCall) return;
+    try {
+      const session = await api.acceptCall(incomingCall.callId);
+      setActiveCall({ callId: incomingCall.callId, roomName: session.roomName, token: session.token, wsUrl: session.ws_url });
+      setIncomingCall(null);
+    } catch (err) {
+      console.warn("[widget] acceptCall failed", err);
+    }
+  };
+
+  const handleDeclineCall = async () => {
+    if (!incomingCall) return;
+    try { await api.endCall(incomingCall.callId); } catch { /* best-effort */ }
+    setIncomingCall(null);
   };
 
   if (hidden) return null;
@@ -213,44 +273,84 @@ export function BulldogChatWidget({ apiBaseUrl, hidden }: BulldogChatWidgetProps
     ? activeDm.title ||
       (me ? activeDm.memberIds.filter((id) => id !== me.id).map((id) => userById.get(id)?.name).filter(Boolean).join(", ") : "Direct message") ||
       "Direct message"
+    : activeCall
+    ? "In call"
     : "Select a conversation";
 
   const panelSizeClass = isMobile
     ? "bcw-fixed bcw-inset-0 bcw-w-full bcw-h-full bcw-rounded-none"
-    : "bcw-w-[380px] bcw-h-[560px] bcw-rounded-xl";
+    : "bcw-w-[360px] bcw-h-[480px] bcw-rounded-xl";
+
+  // Panel position: clamp so it doesn't go off-screen
+  const panelRight = Math.max(8, pillPosition.right - 8);
+  const panelBottom = isMobile ? 0 : Math.max(8, pillPosition.bottom + 64);
 
   return (
     <div
       className="bcw-fixed bcw-z-[1000]"
-      style={{ right: 24, bottom: 24 }}
+      style={isMobile ? {} : { right: pillPosition.right, bottom: pillPosition.bottom }}
       data-testid="bulldog-chat-widget-root"
     >
+      {/* ── Collapsed pill ── */}
       {!open && (
         <button
+          ref={pillRef}
           type="button"
-          onClick={() => setOpen(true)}
-          className="bcw-relative bcw-w-14 bcw-h-14 bcw-rounded-full bcw-bg-bcw-navy bcw-shadow-bcw-panel bcw-flex bcw-items-center bcw-justify-center bcw-text-white bcw-border bcw-border-black/20 hover:bcw-scale-105 bcw-transition-transform"
+          onPointerDown={onPillPointerDown}
+          onPointerMove={onPillPointerMove}
+          onPointerUp={onPillPointerUp}
+          className="bcw-relative bcw-w-12 bcw-h-12 bcw-rounded-full bcw-bg-bcw-navy bcw-shadow-bcw-panel bcw-flex bcw-items-center bcw-justify-center bcw-text-white bcw-border bcw-border-black/20 hover:bcw-scale-105 bcw-transition-transform bcw-cursor-grab active:bcw-cursor-grabbing bcw-select-none"
           aria-label="Open Bulldog chat"
           data-testid="bulldog-chat-widget-pill"
         >
           <BulldogMark />
           {unreadCount > 0 && (
             <span
-              className="bcw-absolute -bcw-top-1 -bcw-right-1 bcw-min-w-[20px] bcw-h-5 bcw-px-1 bcw-rounded-full bcw-bg-bcw-red bcw-text-white bcw-text-[11px] bcw-font-bold bcw-flex bcw-items-center bcw-justify-center"
+              className="bcw-absolute -bcw-top-1 -bcw-right-1 bcw-min-w-[18px] bcw-h-[18px] bcw-px-1 bcw-rounded-full bcw-bg-bcw-red bcw-text-white bcw-text-[10px] bcw-font-bold bcw-flex bcw-items-center bcw-justify-center"
               data-testid="bulldog-chat-widget-badge"
             >
               {unreadCount > 99 ? "99+" : unreadCount}
             </span>
           )}
+          {incomingCall && (
+            <span className="bcw-absolute -bcw-top-1 -bcw-left-1 bcw-w-3.5 bcw-h-3.5 bcw-rounded-full bcw-bg-green-400 bcw-animate-pulse" />
+          )}
         </button>
       )}
 
+      {/* ── Open panel ── */}
       {open && (
         <div
           className={`bcw-bg-bcw-navy bcw-shadow-bcw-panel bcw-flex bcw-flex-col bcw-overflow-hidden bcw-border bcw-border-black/30 ${panelSizeClass}`}
+          style={isMobile ? {} : { position: "fixed", right: panelRight, bottom: panelBottom }}
           data-testid="bulldog-chat-widget-panel"
         >
-          <header className="bcw-h-12 bcw-px-3 bcw-flex bcw-items-center bcw-gap-2 bcw-border-b bcw-border-black/40 bcw-shrink-0">
+          {/* ── Incoming call banner ── */}
+          {incomingCall && (
+            <div className="bcw-flex bcw-items-center bcw-gap-2 bcw-px-3 bcw-py-2 bcw-bg-green-900/80 bcw-border-b bcw-border-green-700/50 bcw-shrink-0 bcw-animate-pulse">
+              <VideoCallIcon className="bcw-text-green-400 bcw-shrink-0" />
+              <span className="bcw-flex-1 bcw-text-xs bcw-text-white bcw-truncate">
+                {incomingCall.callerName} is calling…
+              </span>
+              <button
+                type="button"
+                onClick={handleAcceptCall}
+                className="bcw-px-2 bcw-py-0.5 bcw-rounded bcw-bg-green-500 bcw-text-white bcw-text-xs bcw-font-semibold hover:bcw-bg-green-400"
+              >
+                Accept
+              </button>
+              <button
+                type="button"
+                onClick={handleDeclineCall}
+                className="bcw-px-2 bcw-py-0.5 bcw-rounded bcw-bg-red-600 bcw-text-white bcw-text-xs bcw-font-semibold hover:bcw-bg-red-500"
+              >
+                Decline
+              </button>
+            </div>
+          )}
+
+          {/* ── Header ── */}
+          <header className="bcw-h-11 bcw-px-2.5 bcw-flex bcw-items-center bcw-gap-1.5 bcw-border-b bcw-border-black/40 bcw-shrink-0">
             <button
               type="button"
               onClick={() => setSidebarOpen(!sidebarOpen)}
@@ -260,14 +360,31 @@ export function BulldogChatWidget({ apiBaseUrl, hidden }: BulldogChatWidgetProps
             >
               <MenuIcon />
             </button>
-            <div className="bcw-flex-1 bcw-min-w-0 bcw-text-sm bcw-font-semibold bcw-text-white bcw-truncate">
+            <div className="bcw-flex-1 bcw-min-w-0 bcw-text-xs bcw-font-semibold bcw-text-white bcw-truncate">
               {activeTitle}
             </div>
+
+            {/* Video call button — only when in a DM and not already on a call */}
+            {activeDm && !activeCall && (
+              <button
+                type="button"
+                onClick={handleStartCall}
+                disabled={startingCall}
+                className="bcw-p-1.5 bcw-rounded hover:bcw-bg-bcw-navy-light bcw-text-white/70 hover:bcw-text-white disabled:bcw-opacity-40"
+                aria-label="Start video call"
+                title="Start video call"
+                data-testid="bulldog-chat-widget-call-btn"
+              >
+                <VideoCallIcon />
+              </button>
+            )}
+
             <button
               type="button"
               onClick={() => setOpen(false)}
               className="bcw-p-1.5 bcw-rounded hover:bcw-bg-bcw-navy-light bcw-text-white/80"
               aria-label="Minimize"
+              title="Minimize  ⌘/"
               data-testid="bulldog-chat-widget-minimize"
             >
               <MinimizeIcon />
@@ -283,20 +400,18 @@ export function BulldogChatWidget({ apiBaseUrl, hidden }: BulldogChatWidgetProps
             </button>
           </header>
 
+          {/* ── Body ── */}
           <div className="bcw-flex-1 bcw-flex bcw-min-h-0 bcw-relative">
             {sidebarOpen && (
-              <div className="bcw-absolute bcw-inset-y-0 bcw-left-0 bcw-w-56 bcw-bg-[hsl(220,60%,9%)] bcw-border-r bcw-border-black/40 bcw-overflow-y-auto bcw-z-10">
+              <div className="bcw-absolute bcw-inset-y-0 bcw-left-0 bcw-w-52 bcw-bg-[hsl(220,60%,9%)] bcw-border-r bcw-border-black/40 bcw-overflow-y-auto bcw-z-10">
                 {authed === false ? (
-                  <div className="bcw-p-3 bcw-text-xs bcw-text-white/60">
-                    Sign in to Bulldog Chat to see your conversations.
-                  </div>
+                  <div className="bcw-p-3 bcw-text-xs bcw-text-white/60">Sign in to Bulldog Chat to see your conversations.</div>
                 ) : dms.length === 0 ? (
                   <div className="bcw-p-3 bcw-text-xs bcw-text-white/60">No conversations yet.</div>
                 ) : (
                   dms.map((dm) => {
                     const others = me ? dm.memberIds.filter((id) => id !== me.id) : dm.memberIds;
-                    const label =
-                      dm.title || others.map((id) => userById.get(id)?.name).filter(Boolean).join(", ") || "Direct message";
+                    const label = dm.title || others.map((id) => userById.get(id)?.name).filter(Boolean).join(", ") || "Direct message";
                     return (
                       <button
                         key={dm.id}
@@ -318,7 +433,14 @@ export function BulldogChatWidget({ apiBaseUrl, hidden }: BulldogChatWidgetProps
             )}
 
             <div className="bcw-flex-1 bcw-flex bcw-flex-col bcw-min-w-0 bcw-min-h-0">
-              {authed === false ? (
+              {/* Active call view */}
+              {activeCall ? (
+                <CallView
+                  call={activeCall}
+                  api={api}
+                  onCallEnded={() => setActiveCall(null)}
+                />
+              ) : authed === false ? (
                 <div className="bcw-flex-1 bcw-flex bcw-items-center bcw-justify-center bcw-p-4 bcw-text-center bcw-text-xs bcw-text-white/60">
                   Sign in to Bulldog Chat to use the mini chat.
                 </div>
@@ -330,7 +452,7 @@ export function BulldogChatWidget({ apiBaseUrl, hidden }: BulldogChatWidgetProps
                 <MessageList messages={messages} loading={messagesLoading} me={me} userById={userById} />
               )}
 
-              {authed !== false && activeConversation && (
+              {authed !== false && activeConversation && !activeCall && (
                 <Composer
                   value={composerValue}
                   onChange={setComposerValue}
@@ -346,11 +468,10 @@ export function BulldogChatWidget({ apiBaseUrl, hidden }: BulldogChatWidgetProps
   );
 }
 
+// ── Sub-components ────────────────────────────────────────────────────────────
+
 function MessageList({
-  messages,
-  loading,
-  me,
-  userById,
+  messages, loading, me, userById,
 }: {
   messages: ApiMessage[];
   loading: boolean;
@@ -362,11 +483,6 @@ function MessageList({
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight });
   }, [messages.length]);
 
-  // Simple virtualization guard: for >100 messages, only render the most
-  // recent 100 plus a "load older" affordance rather than mounting every
-  // row. Full virtualized windowing is left as a follow-up (would pull in
-  // react-window as an extra dependency) — capping the DOM node count here
-  // gets 90% of the perf benefit for a floating widget's use case.
   const VISIBLE_CAP = 100;
   const visible = messages.length > VISIBLE_CAP ? messages.slice(-VISIBLE_CAP) : messages;
   const hiddenCount = messages.length - visible.length;
@@ -385,9 +501,7 @@ function MessageList({
         const mine = me?.id === m.userId;
         return (
           <div key={m.id} className={`bcw-flex bcw-flex-col ${mine ? "bcw-items-end" : "bcw-items-start"}`}>
-            {!mine && (
-              <span className="bcw-text-[10px] bcw-text-white/40 bcw-mb-0.5">{author?.name ?? "Unknown"}</span>
-            )}
+            {!mine && <span className="bcw-text-[10px] bcw-text-white/40 bcw-mb-0.5">{author?.name ?? "Unknown"}</span>}
             <div
               className={`bcw-max-w-[85%] bcw-rounded-lg bcw-px-2.5 bcw-py-1.5 bcw-text-xs bcw-whitespace-pre-wrap bcw-break-words ${
                 mine ? "bcw-bg-bcw-red bcw-text-white" : "bcw-bg-bcw-navy-light bcw-text-white/90"
@@ -402,19 +516,11 @@ function MessageList({
   );
 }
 
-function Composer({
-  value,
-  onChange,
-  onSend,
-  disabled,
-}: {
-  value: string;
-  onChange: (v: string) => void;
-  onSend: () => void;
-  disabled: boolean;
+function Composer({ value, onChange, onSend, disabled }: {
+  value: string; onChange: (v: string) => void; onSend: () => void; disabled: boolean;
 }) {
   return (
-    <div className="bcw-h-14 bcw-px-2 bcw-flex bcw-items-center bcw-gap-1.5 bcw-border-t bcw-border-black/40 bcw-shrink-0">
+    <div className="bcw-h-12 bcw-px-2 bcw-flex bcw-items-center bcw-gap-1.5 bcw-border-t bcw-border-black/40 bcw-shrink-0">
       <button
         type="button"
         className="bcw-p-1.5 bcw-rounded bcw-text-white/50 hover:bcw-bg-bcw-navy-light bcw-cursor-not-allowed"
@@ -428,12 +534,7 @@ function Composer({
         type="text"
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" && !e.shiftKey) {
-            e.preventDefault();
-            onSend();
-          }
-        }}
+        onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); onSend(); } }}
         placeholder="Message…"
         className="bcw-flex-1 bcw-bg-[hsl(220,60%,9%)] bcw-border bcw-border-black/40 bcw-text-xs bcw-text-white bcw-placeholder-white/30 bcw-rounded-md bcw-px-2.5 bcw-py-1.5 focus:bcw-outline-none"
         data-testid="bulldog-chat-widget-composer-input"
@@ -452,9 +553,11 @@ function Composer({
   );
 }
 
+// ── Icons ─────────────────────────────────────────────────────────────────────
+
 function BulldogMark() {
   return (
-    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
       <circle cx="12" cy="12" r="10" fill="currentColor" opacity="0.15" />
       <path d="M7 15c0-3 2-6 5-6s5 3 5 6" stroke="white" strokeWidth="1.6" strokeLinecap="round" fill="none" />
       <circle cx="9" cy="10" r="1.2" fill="white" />
@@ -462,37 +565,45 @@ function BulldogMark() {
     </svg>
   );
 }
+function VideoCallIcon({ className }: { className?: string }) {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className={className} aria-hidden="true">
+      <polygon points="23 7 16 12 23 17 23 7" />
+      <rect x="1" y="5" width="15" height="14" rx="2" ry="2" />
+    </svg>
+  );
+}
 function MenuIcon() {
   return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
       <path d="M4 6h16M4 12h16M4 18h16" />
     </svg>
   );
 }
 function MinimizeIcon() {
   return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
       <path d="M6 12h12" />
     </svg>
   );
 }
 function CloseIcon() {
   return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
       <path d="M6 6l12 12M18 6L6 18" />
     </svg>
   );
 }
 function PaperclipIcon() {
   return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
       <path d="M21 12.5l-8.5 8.5a4 4 0 01-5.7-5.7l9-9a2.7 2.7 0 013.8 3.8l-9 9a1.3 1.3 0 01-1.9-1.9l8-8" />
     </svg>
   );
 }
 function SendIcon() {
   return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
       <path d="M3 20l18-8L3 4v6l12 2-12 2z" />
     </svg>
   );

@@ -1,7 +1,7 @@
 {
   "name": "@vectordev2001/chat-widget",
-  "version": "0.1.0",
-  "description": "Cross-app floating mini-chat widget for Bulldog Contracts/Ops. Mounts a collapsed pill that expands into a DM/channel panel backed by the same Bulldogchat API + SSE stream.",
+  "version": "0.1.1",
+  "description": "Cross-app floating mini-chat widget for Bulldog Contracts/Ops. Mounts a collapsed draggable pill that expands into a DM/channel panel with video calls backed by the same Bulldogchat API + SSE stream.",
   "type": "module",
   "main": "dist/index.cjs",
   "module": "dist/index.js",
@@ -29,6 +29,8 @@
     "react-dom": "^18.3.1"
   },
   "dependencies": {
+    "@livekit/components-react": "^2.9.21",
+    "livekit-client": "^2.20.0",
     "zustand": "^4.5.5"
   },
   "devDependencies": {
