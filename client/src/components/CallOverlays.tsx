@@ -138,9 +138,18 @@ function OutgoingCallModal() {
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm" data-testid="modal-outgoing-call">
       <div className="w-full max-w-sm rounded-2xl bg-[hsl(220_60%_12%)] border border-[hsl(220_40%_22%)] p-6 shadow-2xl text-center">
-        <div className="text-xs font-mono uppercase tracking-[0.18em] text-vs-amber mb-4 flex items-center justify-center gap-2">
-          <Loader2 className="w-3 h-3 animate-spin" />
-          Calling…
+        {/* "Ringing" status with animated dots — a visual companion to the
+            outgoing ringback tone so the caller can still tell the call is
+            going through even when their audio is muted or their headphones
+            are unplugged. The three dots pulse in sequence to match the ring
+            cadence loosely (they don't need to be frame-accurate). */}
+        <div className="text-xs font-mono uppercase tracking-[0.18em] text-vs-amber mb-4 flex items-center justify-center gap-1">
+          <span>Ringing</span>
+          <span className="inline-flex" aria-hidden="true">
+            <span className="call-ring-dot" style={{ animationDelay: "0ms" }}>.</span>
+            <span className="call-ring-dot" style={{ animationDelay: "180ms" }}>.</span>
+            <span className="call-ring-dot" style={{ animationDelay: "360ms" }}>.</span>
+          </span>
         </div>
         <div className="flex justify-center mb-4">
           <Avatar member={{ name: outgoing.calleeName, hue: outgoing.calleeHue }} size={96} />

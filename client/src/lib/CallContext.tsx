@@ -18,6 +18,7 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { apiRequest, getAuthToken } from "@/lib/queryClient";
 import { useAuth } from "@/lib/auth";
+import { loadMeetPrefs, MEET_PREFS_EVENT } from "@/lib/meet-prefs";
 
 export interface IncomingCallData {
   callId: number;
@@ -198,30 +199,178 @@ export function CallProvider({ children }: { children: ReactNode }) {
   const outgoingRef = useRef(outgoing); outgoingRef.current = outgoing;
   const activeRef = useRef(active); activeRef.current = active;
 
-  // Ringtone: a short looping web-audio beep. We can't play <audio src>
-  // for arbitrary domains without bundling one, and a synthetic tone
-  // keeps the bundle small. Browsers only allow this after a gesture;
-  // since the user must have interacted with chat to get here, that's
-  // usually fine. We still handle the rejected play() Promise.
-  const ringAudioRef = useRef<HTMLAudioElement | null>(null);
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    // A minimal data URI \u2014 phone-style ring (a couple of sine bursts).
-    const a = new Audio(RING_TONE_DATA_URI);
-    a.loop = true;
-    ringAudioRef.current = a;
-    return () => { a.pause(); ringAudioRef.current = null; };
-  }, []);
+  // Call sounds: synthesized via WebAudio so we don't ship an mp3 asset and
+  // don't hit CDN/CORS concerns. Two distinct patterns — the caller hears a
+  // US-style ringback (dual 440+480 Hz, 2s on / 4s off), the callee hears a
+  // brief two-note chime every 3s. Both loops are gated on the
+  // `callSoundsEnabled` preference (meet-prefs), which the user flips from
+  // the profile dropdown when they need silence. Browsers require a prior
+  // user gesture before AudioContext.resume() will succeed — fine here
+  // because either the caller just clicked "call" or the callee has been
+  // interacting with chat before the SSE arrived.
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const ringbackStopRef = useRef<(() => void) | null>(null);
+  const chimeStopRef = useRef<(() => void) | null>(null);
 
-  const playRing = useCallback(() => {
-    ringAudioRef.current?.play().catch(() => { /* browser blocked autoplay; ignore */ });
-  }, []);
-  const stopRing = useCallback(() => {
-    if (ringAudioRef.current) {
-      ringAudioRef.current.pause();
-      ringAudioRef.current.currentTime = 0;
+  // Lazily create a single shared AudioContext. Reused across ringback +
+  // chime + subsequent calls; we never close it (creating one per call
+  // trips Chrome's per-page context limit after ~6 calls).
+  const getAudioCtx = useCallback((): AudioContext | null => {
+    if (typeof window === "undefined") return null;
+    if (audioCtxRef.current) return audioCtxRef.current;
+    try {
+      const Ctor = (window.AudioContext || (window as any).webkitAudioContext) as typeof AudioContext | undefined;
+      if (!Ctor) return null;
+      audioCtxRef.current = new Ctor();
+      return audioCtxRef.current;
+    } catch {
+      return null;
     }
   }, []);
+
+  const stopRingback = useCallback(() => {
+    if (ringbackStopRef.current) {
+      ringbackStopRef.current();
+      ringbackStopRef.current = null;
+    }
+  }, []);
+  const stopChime = useCallback(() => {
+    if (chimeStopRef.current) {
+      chimeStopRef.current();
+      chimeStopRef.current = null;
+    }
+  }, []);
+
+  /**
+   * Outgoing ringback for the CALLER. US-style precise-tone ring: two
+   * simultaneous sines at 440 Hz + 480 Hz for 2s, then 4s silence, repeat.
+   * Low gain (0.12) so it's audible but not startling on a good pair of
+   * headphones. Reads the pref at call time so toggling mid-call takes
+   * effect on the next 6-second cycle.
+   */
+  const playRingback = useCallback(() => {
+    stopRingback();
+    if (!loadMeetPrefs().callSoundsEnabled) return;
+    const ctx = getAudioCtx();
+    if (!ctx) return;
+    // Some browsers start the context suspended until the first gesture;
+    // resume() is a no-op if it's already running.
+    ctx.resume().catch(() => { /* ignore */ });
+    let cancelled = false;
+    const scheduleBurst = () => {
+      if (cancelled) return;
+      if (!loadMeetPrefs().callSoundsEnabled) {
+        // User toggled off mid-ring — self-cancel.
+        stopRingback();
+        return;
+      }
+      const t0 = ctx.currentTime;
+      const burstLen = 2.0;
+      const master = ctx.createGain();
+      master.gain.value = 0.12;
+      // Envelope: 30ms attack, 30ms release, sustained at 1.0 in between.
+      master.gain.setValueAtTime(0, t0);
+      master.gain.linearRampToValueAtTime(0.12, t0 + 0.03);
+      master.gain.setValueAtTime(0.12, t0 + burstLen - 0.03);
+      master.gain.linearRampToValueAtTime(0, t0 + burstLen);
+      master.connect(ctx.destination);
+      for (const freq of [440, 480]) {
+        const osc = ctx.createOscillator();
+        osc.type = "sine";
+        osc.frequency.value = freq;
+        osc.connect(master);
+        osc.start(t0);
+        osc.stop(t0 + burstLen);
+      }
+      // Next burst 6 seconds after this one started (2s on + 4s off).
+      window.setTimeout(scheduleBurst, 6000);
+    };
+    scheduleBurst();
+    ringbackStopRef.current = () => { cancelled = true; };
+  }, [getAudioCtx, stopRingback]);
+
+  /**
+   * Incoming call chime for the CALLEE. Short two-note (E5 → G5) chime
+   * every 3 seconds. Kept intentionally shorter/lighter than the ringback
+   * so the user can hear it during another meeting without it drowning
+   * conversation.
+   */
+  const playIncomingChime = useCallback(() => {
+    stopChime();
+    if (!loadMeetPrefs().callSoundsEnabled) return;
+    const ctx = getAudioCtx();
+    if (!ctx) return;
+    ctx.resume().catch(() => { /* ignore */ });
+    let cancelled = false;
+    const scheduleChime = () => {
+      if (cancelled) return;
+      if (!loadMeetPrefs().callSoundsEnabled) {
+        stopChime();
+        return;
+      }
+      const t0 = ctx.currentTime;
+      const master = ctx.createGain();
+      master.gain.value = 0.0;
+      master.connect(ctx.destination);
+      // Two notes: E5 (659.25) then G5 (783.99), each 180ms with a small overlap.
+      const notes: Array<{ freq: number; start: number; len: number }> = [
+        { freq: 659.25, start: 0.0, len: 0.22 },
+        { freq: 783.99, start: 0.18, len: 0.28 },
+      ];
+      for (const n of notes) {
+        const osc = ctx.createOscillator();
+        osc.type = "sine";
+        osc.frequency.value = n.freq;
+        const g = ctx.createGain();
+        g.gain.setValueAtTime(0, t0 + n.start);
+        g.gain.linearRampToValueAtTime(0.18, t0 + n.start + 0.02);
+        g.gain.setValueAtTime(0.18, t0 + n.start + n.len - 0.04);
+        g.gain.linearRampToValueAtTime(0, t0 + n.start + n.len);
+        osc.connect(g);
+        g.connect(master);
+        osc.start(t0 + n.start);
+        osc.stop(t0 + n.start + n.len + 0.02);
+      }
+      // Repeat every 3 seconds — well under the 30s ring timeout so users hear
+      // it several times before missed.
+      window.setTimeout(scheduleChime, 3000);
+    };
+    scheduleChime();
+    chimeStopRef.current = () => { cancelled = true; };
+  }, [getAudioCtx, stopChime]);
+
+  // Legacy names preserved so downstream call sites don't churn. `playRing`
+  // is used in the outgoing (caller) path; the incoming (callee) path now
+  // uses `playIncomingChime` directly. `stopRing` stops BOTH so the callsite
+  // doesn't need to know which one was playing.
+  const playRing = playRingback;
+  const stopRing = useCallback(() => {
+    stopRingback();
+    stopChime();
+  }, [stopRingback, stopChime]);
+
+  // Tear down the audio context on unmount (logout / page unload). Also
+  // subscribe to the meet-prefs "changed" event so toggling Call sounds OFF
+  // from the profile menu stops an in-flight ring immediately instead of
+  // waiting for the next scheduled burst (up to 6s for ringback, 3s for chime).
+  useEffect(() => {
+    const onPrefsChanged = () => {
+      if (!loadMeetPrefs().callSoundsEnabled) {
+        stopRingback();
+        stopChime();
+      }
+    };
+    try { window.addEventListener(MEET_PREFS_EVENT, onPrefsChanged); } catch { /* ignore */ }
+    return () => {
+      try { window.removeEventListener(MEET_PREFS_EVENT, onPrefsChanged); } catch { /* ignore */ }
+      stopRingback();
+      stopChime();
+      if (audioCtxRef.current) {
+        audioCtxRef.current.close().catch(() => { /* ignore */ });
+        audioCtxRef.current = null;
+      }
+    };
+  }, [stopRingback, stopChime]);
 
   // SSE for call events. Opens when a user is signed in; closes on
   // logout. We piggyback on the same token auth as useSSE() so we get
@@ -248,7 +397,9 @@ export function CallProvider({ children }: { children: ReactNode }) {
           return;
         }
         setIncoming(data);
-        playRing();
+        // Callee-side: short two-note chime every 3s. Distinct from the
+        // caller's ringback so the sound tells you which side you're on.
+        playIncomingChime();
       } catch { /* ignore */ }
     };
 
@@ -543,6 +694,11 @@ export function CallProvider({ children }: { children: ReactNode }) {
 }
 
 /**
+ * @deprecated Retained only for reference — the previous silent-data-URI
+ * ringtone. Replaced by the WebAudio synthesis inside CallContextProvider
+ * (playRingback + playIncomingChime). Safe to delete once no external
+ * consumers reference it.
+ *
  * A short data-URI ringtone (about half a second of 880Hz on/off bursts).
  * Generated offline so we don't ship a real mp3. The browser loops it.
  * If decoding fails (very old browser), playRing() silently no-ops \u2014
