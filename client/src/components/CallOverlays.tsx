@@ -4,7 +4,7 @@
  * which page the user is on when the phone rings.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Phone, PhoneOff, Mic, MicOff, Video, VideoOff, MonitorUp, Loader2, Volume2, UserPlus, X, Check, Search, PhoneCall, FileText, Sparkles, LayoutGrid, MessageSquare, Users, MoreHorizontal } from "lucide-react";
+import { Phone, PhoneOff, Mic, MicOff, Video, VideoOff, MonitorUp, Loader2, Volume2, UserPlus, X, Check, Search, PhoneCall, FileText, Sparkles, LayoutGrid, MessageSquare, Users, MoreHorizontal, Minimize2, Maximize2 } from "lucide-react";
 import { useCalls } from "@/lib/CallContext";
 import { useLiveKitRoom, attachTrack } from "@/lib/useLiveKitRoom";
 import { useQuery } from "@tanstack/react-query";
@@ -15,6 +15,7 @@ import type { ApiUser, ApiChannel } from "@/types/api";
 import { useAuth } from "@/lib/auth";
 import { MeetingClerkButton, MeetingClerkBanner } from "./MeetingClerkButton";
 import { CallVideoStage, type CallLayout, type StageParticipant } from "./call/CallVideoStage";
+import { CallTile } from "./call/CallTile";
 import { InCallChatPanel } from "./InCallChatPanel";
 import { useToast } from "@/hooks/use-toast";
 import { ContractPanel } from "./call/ContractPanel";
@@ -49,6 +50,31 @@ function detectIOSInAppBrowser(): boolean {
   // Real Safari includes "Safari/" + "Version/" in UA. In-app WKWebViews omit one or both.
   const isRealSafari = /Safari\//.test(ua) && /Version\//.test(ua) && !/CriOS|FxiOS|EdgiOS/.test(ua);
   return !isRealSafari;
+}
+
+// CallOverlays is mounted OUTSIDE the Router (see client/src/App.tsx), so it
+// has no access to the router's location. To still react to route changes we
+// patch history.pushState and listen for popstate, mirroring the current
+// pathname into React state. Used to auto-minimize an active call into PiP
+// when the user navigates elsewhere.
+function usePathname(): string {
+  const [pathname, setPathname] = useState(
+    typeof window !== "undefined" ? window.location.pathname : "/",
+  );
+  useEffect(() => {
+    const orig = history.pushState.bind(history);
+    history.pushState = ((...args: Parameters<typeof history.pushState>) => {
+      orig(...args);
+      setPathname(window.location.pathname);
+    }) as typeof history.pushState;
+    const onPop = () => setPathname(window.location.pathname);
+    window.addEventListener("popstate", onPop);
+    return () => {
+      history.pushState = orig;
+      window.removeEventListener("popstate", onPop);
+    };
+  }, []);
+  return pathname;
 }
 
 const LAYOUT_STORAGE_KEY = "bulldog.call.layout";
@@ -191,6 +217,33 @@ function ActiveCallOverlay() {
   const [screenSharing, setScreenSharing] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
+  // Picture-in-Picture: when true the overlay collapses into a small floating
+  // MiniCallOverlay pinned bottom-right. The LiveKit room (useLiveKitRoom
+  // below) stays mounted regardless — only the visual layer switches — so the
+  // call never disconnects when minimizing/expanding.
+  const [isPiP, setIsPiP] = useState(false);
+
+  // Auto-minimize into PiP whenever the user navigates to a different route
+  // while the call is active. CallOverlays lives outside the Router, so we use
+  // the pushState-patching usePathname() hook to observe navigation.
+  const pathname = usePathname();
+  const prevPathRef = useRef(pathname);
+  useEffect(() => {
+    if (pathname !== prevPathRef.current) {
+      prevPathRef.current = pathname;
+      setIsPiP(true);
+    }
+  }, [pathname]);
+
+  // Also minimize when the tab/app is backgrounded (Page Visibility API), so a
+  // user who switches away and comes back sees the compact overlay.
+  useEffect(() => {
+    function onVisibility() {
+      if (document.hidden) setIsPiP(true);
+    }
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => document.removeEventListener("visibilitychange", onVisibility);
+  }, []);
 
   // Call timer — tracks seconds since this component mounted (proxy for call start).
   const callStartRef = useRef<number>(Date.now());
@@ -255,6 +308,7 @@ function ActiveCallOverlay() {
     setContractOpen(false);
     setBgOpen(false);
     setMoreOpen(false);
+    setIsPiP(false);
   }, [active?.callId, active?.kind, active?.roomName]);
 
   const lk = useLiveKitRoom({
@@ -360,6 +414,26 @@ function ActiveCallOverlay() {
   const autoLayout: CallLayout =
     !userPickedLayout && others.length === 1 ? "speaker" : layout;
   const effectiveLayout: CallLayout = contractOpen && autoLayout === "grid" ? "sidebar" : autoLayout;
+
+  // Picture-in-Picture: render the compact floating overlay instead of the
+  // full-screen one. All hooks above (incl. useLiveKitRoom) have already run,
+  // so the room stays connected — this only swaps the visual layer.
+  if (isPiP) {
+    return (
+      <MiniCallOverlay
+        remote={firstRemote}
+        otherName={active.otherName}
+        otherHue={active.otherHue}
+        micMuted={micMuted}
+        onToggleMic={() => { lk.toggleMic().then((nowMuted) => setMicMuted(nowMuted)).catch(() => {}); }}
+        micDisabled={lk.status !== "connected"}
+        connecting={lk.status !== "connected"}
+        timerSecs={timerSecs}
+        onEnd={endCallWithClerkStop}
+        onExpand={() => setIsPiP(false)}
+      />
+    );
+  }
 
   return (
     <div
@@ -549,6 +623,19 @@ function ActiveCallOverlay() {
         </div>
         </div>
 
+        {/* Minimize — collapse into the floating PiP mini overlay while staying
+            on the call. The room stays connected; only the visual layer swaps. */}
+        <button
+          type="button"
+          onClick={() => setIsPiP(true)}
+          className="ml-1 shrink-0 flex flex-col items-center gap-0.5 px-2 py-1.5 rounded-md bg-[hsl(220_45%_27%)] hover:bg-[hsl(220_45%_35%)] text-white transition-colors min-w-[44px]"
+          title="Minimize call to a floating window"
+          data-testid="button-minimize-call"
+        >
+          <Minimize2 className="w-5 h-5" />
+          <span className="text-[10px] font-medium">Minimize</span>
+        </button>
+
         {/* Pop Out — open Bulldog Contracts/Ops with the call embedded in the widget */}
         {active && active.callId > 0 && (
           <button
@@ -694,6 +781,151 @@ function ActiveCallOverlay() {
       <RemoteAudio participant={firstRemote} />
 
       {addOpen && <InCallAddDialog onClose={() => setAddOpen(false)} />}
+    </div>
+  );
+}
+
+/* ────────────────── Mini (Picture-in-Picture) overlay ────────────────── */
+
+/**
+ * MiniCallOverlay — a small floating overlay pinned to the bottom-right that
+ * keeps an active call visible while the user works elsewhere in the app. It
+ * is purely presentational: the LiveKit room lives in ActiveCallOverlay (which
+ * stays mounted while PiP is shown), and all call state is passed in as props.
+ * The window can be dragged by its header.
+ */
+function MiniCallOverlay({
+  remote,
+  otherName,
+  otherHue,
+  micMuted,
+  onToggleMic,
+  micDisabled,
+  connecting,
+  timerSecs,
+  onEnd,
+  onExpand,
+}: {
+  remote: RoomParticipantState | null;
+  otherName: string;
+  otherHue: number;
+  micMuted: boolean;
+  onToggleMic: () => void;
+  micDisabled: boolean;
+  connecting: boolean;
+  timerSecs: number;
+  onEnd: () => void;
+  onExpand: () => void;
+}) {
+  // Drag support. `pos` is null until the user drags, so the default CSS
+  // bottom-right anchoring applies; once dragged we switch to absolute
+  // left/top coordinates tracked in state.
+  const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
+  const dragOffset = useRef<{ dx: number; dy: number } | null>(null);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    function onMove(e: MouseEvent) {
+      if (!dragOffset.current) return;
+      const width = rootRef.current?.offsetWidth ?? 220;
+      const height = rootRef.current?.offsetHeight ?? 160;
+      const maxX = window.innerWidth - width;
+      const maxY = window.innerHeight - height;
+      const x = Math.min(Math.max(0, e.clientX - dragOffset.current.dx), Math.max(0, maxX));
+      const y = Math.min(Math.max(0, e.clientY - dragOffset.current.dy), Math.max(0, maxY));
+      setPos({ x, y });
+    }
+    function onUp() { dragOffset.current = null; }
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+  }, []);
+
+  const startDrag = (e: React.MouseEvent) => {
+    const rect = rootRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    dragOffset.current = { dx: e.clientX - rect.left, dy: e.clientY - rect.top };
+  };
+
+  const style: React.CSSProperties = pos
+    ? { position: "fixed", left: pos.x, top: pos.y, zIndex: 9999, width: 220 }
+    : { position: "fixed", bottom: 24, right: 24, zIndex: 9999, width: 220 };
+
+  return (
+    <div
+      ref={rootRef}
+      style={style}
+      className="rounded-xl bg-gray-900 border border-[hsl(220_40%_25%)] shadow-2xl overflow-hidden text-white select-none"
+      data-testid="overlay-mini-call"
+    >
+      {/* Draggable header with the call timer. */}
+      <div
+        onMouseDown={startDrag}
+        className="flex items-center justify-between px-2.5 py-1.5 bg-[hsl(220_60%_11%)] cursor-move"
+      >
+        <span className="flex items-center gap-1.5 text-xs font-mono tabular-nums text-white">
+          <Volume2 className="w-3.5 h-3.5 text-vs-blue" />
+          {connecting ? "…" : formatCallTimer(timerSecs)}
+        </span>
+        <button
+          type="button"
+          onClick={onExpand}
+          className="p-1 rounded hover:bg-black/30 text-[hsl(0_0%_75%)] hover:text-white"
+          title="Expand call"
+          data-testid="button-expand-call"
+        >
+          <Maximize2 className="w-3.5 h-3.5" />
+        </button>
+      </div>
+
+      {/* Remote participant video (or avatar when video is off). */}
+      <div className="aspect-video bg-black">
+        <CallTile name={otherName} hue={otherHue} participant={remote} isMe={false} compact />
+      </div>
+
+      {/* Controls: mute, end, expand. */}
+      <div className="flex items-center justify-center gap-3 px-2 py-2 bg-gray-900">
+        <button
+          type="button"
+          onClick={onToggleMic}
+          disabled={micDisabled}
+          className={[
+            "w-9 h-9 rounded-full flex items-center justify-center transition-colors",
+            micDisabled ? "opacity-40 cursor-not-allowed" : "",
+            micMuted
+              ? "bg-[hsl(var(--vs-accent)/0.25)] text-[hsl(var(--vs-accent))] ring-1 ring-[hsl(var(--vs-accent)/0.4)]"
+              : "bg-[hsl(220_45%_27%)] hover:bg-[hsl(220_45%_32%)] text-white",
+          ].join(" ")}
+          title={micMuted ? "Unmute" : "Mute"}
+          data-testid="button-mini-mic"
+        >
+          {micMuted ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+        </button>
+        <button
+          type="button"
+          onClick={onEnd}
+          className="w-9 h-9 rounded-full bg-vs-red hover:bg-[hsl(var(--vs-red-bright))] text-white flex items-center justify-center"
+          title="Leave call"
+          data-testid="button-mini-end"
+        >
+          <PhoneOff className="w-4 h-4" />
+        </button>
+        <button
+          type="button"
+          onClick={onExpand}
+          className="w-9 h-9 rounded-full bg-[hsl(220_45%_27%)] hover:bg-[hsl(220_45%_32%)] text-white flex items-center justify-center"
+          title="Expand call"
+          data-testid="button-mini-expand"
+        >
+          <Maximize2 className="w-4 h-4" />
+        </button>
+      </div>
+
+      {/* Keep remote audio playing while minimized. */}
+      <RemoteAudio participant={remote} />
     </div>
   );
 }
