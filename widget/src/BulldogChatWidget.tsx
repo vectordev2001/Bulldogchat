@@ -116,6 +116,36 @@ export function BulldogChatWidget({ apiBaseUrl, hidden }: BulldogChatWidgetProps
     return () => { cancelled = true; };
   }, [api]);
 
+  // ?joinCall=<id> — when the widget is mounted on Contracts/Ops after the user
+  // clicked "Pop Out" on an active Chat call, auto-join that call immediately.
+  // We read the URL param once on mount, then strip it so a refresh doesn't
+  // re-join a long-ended call.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const rawId = params.get("joinCall");
+    if (!rawId) return;
+    const callId = parseInt(rawId, 10);
+    if (isNaN(callId) || callId <= 0) return;
+    // Strip the param from the URL so it doesn't persist across page refreshes.
+    params.delete("joinCall");
+    const newSearch = params.toString();
+    const newUrl = window.location.pathname + (newSearch ? `?${newSearch}` : "") + window.location.hash;
+    window.history.replaceState({}, "", newUrl);
+    // Join the call — api.joinCall hits POST /api/calls/:id/accept which returns
+    // a fresh LiveKit token even if the caller already accepted (same endpoint
+    // acceptCall uses). Open the widget automatically.
+    (async () => {
+      try {
+        const session = await api.joinCall(callId);
+        setActiveCall({ callId, roomName: session.roomName, token: session.token, wsUrl: session.ws_url });
+        setOpen(true);
+      } catch (err) {
+        console.warn("[widget] auto-join call failed", err);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Restore last-opened conversation from localStorage on mount.
   useEffect(() => {
     if (activeConversation) return;
