@@ -2629,7 +2629,7 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
         storage.updateDirectCallStatus(row.id, "missed", { endedAt: new Date() });
         emitCallEnded({ ...payload, reason: "missed" });
       }
-    }, 45_000);
+    }, 90_000);
 
     res.json({
       callId: row.id,
