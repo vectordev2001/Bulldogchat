@@ -83,8 +83,10 @@ export class ChatApiClient {
     return res.json() as Promise<T>;
   }
 
-  me(): Promise<ApiUser> {
-    return this.request("GET", "/api/auth/me");
+  async me(): Promise<ApiUser> {
+    // Server returns { user: ApiUser, org: ... } — unwrap the user field.
+    const resp = await this.request<{ user: ApiUser } | ApiUser>("GET", "/api/auth/me");
+    return (resp as { user: ApiUser }).user ?? (resp as ApiUser);
   }
 
   orgMembers(): Promise<ApiUser[]> {
@@ -135,6 +137,15 @@ export class ChatApiClient {
   /** End / decline a call. */
   endCall(callId: number): Promise<void> {
     return this.request("POST", `/api/calls/${callId}/end`);
+  }
+
+  /**
+   * Join an existing call by ID — used by the widget when the host page URL
+   * contains ?joinCall=<callId>. Calls accept on behalf of the current user
+   * and returns a fresh LiveKit token + room name.
+   */
+  joinCall(callId: number): Promise<{ roomName: string; token: string; ws_url: string }> {
+    return this.request("POST", `/api/calls/${callId}/accept`);
   }
 
   // ── Auth-check ────────────────────────────────────────────────────────────
