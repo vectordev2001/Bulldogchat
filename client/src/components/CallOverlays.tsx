@@ -549,6 +549,32 @@ function ActiveCallOverlay() {
         </div>
         </div>
 
+        {/* Pop Out — open Bulldog Contracts/Ops with the call embedded in the widget */}
+        {active && active.callId > 0 && (
+          <button
+            type="button"
+            onClick={() => {
+              const callId = active.callId;
+              // Open contracts (primary) with ?joinCall= so the widget auto-joins.
+              // User can switch to ops manually if needed.
+              window.open(
+                `https://vectorcontracts.bulldogops.com?joinCall=${callId}`,
+                "_blank",
+                "noopener"
+              );
+            }}
+            className="ml-1 shrink-0 flex flex-col items-center gap-0.5 px-2 py-1.5 rounded-md bg-[hsl(220_45%_27%)] hover:bg-[hsl(220_45%_35%)] text-white transition-colors min-w-[44px]"
+            title="Continue call in Contracts or Ops"
+            data-testid="button-pop-out-call"
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="3" y="3" width="18" height="18" rx="2" />
+              <path d="M9 3v18M3 9h6" />
+            </svg>
+            <span className="text-[10px] font-medium">Pop Out</span>
+          </button>
+        )}
+
         {/* Leave — ALWAYS pinned on the right (outside scroll container) so the
             user can always hang up regardless of screen size. */}
         <button
