@@ -54,10 +54,10 @@ export function CallVideoStage({
     );
   }
 
-  // Pick the focused participant: first remote that's speaking, else first
-  // remote, else me (solo call).
-  const speaking = others.find((o) => o.participant?.isSpeaking && !o.participant?.micMuted);
-  const focused = speaking ?? others[0] ?? me;
+  // Fixed layout: always keep the first remote as the focused tile so
+  // tiles don't swap positions as people speak. Speaking is indicated by
+  // a border glow on the tile instead of reordering.
+  const focused = others[0] ?? me;
   const rest = all.filter((p) => p.key !== focused.key);
 
   if (layout === "grid") {
