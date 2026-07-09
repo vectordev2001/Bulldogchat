@@ -547,29 +547,37 @@ export function CallProvider({ children }: { children: ReactNode }) {
     const inc = incomingRef.current;
     if (!inc) return;
     stopRing();
-    const resp = await apiRequest<{ callId: number; roomName: string; token: string; ws_url: string }>(
-      "POST", `/api/calls/${inc.callId}/accept`,
-    );
-    setIncoming(null);
-    setActive({
-      callId: resp.callId,
-      roomName: resp.roomName,
-      token: resp.token,
-      wsUrl: resp.ws_url,
-      // If this was a channel call, show "#channel" as the "other party"
-      // banner label (matches the outbound group-call convention above).
-      // Fall back to the caller's name for 1:1 calls.
-      otherName: inc.channelName ? `#${inc.channelName}` : inc.callerName,
-      otherHue: inc.channelName ? 215 : inc.callerHue,
-      kind: inc.kind,
-      iAmCaller: false,
-      active: true,
-      // Seed channel context from the SSE payload so the MeetingClerk
-      // auto-consent banner and in-call chat panel key off the same id
-      // the server already resolved. Fallbacks to null for 1:1 calls.
-      channelId: inc.channelId ?? null,
-      channelName: inc.channelName ?? null,
-    });
+    try {
+      const resp = await apiRequest<{ callId: number; roomName: string; token: string; ws_url: string }>(
+        "POST", `/api/calls/${inc.callId}/accept`,
+      );
+      setIncoming(null);
+      setActive({
+        callId: resp.callId,
+        roomName: resp.roomName,
+        token: resp.token,
+        wsUrl: resp.ws_url,
+        // If this was a channel call, show "#channel" as the "other party"
+        // banner label (matches the outbound group-call convention above).
+        // Fall back to the caller's name for 1:1 calls.
+        otherName: inc.channelName ? `#${inc.channelName}` : inc.callerName,
+        otherHue: inc.channelName ? 215 : inc.callerHue,
+        kind: inc.kind,
+        iAmCaller: false,
+        active: true,
+        // Seed channel context from the SSE payload so the MeetingClerk
+        // auto-consent banner and in-call chat panel key off the same id
+        // the server already resolved. Fallbacks to null for 1:1 calls.
+        channelId: inc.channelId ?? null,
+        channelName: inc.channelName ?? null,
+      });
+    } catch {
+      // Call may have already been missed/declined — clear the ring UI
+      // and show a brief "call ended" notice instead of leaving the
+      // callee stuck in the incoming modal with nothing happening.
+      setIncoming(null);
+      setLastEnded({ reason: "ended", otherName: inc.callerName });
+    }
   }, [stopRing]);
 
   const declineIncoming = useCallback(async () => {

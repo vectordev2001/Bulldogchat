@@ -21,6 +21,10 @@ interface Handlers {
   onReopen?: () => void;
   /** Fired when another user initiates a call to the current user. */
   onCallIncoming?: (data: any) => void;
+  /** Fired when the callee accepts the call — both peers receive this. */
+  onCallAccepted?: (data: any) => void;
+  /** Fired when a call ends, is missed, or is declined. */
+  onCallEnded?: (data: any) => void;
 }
 
 export function useMiniChatSse(apiBaseUrl: string, enabled: boolean, handlers: Handlers): SSEStatus {
@@ -78,6 +82,14 @@ export function useMiniChatSse(apiBaseUrl: string, enabled: boolean, handlers: H
       // Incoming call from another user — widget shows accept/decline banner.
       es.addEventListener("call:incoming", (e: MessageEvent) => {
         try { handlersRef.current.onCallIncoming?.(JSON.parse(e.data)); } catch {}
+      });
+      // Callee accepted — caller's widget transitions to CallView.
+      es.addEventListener("call:accepted", (e: MessageEvent) => {
+        try { handlersRef.current.onCallAccepted?.(JSON.parse(e.data)); } catch {}
+      });
+      // Call ended / missed / declined — clear call state.
+      es.addEventListener("call:ended", (e: MessageEvent) => {
+        try { handlersRef.current.onCallEnded?.(JSON.parse(e.data)); } catch {}
       });
     };
 

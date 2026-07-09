@@ -57,6 +57,7 @@ export function BulldogChatWidget({ apiBaseUrl, hidden }: BulldogChatWidgetProps
   const [composerValue, setComposerValue] = useState("");
   const [sending, setSending] = useState(false);
   const [startingCall, setStartingCall] = useState(false);
+  const [callError, setCallError] = useState<string | null>(null);
 
   // ── Draggable pill ────────────────────────────────────────────────────────
   const pillRef = useRef<HTMLButtonElement>(null);
@@ -196,6 +197,20 @@ export function BulldogChatWidget({ apiBaseUrl, hidden }: BulldogChatWidgetProps
         setOpen(true);
       }
     },
+    // Callee accepted — clear any "calling…" spinner on the caller side
+    onCallAccepted: () => {
+      setStartingCall(false);
+    },
+    // Call ended / missed / declined — clear active or incoming call state
+    onCallEnded: (data) => {
+      if (activeCall && data?.callId === activeCall.callId) {
+        setActiveCall(null);
+      }
+      if (incomingCall && data?.callId === incomingCall.callId) {
+        setIncomingCall(null);
+      }
+      setStartingCall(false);
+    },
   });
 
   // Keyboard shortcuts.
@@ -237,11 +252,15 @@ export function BulldogChatWidget({ apiBaseUrl, hidden }: BulldogChatWidgetProps
     const calleeId = activeDm.memberIds.find((id) => id !== me.id);
     if (!calleeId) return;
     setStartingCall(true);
+    setCallError(null);
     try {
       const session = await api.startCall(calleeId, "video");
       setActiveCall({ callId: session.callId, roomName: session.roomName, token: session.token, wsUrl: session.ws_url });
     } catch (err) {
+      const msg = (err as { message?: string })?.message ?? "Call failed";
       console.warn("[widget] startCall failed", err);
+      setCallError(msg);
+      setTimeout(() => setCallError(null), 4000);
     } finally {
       setStartingCall(false);
     }
@@ -399,6 +418,13 @@ export function BulldogChatWidget({ apiBaseUrl, hidden }: BulldogChatWidgetProps
               <CloseIcon />
             </button>
           </header>
+
+          {/* ── Call error banner ── */}
+          {callError && (
+            <div className="bcw-px-3 bcw-py-1.5 bcw-bg-red-900/80 bcw-border-b bcw-border-red-700/50 bcw-shrink-0">
+              <span className="bcw-text-xs bcw-text-red-200">{callError}</span>
+            </div>
+          )}
 
           {/* ── Body ── */}
           <div className="bcw-flex-1 bcw-flex bcw-min-h-0 bcw-relative">

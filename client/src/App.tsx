@@ -74,6 +74,11 @@ function AppRouter() {
       <Route path="/accept-invite/:token" component={AcceptInvite} />
       <Route path="/admin">{() => <ProtectedRoute><AdminPanel /></ProtectedRoute>}</Route>
       <Route path="/call-join/:token">{() => <ProtectedRoute><CallJoin /></ProtectedRoute>}</Route>
+      {/* Deep-link catch-alls: /#/dms/<id>/m/<msgId> and /#/channels/<id>[/m/<msgId>]
+          are emitted by SMS chat-mirror and push notifications. Home.tsx reads
+          window.location.href directly via parseDeepLink so it handles all forms. */}
+      <Route path="/dms/:rest*">{() => <ProtectedRoute><Home /></ProtectedRoute>}</Route>
+      <Route path="/channels/:rest*">{() => <ProtectedRoute><Home /></ProtectedRoute>}</Route>
       <Route path="/">{() => <ProtectedRoute><Home /></ProtectedRoute>}</Route>
       <Route component={NotFound} />
     </Switch>
