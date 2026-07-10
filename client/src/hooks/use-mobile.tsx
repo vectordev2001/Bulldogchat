@@ -1,19 +1,4 @@
-import * as React from "react"
-
-const MOBILE_BREAKPOINT = 768
-
-export function useIsMobile() {
-  const [isMobile, setIsMobile] = React.useState<boolean | undefined>(undefined)
-
-  React.useEffect(() => {
-    const mql = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT - 1}px)`)
-    const onChange = () => {
-      setIsMobile(window.innerWidth < MOBILE_BREAKPOINT)
-    }
-    mql.addEventListener("change", onChange)
-    setIsMobile(window.innerWidth < MOBILE_BREAKPOINT)
-    return () => mql.removeEventListener("change", onChange)
-  }, [])
-
-  return !!isMobile
-}
+// Re-export shim — moved to packages/chat-ui/src/hooks/use-mobile.* as part of
+// the widget-parity refactor. Kept here so existing "@/..." imports in
+// client/src continue to resolve unchanged.
+export * from "@vectordev2001/chat-ui/hooks/use-mobile";

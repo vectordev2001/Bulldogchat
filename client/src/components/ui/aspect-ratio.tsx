@@ -1,5 +1,4 @@
-import * as AspectRatioPrimitive from "@radix-ui/react-aspect-ratio"
-
-const AspectRatio = AspectRatioPrimitive.Root
-
-export { AspectRatio }
+// Re-export shim — moved to packages/chat-ui/src/components/ui/aspect-ratio.* as part of
+// the widget-parity refactor. Kept here so existing "@/..." imports in
+// client/src continue to resolve unchanged.
+export * from "@vectordev2001/chat-ui/components/ui/aspect-ratio";
