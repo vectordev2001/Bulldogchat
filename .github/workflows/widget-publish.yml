@@ -66,6 +66,11 @@ jobs:
         run: node scripts/check-size.mjs
 
       - name: Publish
+        # Uses NPM_TOKEN (a PAT with write:packages) rather than the built-in
+        # GITHUB_TOKEN because the @vectordev2001/chat-widget package is
+        # user-scoped and pre-existing; the repo-scoped GITHUB_TOKEN gets 403.
+        # PAT lives only in the repo secret — never pasted into terminals or
+        # .npmrc files.
         run: npm publish
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
