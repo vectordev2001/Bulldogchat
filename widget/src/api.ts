@@ -148,6 +148,41 @@ export class ChatApiClient {
     return this.request("POST", `/api/calls/${callId}/accept`);
   }
 
+  // ── Jobs (work objects) — used by the `bulldog:widget:openJob` bus ────────
+
+  /** Fetch a single job/work-object by id. Throws ApiError(404) if missing. */
+  getWorkObject(workObjectId: number): Promise<{ id: number; projectId: number | null; title: string }> {
+    return this.request("GET", `/api/work-objects/${workObjectId}`);
+  }
+
+  /** Channels linked to a job/work-object (server/routes-work-objects.ts). */
+  getWorkObjectChannels(workObjectId: number): Promise<ApiChannel[]> {
+    return this.request("GET", `/api/work-objects/${workObjectId}/channels`);
+  }
+
+  /**
+   * Create a job/work-object so the widget's "no channels yet" prompt has
+   * somewhere to attach the new #general channel. `ref` is the host app's
+   * job number (unique per org+kind server-side — see
+   * shared/schema.ts workObjectCreateSchema); `kind` defaults to
+   * "work_project", the closest general-purpose kind for an
+   * externally-sourced job record. `projectId` (the Bulldog "company")
+   * is sent as a query param per the server route's contract.
+   */
+  createWorkObject(input: { title: string; ref: string; projectId?: number; kind?: "job_site" | "work_project" | "change_order" | "safety_incident" }): Promise<{ id: number; projectId: number | null }> {
+    const { projectId, ...body } = input;
+    const q = projectId ? `?projectId=${projectId}` : "";
+    return this.request("POST", `/api/work-objects${q}`, { kind: "work_project", ...body });
+  }
+
+  /**
+   * Create a channel under a project, optionally nesting it under a job via
+   * workObjectId (server/routes.ts, POST /api/projects/:id/channels).
+   */
+  createChannel(projectId: number, input: { name: string; type?: "text" | "voice"; workObjectId?: number }): Promise<ApiChannel> {
+    return this.request("POST", `/api/projects/${projectId}/channels`, input);
+  }
+
   // ── Auth-check ────────────────────────────────────────────────────────────
 
   async isAuthenticated(): Promise<boolean> {

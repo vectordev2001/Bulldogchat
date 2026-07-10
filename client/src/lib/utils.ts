@@ -1,7 +1,4 @@
-import { clsx } from 'clsx';
-import type { ClassValue } from 'clsx';
-import { twMerge } from "tailwind-merge"
-
-export function cn(...inputs: ClassValue[]) {
-  return twMerge(clsx(inputs))
-}
+// Re-export shim — moved to packages/chat-ui/src/lib/utils.ts as part of the
+// widget-parity refactor. Kept here so existing "@/lib/utils" imports in
+// client/src/pages and client/src/App.tsx continue to resolve unchanged.
+export * from "@vectordev2001/chat-ui/lib/utils";

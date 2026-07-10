@@ -1,9 +1,12 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { ChatApiClient, type ApiDmChannel, type ApiMessage, type ApiUser } from "./api";
+import { useEffect, useMemo, useRef, useState, useCallback } from "react";
+import { QueryClientProvider } from "@tanstack/react-query";
+import { ChatApp, queryClient as chatUiQueryClient, setApiBase, type ApiUser as ChatUiApiUser } from "@vectordev2001/chat-ui";
+import { ChatApiClient, type ApiUser } from "./api";
 import { useWidgetStore, type ConversationRef } from "./state";
 import { ChatSyncBridge } from "./sync";
 import { useMiniChatSse } from "./hooks/useMiniChatSse";
 import { useRingtone, type RingMode } from "./hooks/useRingtone";
+import { useOpenJobBus } from "./hooks/useOpenJobBus";
 import { CallView } from "./CallView";
 
 export interface BulldogChatWidgetProps {
@@ -27,16 +30,26 @@ function useIsMobile() {
   return isMobile;
 }
 
+/** Pop-out target: the standalone Chat app, full experience, own tab. */
+const CHAT_APP_URL = "https://chat.bulldogops.com/";
+
 export function BulldogChatWidget({ apiBaseUrl, hidden }: BulldogChatWidgetProps) {
   const api = useMemo(() => new ChatApiClient(apiBaseUrl), [apiBaseUrl]);
   const sync = useMemo(() => new ChatSyncBridge(), []);
   const isMobile = useIsMobile();
 
+  // ChatApp (from @vectordev2001/chat-ui) makes all of its own requests
+  // through queryClient.ts's getApiBase()/setApiBase(), completely separate
+  // from this widget's own hand-rolled ChatApiClient (used for the pill's
+  // unread/call/SSE plumbing, which predates ChatApp and still owns those
+  // concerns). Point it at the same cross-origin host once, on mount.
+  useEffect(() => {
+    setApiBase(apiBaseUrl);
+  }, [apiBaseUrl]);
+
   const open = useWidgetStore((s) => s.open);
   const setOpen = useWidgetStore((s) => s.setOpen);
   const toggleOpen = useWidgetStore((s) => s.toggleOpen);
-  const sidebarOpen = useWidgetStore((s) => s.sidebarOpen);
-  const setSidebarOpen = useWidgetStore((s) => s.setSidebarOpen);
   const activeConversation = useWidgetStore((s) => s.activeConversation);
   const setActiveConversation = useWidgetStore((s) => s.setActiveConversation);
   const unreadCount = useWidgetStore((s) => s.unreadCount);
@@ -51,14 +64,88 @@ export function BulldogChatWidget({ apiBaseUrl, hidden }: BulldogChatWidgetProps
 
   const [authed, setAuthed] = useState<boolean | null>(null);
   const [me, setMe] = useState<ApiUser | null>(null);
-  const [members, setMembers] = useState<ApiUser[]>([]);
-  const [dms, setDms] = useState<ApiDmChannel[]>([]);
-  const [messages, setMessages] = useState<ApiMessage[]>([]);
-  const [messagesLoading, setMessagesLoading] = useState(false);
-  const [composerValue, setComposerValue] = useState("");
-  const [sending, setSending] = useState(false);
   const [startingCall, setStartingCall] = useState(false);
   const [callError, setCallError] = useState<string | null>(null);
+
+  // Expand-to-fullscreen: overrides the normal fixed-size panel with a
+  // full-viewport one, same idea as the mobile layout but toggleable on
+  // desktop too. Independent of `isMobile` (mobile is already full-screen).
+  const [expanded, setExpanded] = useState(false);
+
+  // ── openJob deep-link scoping ────────────────────────────────────────────
+  // ChatApp is remounted (key={jobChannelKey}) whenever we resolve a new
+  // target channel so its internal deep-link effect (which only runs once
+  // per mount) re-fires for each job open, matching how the main app's
+  // ChatApp handles a fresh page-load deep link.
+  const [jobChannelId, setJobChannelId] = useState<number | null>(null);
+  const [jobPrompt, setJobPrompt] = useState<{ jobId: number; jobNumber: string; source: string } | null>(null);
+  const [jobPromptBusy, setJobPromptBusy] = useState(false);
+  const [jobPromptError, setJobPromptError] = useState<string | null>(null);
+
+  const handleJobOpen = useCallback((jobId: number, jobNumber: string, source: string) => {
+    setOpen(true);
+    setJobPrompt(null);
+    setJobPromptError(null);
+    (async () => {
+      try {
+        const channels = await api.getWorkObjectChannels(jobId);
+        if (channels.length > 0) {
+          setJobChannelId(channels[0].id);
+        } else {
+          setJobPrompt({ jobId, jobNumber, source });
+        }
+      } catch (err) {
+        console.warn("[widget] openJob channel lookup failed", err);
+        setJobPrompt({ jobId, jobNumber, source });
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [api]);
+
+  useOpenJobBus(api, { onJobOpen: handleJobOpen });
+
+  const handleCreateJobChannel = async () => {
+    if (!jobPrompt) return;
+    setJobPromptBusy(true);
+    setJobPromptError(null);
+    try {
+      // The job usually already exists server-side (it's the same
+      // multi-tenant work_objects table Contracts/Ops write to) — try to
+      // fetch it first and only create a new row on a genuine 404, per the
+      // brief ("if work-object doesn't exist server-side").
+      let workObjectId = jobPrompt.jobId;
+      let projectId: number | null = null;
+      try {
+        const wo = await api.getWorkObject(jobPrompt.jobId);
+        projectId = wo.projectId;
+      } catch {
+        // Job doesn't exist on the Chat side yet — create it. We have no
+        // company (projectId) to attach it to from just a jobId/jobNumber,
+        // so this falls back to the org's default company if the server
+        // accepts an omitted projectId, otherwise surfaces the server's
+        // error in jobPromptError below.
+        const created = await api.createWorkObject({
+          title: `Job ${jobPrompt.jobNumber}`,
+          ref: jobPrompt.jobNumber,
+        });
+        workObjectId = created.id;
+        projectId = created.projectId;
+      }
+      if (!projectId) throw new Error("Job has no company assigned — open it from the host app first");
+      const channel = await api.createChannel(projectId, {
+        name: "general",
+        type: "text",
+        workObjectId,
+      });
+      setJobChannelId(channel.id);
+      setJobPrompt(null);
+    } catch (err) {
+      const msg = (err as { message?: string })?.message ?? "Couldn't create the channel";
+      setJobPromptError(msg);
+    } finally {
+      setJobPromptBusy(false);
+    }
+  };
 
   // ── Draggable pill ────────────────────────────────────────────────────────
   const pillRef = useRef<HTMLButtonElement>(null);
@@ -92,7 +179,9 @@ export function BulldogChatWidget({ apiBaseUrl, hidden }: BulldogChatWidgetProps
     if (!wasDrag) setOpen(true);
   };
 
-  // Auth check + initial data load.
+  // Auth check + current user (still needed for the pill badge / call
+  // banner / ChatApp's `user` prop — ChatApp itself no longer calls
+  // useAuth() when used standalone this way, it just takes `user`).
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -101,17 +190,11 @@ export function BulldogChatWidget({ apiBaseUrl, hidden }: BulldogChatWidgetProps
       setAuthed(ok);
       if (!ok) return;
       try {
-        const [meRes, membersRes, dmsRes] = await Promise.all([
-          api.me(),
-          api.orgMembers(),
-          api.listDms(),
-        ]);
+        const meRes = await api.me();
         if (cancelled) return;
         setMe(meRes);
-        setMembers(membersRes);
-        setDms(dmsRes);
       } catch {
-        /* leave lists empty */
+        /* leave me null */
       }
     })();
     return () => { cancelled = true; };
@@ -166,54 +249,18 @@ export function BulldogChatWidget({ apiBaseUrl, hidden }: BulldogChatWidgetProps
     });
   }, [sync, setActiveConversation]);
 
-  const refreshDms = async () => {
-    try { setDms(await api.listDms()); } catch { /* keep stale */ }
-  };
-
-  const loadMessages = async (conv: ConversationRef) => {
-    if (!conv) return;
-    setMessagesLoading(true);
-    try {
-      const msgs = await api.listMessages(conv.id);
-      setMessages(msgs);
-    } catch {
-      setMessages([]);
-    } finally {
-      setMessagesLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    if (activeConversation && open) loadMessages(activeConversation);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeConversation?.id, activeConversation?.kind, open]);
-
-  // SSE.
+  // SSE — still driven by the widget's own lightweight ChatApiClient/SSE
+  // hook (not ChatApp's internal useSSE) so the unread badge + incoming-call
+  // banner on the *collapsed pill* work even while the panel (and therefore
+  // ChatApp) isn't mounted at all.
   useMiniChatSse(apiBaseUrl, authed === true, {
     onMessageNew: (data) => {
-      if (activeConversation && data?.channelId === activeConversation.id && open) {
-        loadMessages(activeConversation);
-      } else if (data?.channelId) {
-        incrementUnread();
-        sync.broadcastUnreadChanged(unreadCount + 1);
+      if (!(activeConversation && data?.channelId === activeConversation.id && open)) {
+        if (data?.channelId) {
+          incrementUnread();
+          sync.broadcastUnreadChanged(unreadCount + 1);
+        }
       }
-      refreshDms();
-    },
-    onMessageUpdate: (data) => {
-      if (activeConversation && data?.channelId === activeConversation.id) loadMessages(activeConversation);
-    },
-    onMessageDelete: (data) => {
-      if (activeConversation && data?.channelId === activeConversation.id) loadMessages(activeConversation);
-    },
-    onDmUpdated: refreshDms,
-    onDmCreated: refreshDms,
-    onChannelDelete: (data) => {
-      if (activeConversation && data?.channelId === activeConversation.id) setActiveConversation(null);
-      refreshDms();
-    },
-    onReopen: () => {
-      refreshDms();
-      if (activeConversation) loadMessages(activeConversation);
     },
     // Incoming call from SSE
     onCallIncoming: (data) => {
@@ -297,48 +344,16 @@ export function BulldogChatWidget({ apiBaseUrl, hidden }: BulldogChatWidgetProps
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [open, setOpen, toggleOpen]);
 
-  const selectConversation = (kind: "dm" | "channel", id: number) => {
-    setActiveConversation({ kind, id } as ConversationRef);
-    sync.broadcastConversationChanged(kind, id);
-    setSidebarOpen(false);
-    clearUnread();
-    sync.broadcastUnreadChanged(0);
-  };
-
-  const handleSend = async () => {
-    const content = composerValue.trim();
-    if (!content || !activeConversation || sending) return;
-    setSending(true);
-    try {
-      await api.sendMessage(activeConversation.id, content);
-      setComposerValue("");
-      await loadMessages(activeConversation);
-    } catch {
-      /* leave composer populated */
-    } finally {
-      setSending(false);
+  // Clear unread whenever the panel is open and showing chat (mirrors the
+  // old widget's selectConversation() reset — ChatApp doesn't know about
+  // this widget's unread store, so we clear it optimistically on open).
+  useEffect(() => {
+    if (open && !activeCall) {
+      clearUnread();
+      sync.broadcastUnreadChanged(0);
     }
-  };
-
-  // ── Start a 1:1 video call ────────────────────────────────────────────────
-  const handleStartCall = async () => {
-    if (!activeDm || !me || startingCall) return;
-    const calleeId = activeDm.memberIds.find((id) => id !== me.id);
-    if (!calleeId) return;
-    setStartingCall(true);
-    setCallError(null);
-    try {
-      const session = await api.startCall(calleeId, "video");
-      setActiveCall({ callId: session.callId, roomName: session.roomName, token: session.token, wsUrl: session.ws_url });
-    } catch (err) {
-      const msg = (err as { message?: string })?.message ?? "Call failed";
-      console.warn("[widget] startCall failed", err);
-      setCallError(msg);
-      setTimeout(() => setCallError(null), 4000);
-    } finally {
-      setStartingCall(false);
-    }
-  };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
 
   // ── Accept / decline incoming call ───────────────────────────────────────
   const handleAcceptCall = async () => {
@@ -360,28 +375,22 @@ export function BulldogChatWidget({ apiBaseUrl, hidden }: BulldogChatWidgetProps
 
   if (hidden) return null;
 
-  const userById = new Map(members.map((u) => [u.id, u]));
-  const activeDm = activeConversation?.kind === "dm" ? dms.find((d) => d.id === activeConversation.id) : undefined;
-  const activeTitle = activeDm
-    ? activeDm.title ||
-      (me ? activeDm.memberIds.filter((id) => id !== me.id).map((id) => userById.get(id)?.name).filter(Boolean).join(", ") : "Direct message") ||
-      "Direct message"
-    : activeCall
-    ? "In call"
-    : "Select a conversation";
-
-  const panelSizeClass = isMobile
+  const panelSizeClass = expanded
+    ? "bcw-fixed bcw-inset-0 bcw-w-full bcw-h-full bcw-rounded-none"
+    : isMobile
     ? "bcw-fixed bcw-inset-0 bcw-w-full bcw-h-full bcw-rounded-none"
     : "bcw-w-[360px] bcw-h-[480px] bcw-rounded-xl";
 
-  // Panel position: clamp so it doesn't go off-screen
+  // Panel position: clamp so it doesn't go off-screen. Expanded/mobile use
+  // the inset-0 fixed positioning above instead of right/bottom offsets.
   const panelRight = Math.max(8, pillPosition.right - 8);
-  const panelBottom = isMobile ? 0 : Math.max(8, pillPosition.bottom + 64);
+  const panelBottom = Math.max(8, pillPosition.bottom + 64);
+  const usesInsetPositioning = expanded || isMobile;
 
   return (
     <div
       className="bcw-fixed bcw-z-[1000]"
-      style={isMobile ? {} : { right: pillPosition.right, bottom: pillPosition.bottom }}
+      style={usesInsetPositioning && open ? {} : { right: pillPosition.right, bottom: pillPosition.bottom }}
       data-testid="bulldog-chat-widget-root"
     >
       {/* ── Collapsed pill ── */}
@@ -415,7 +424,7 @@ export function BulldogChatWidget({ apiBaseUrl, hidden }: BulldogChatWidgetProps
       {open && (
         <div
           className={`bcw-bg-bcw-navy bcw-shadow-bcw-panel bcw-flex bcw-flex-col bcw-overflow-hidden bcw-border bcw-border-black/30 ${panelSizeClass}`}
-          style={isMobile ? {} : { position: "fixed", right: panelRight, bottom: panelBottom }}
+          style={usesInsetPositioning ? {} : { position: "fixed", right: panelRight, bottom: panelBottom }}
           data-testid="bulldog-chat-widget-panel"
         >
           {/* ── Incoming call banner ── */}
@@ -444,33 +453,35 @@ export function BulldogChatWidget({ apiBaseUrl, hidden }: BulldogChatWidgetProps
 
           {/* ── Header ── */}
           <header className="bcw-h-11 bcw-px-2.5 bcw-flex bcw-items-center bcw-gap-1.5 bcw-border-b bcw-border-black/40 bcw-shrink-0">
-            <button
-              type="button"
-              onClick={() => setSidebarOpen(!sidebarOpen)}
-              className="bcw-p-1.5 bcw-rounded hover:bcw-bg-bcw-navy-light bcw-text-white/80"
-              aria-label="Toggle conversation list"
-              data-testid="bulldog-chat-widget-sidebar-toggle"
-            >
-              <MenuIcon />
-            </button>
             <div className="bcw-flex-1 bcw-min-w-0 bcw-text-xs bcw-font-semibold bcw-text-white bcw-truncate">
-              {activeTitle}
+              Bulldog Chat
             </div>
 
-            {/* Video call button — only when in a DM and not already on a call */}
-            {activeDm && !activeCall && (
+            {/* Expand to fullscreen — no-op visually on mobile (already full-screen). */}
+            {!isMobile && (
               <button
                 type="button"
-                onClick={handleStartCall}
-                disabled={startingCall}
-                className="bcw-p-1.5 bcw-rounded hover:bcw-bg-bcw-navy-light bcw-text-white/70 hover:bcw-text-white disabled:bcw-opacity-40"
-                aria-label="Start video call"
-                title="Start video call"
-                data-testid="bulldog-chat-widget-call-btn"
+                onClick={() => setExpanded((v) => !v)}
+                className="bcw-p-1.5 bcw-rounded hover:bcw-bg-bcw-navy-light bcw-text-white/80"
+                aria-label={expanded ? "Collapse" : "Expand to fullscreen"}
+                title={expanded ? "Collapse" : "Expand to fullscreen"}
+                data-testid="bulldog-chat-widget-expand"
               >
-                <VideoCallIcon />
+                {expanded ? <CollapseIcon /> : <ExpandIcon />}
               </button>
             )}
+
+            {/* Pop out to the full Chat app in a new tab. */}
+            <button
+              type="button"
+              onClick={() => window.open(CHAT_APP_URL, "_blank", "noopener,noreferrer")}
+              className="bcw-p-1.5 bcw-rounded hover:bcw-bg-bcw-navy-light bcw-text-white/80"
+              aria-label="Open in Bulldog Chat"
+              title="Open in Bulldog Chat"
+              data-testid="bulldog-chat-widget-popout"
+            >
+              <PopOutIcon />
+            </button>
 
             <button
               type="button"
@@ -484,7 +495,7 @@ export function BulldogChatWidget({ apiBaseUrl, hidden }: BulldogChatWidgetProps
             </button>
             <button
               type="button"
-              onClick={() => { setOpen(false); setActiveConversation(null); }}
+              onClick={() => { setOpen(false); setExpanded(false); }}
               className="bcw-p-1.5 bcw-rounded hover:bcw-bg-bcw-navy-light bcw-text-white/80"
               aria-label="Close"
               data-testid="bulldog-chat-widget-close"
@@ -500,155 +511,67 @@ export function BulldogChatWidget({ apiBaseUrl, hidden }: BulldogChatWidgetProps
             </div>
           )}
 
+          {/* ── "No channels yet" prompt for an openJob() with nothing to show ── */}
+          {jobPrompt && (
+            <div className="bcw-px-3 bcw-py-2.5 bcw-bg-bcw-navy-light bcw-border-b bcw-border-black/40 bcw-shrink-0 bcw-space-y-1.5">
+              <div className="bcw-text-xs bcw-text-white/90">
+                No channels yet for job #{jobPrompt.jobNumber} — create one?
+              </div>
+              {jobPromptError && <div className="bcw-text-[11px] bcw-text-red-300">{jobPromptError}</div>}
+              <div className="bcw-flex bcw-gap-1.5">
+                <button
+                  type="button"
+                  onClick={handleCreateJobChannel}
+                  disabled={jobPromptBusy}
+                  className="bcw-px-2 bcw-py-1 bcw-rounded bcw-bg-bcw-red bcw-text-white bcw-text-xs bcw-font-semibold disabled:bcw-opacity-50"
+                  data-testid="bulldog-chat-widget-create-job-channel"
+                >
+                  {jobPromptBusy ? "Creating…" : "Create #general"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setJobPrompt(null)}
+                  disabled={jobPromptBusy}
+                  className="bcw-px-2 bcw-py-1 bcw-rounded bcw-text-white/70 bcw-text-xs hover:bcw-bg-black/20"
+                >
+                  Dismiss
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* ── Body ── */}
-          <div className="bcw-flex-1 bcw-flex bcw-min-h-0 bcw-relative">
-            {sidebarOpen && (
-              <div className="bcw-absolute bcw-inset-y-0 bcw-left-0 bcw-w-52 bcw-bg-[hsl(220,60%,9%)] bcw-border-r bcw-border-black/40 bcw-overflow-y-auto bcw-z-10">
-                {authed === false ? (
-                  <div className="bcw-p-3 bcw-text-xs bcw-text-white/60">Sign in to Bulldog Chat to see your conversations.</div>
-                ) : dms.length === 0 ? (
-                  <div className="bcw-p-3 bcw-text-xs bcw-text-white/60">No conversations yet.</div>
-                ) : (
-                  dms.map((dm) => {
-                    const others = me ? dm.memberIds.filter((id) => id !== me.id) : dm.memberIds;
-                    const label = dm.title || others.map((id) => userById.get(id)?.name).filter(Boolean).join(", ") || "Direct message";
-                    return (
-                      <button
-                        key={dm.id}
-                        type="button"
-                        onClick={() => selectConversation("dm", dm.id)}
-                        className={`bcw-w-full bcw-text-left bcw-px-3 bcw-py-2 bcw-text-xs bcw-truncate hover:bcw-bg-bcw-navy-light ${
-                          activeConversation?.kind === "dm" && activeConversation.id === dm.id
-                            ? "bcw-bg-bcw-navy-light bcw-text-white"
-                            : "bcw-text-white/80"
-                        }`}
-                        data-testid={`bulldog-chat-widget-dm-${dm.id}`}
-                      >
-                        {label}
-                      </button>
-                    );
-                  })
-                )}
+          <div className="bcw-flex-1 bcw-flex bcw-min-h-0 bcw-relative bcw-bg-white">
+            {activeCall ? (
+              <CallView
+                call={activeCall}
+                api={api}
+                onCallEnded={() => setActiveCall(null)}
+              />
+            ) : authed === false ? (
+              <div className="bcw-flex-1 bcw-flex bcw-items-center bcw-justify-center bcw-p-4 bcw-text-center bcw-text-xs bcw-text-bcw-navy/60">
+                Sign in to Bulldog Chat to use the mini chat.
+              </div>
+            ) : authed === true && me ? (
+              // Full chat experience, shared with the main app. Keyed so a
+              // resolved openJob target remounts ChatApp and re-triggers its
+              // internal deep-link-style effect for the new channel.
+              <QueryClientProvider client={chatUiQueryClient}>
+                <ChatApp
+                  key={jobChannelId ?? "default"}
+                  user={me as unknown as ChatUiApiUser}
+                  apiBaseUrl={apiBaseUrl}
+                  initialChannelId={jobChannelId}
+                />
+              </QueryClientProvider>
+            ) : (
+              <div className="bcw-flex-1 bcw-flex bcw-items-center bcw-justify-center bcw-p-4 bcw-text-center bcw-text-xs bcw-text-bcw-navy/60">
+                Loading…
               </div>
             )}
-
-            <div className="bcw-flex-1 bcw-flex bcw-flex-col bcw-min-w-0 bcw-min-h-0">
-              {/* Active call view */}
-              {activeCall ? (
-                <CallView
-                  call={activeCall}
-                  api={api}
-                  onCallEnded={() => setActiveCall(null)}
-                />
-              ) : authed === false ? (
-                <div className="bcw-flex-1 bcw-flex bcw-items-center bcw-justify-center bcw-p-4 bcw-text-center bcw-text-xs bcw-text-white/60">
-                  Sign in to Bulldog Chat to use the mini chat.
-                </div>
-              ) : !activeConversation ? (
-                <div className="bcw-flex-1 bcw-flex bcw-items-center bcw-justify-center bcw-p-4 bcw-text-center bcw-text-xs bcw-text-white/60">
-                  Pick a conversation from the menu.
-                </div>
-              ) : (
-                <MessageList messages={messages} loading={messagesLoading} me={me} userById={userById} />
-              )}
-
-              {authed !== false && activeConversation && !activeCall && (
-                <Composer
-                  value={composerValue}
-                  onChange={setComposerValue}
-                  onSend={handleSend}
-                  disabled={sending}
-                />
-              )}
-            </div>
           </div>
         </div>
       )}
-    </div>
-  );
-}
-
-// ── Sub-components ────────────────────────────────────────────────────────────
-
-function MessageList({
-  messages, loading, me, userById,
-}: {
-  messages: ApiMessage[];
-  loading: boolean;
-  me: ApiUser | null;
-  userById: Map<number, ApiUser>;
-}) {
-  const listRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    listRef.current?.scrollTo({ top: listRef.current.scrollHeight });
-  }, [messages.length]);
-
-  const VISIBLE_CAP = 100;
-  const visible = messages.length > VISIBLE_CAP ? messages.slice(-VISIBLE_CAP) : messages;
-  const hiddenCount = messages.length - visible.length;
-
-  return (
-    <div ref={listRef} className="bcw-flex-1 bcw-overflow-y-auto bcw-px-3 bcw-py-2 bcw-space-y-2" data-testid="bulldog-chat-widget-messages">
-      {loading && <div className="bcw-text-xs bcw-text-white/50 bcw-text-center bcw-py-4">Loading…</div>}
-      {!loading && hiddenCount > 0 && (
-        <div className="bcw-text-[10px] bcw-text-white/40 bcw-text-center">{hiddenCount} earlier messages hidden</div>
-      )}
-      {!loading && visible.length === 0 && (
-        <div className="bcw-text-xs bcw-text-white/50 bcw-text-center bcw-py-4">No messages yet. Say hi!</div>
-      )}
-      {visible.map((m) => {
-        const author = userById.get(m.userId);
-        const mine = me?.id === m.userId;
-        return (
-          <div key={m.id} className={`bcw-flex bcw-flex-col ${mine ? "bcw-items-end" : "bcw-items-start"}`}>
-            {!mine && <span className="bcw-text-[10px] bcw-text-white/40 bcw-mb-0.5">{author?.name ?? "Unknown"}</span>}
-            <div
-              className={`bcw-max-w-[85%] bcw-rounded-lg bcw-px-2.5 bcw-py-1.5 bcw-text-xs bcw-whitespace-pre-wrap bcw-break-words ${
-                mine ? "bcw-bg-bcw-red bcw-text-white" : "bcw-bg-bcw-navy-light bcw-text-white/90"
-              }`}
-            >
-              {m.deletedAt ? <em className="bcw-opacity-60">message deleted</em> : m.content}
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-function Composer({ value, onChange, onSend, disabled }: {
-  value: string; onChange: (v: string) => void; onSend: () => void; disabled: boolean;
-}) {
-  return (
-    <div className="bcw-h-12 bcw-px-2 bcw-flex bcw-items-center bcw-gap-1.5 bcw-border-t bcw-border-black/40 bcw-shrink-0">
-      <button
-        type="button"
-        className="bcw-p-1.5 bcw-rounded bcw-text-white/50 hover:bcw-bg-bcw-navy-light bcw-cursor-not-allowed"
-        title="Attachments are not yet supported in the mini widget — use the full Chat app"
-        disabled
-        data-testid="bulldog-chat-widget-attach"
-      >
-        <PaperclipIcon />
-      </button>
-      <input
-        type="text"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); onSend(); } }}
-        placeholder="Message…"
-        className="bcw-flex-1 bcw-bg-[hsl(220,60%,9%)] bcw-border bcw-border-black/40 bcw-text-xs bcw-text-white bcw-placeholder-white/30 bcw-rounded-md bcw-px-2.5 bcw-py-1.5 focus:bcw-outline-none"
-        data-testid="bulldog-chat-widget-composer-input"
-      />
-      <button
-        type="button"
-        onClick={onSend}
-        disabled={disabled || !value.trim()}
-        className="bcw-p-1.5 bcw-rounded bcw-bg-bcw-red bcw-text-white disabled:bcw-opacity-40"
-        aria-label="Send"
-        data-testid="bulldog-chat-widget-send"
-      >
-        <SendIcon />
-      </button>
     </div>
   );
 }
@@ -673,13 +596,6 @@ function VideoCallIcon({ className }: { className?: string }) {
     </svg>
   );
 }
-function MenuIcon() {
-  return (
-    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-      <path d="M4 6h16M4 12h16M4 18h16" />
-    </svg>
-  );
-}
 function MinimizeIcon() {
   return (
     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
@@ -694,17 +610,26 @@ function CloseIcon() {
     </svg>
   );
 }
-function PaperclipIcon() {
+function ExpandIcon() {
   return (
-    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-      <path d="M21 12.5l-8.5 8.5a4 4 0 01-5.7-5.7l9-9a2.7 2.7 0 013.8 3.8l-9 9a1.3 1.3 0 01-1.9-1.9l8-8" />
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M8 3H5a2 2 0 00-2 2v3M16 3h3a2 2 0 012 2v3M8 21H5a2 2 0 01-2-2v-3M16 21h3a2 2 0 002-2v-3" />
     </svg>
   );
 }
-function SendIcon() {
+function CollapseIcon() {
   return (
-    <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
-      <path d="M3 20l18-8L3 4v6l12 2-12 2z" />
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M9 3v4a1 1 0 01-1 1H4M15 3v4a1 1 0 001 1h4M9 21v-4a1 1 0 00-1-1H4M15 21v-4a1 1 0 011-1h4" />
+    </svg>
+  );
+}
+function PopOutIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6" />
+      <polyline points="15 3 21 3 21 9" />
+      <line x1="10" y1="14" x2="21" y2="3" />
     </svg>
   );
 }

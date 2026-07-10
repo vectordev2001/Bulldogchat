@@ -1,40 +1,23 @@
-import { createContext, useContext, useEffect, useState, ReactNode, useCallback } from "react";
-import { apiRequest, setAuthToken as setQCToken, queryClient } from "./queryClient";
+import { ReactNode, useCallback, useEffect, useState } from "react";
+import { apiRequest, setAuthToken as setQCToken, queryClient } from "@vectordev2001/chat-ui/lib/queryClient";
+import {
+  AuthContext,
+  useAuth,
+  type AuthState,
+  type PublicUser,
+  type Org,
+} from "@vectordev2001/chat-ui/lib/auth-context";
 
-export interface PublicUser {
-  id: number;
-  orgId: number;
-  email: string;
-  name: string;
-  title: string | null;
-  avatarUrl: string | null;
-  hue: number;
-  role: "user" | "manager" | "admin";
-  status: string;
-  lastSeenAt: string | null;
-  createdAt: string;
-}
+// Main-app-only session bootstrapping. The React Context instance + useAuth
+// hook themselves live in @vectordev2001/chat-ui/lib/auth-context so that
+// components moved to packages/chat-ui (UnifiedHeader, ProjectRail,
+// CallOverlays, etc.) can keep calling useAuth() unchanged. This file wires
+// up the actual login/signup/accept-invite/logout network calls and provides
+// the context value — the widget does NOT use this; it has its own
+// lighter-weight auth via ChatApiClient's cookie-based session.
 
-export interface Org {
-  id: number;
-  name: string;
-  slug: string;
-  plan: string;
-  createdAt: string;
-}
-
-interface AuthState {
-  token: string | null;
-  user: PublicUser | null;
-  org: Org | null;
-  loading: boolean;
-  login: (email: string, password: string) => Promise<void>;
-  signup: (orgName: string, name: string, email: string, password: string) => Promise<void>;
-  acceptInvite: (token: string, name: string, password: string) => Promise<void>;
-  logout: () => Promise<void>;
-}
-
-const AuthContext = createContext<AuthState | null>(null);
+export type { PublicUser, Org };
+export { useAuth };
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [token, setToken] = useState<string | null>(null);
@@ -94,15 +77,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     queryClient.clear();
   }, []);
 
+  const value: AuthState = { token, user, org, loading, login, signup, acceptInvite, logout };
+
   return (
-    <AuthContext.Provider value={{ token, user, org, loading, login, signup, acceptInvite, logout }}>
+    <AuthContext.Provider value={value}>
       {children}
     </AuthContext.Provider>
   );
-}
-
-export function useAuth(): AuthState {
-  const ctx = useContext(AuthContext);
-  if (!ctx) throw new Error("useAuth must be used within AuthProvider");
-  return ctx;
 }
