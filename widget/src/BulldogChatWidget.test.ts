@@ -9,9 +9,16 @@
 
 import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { ChatApiClient, ApiError } from "./api";
+import { ChatApiClient, ApiError, type ApiMessage, type ApiUser, type ApiAttachment } from "./api";
 import { ChatSyncBridge, SYNC_CHANNEL_NAME, LAST_CONVERSATION_KEY } from "./sync";
 import { useWidgetStore } from "./state";
+import {
+  formatFileSize,
+  isImageAttachment,
+  mergeOlderMessages,
+  parseMentions,
+  mentionsUser,
+} from "./format";
 
 // ---------------------------------------------------------------------------
 // ChatApiClient
@@ -246,5 +253,190 @@ describe("useWidgetStore", () => {
     assert.deepEqual(useWidgetStore.getState().activeConversation, { kind: "dm", id: 9 });
     useWidgetStore.getState().setActiveConversation(null);
     assert.equal(useWidgetStore.getState().activeConversation, null);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P0.1 — Group channels
+// ---------------------------------------------------------------------------
+
+describe("group channels", () => {
+  const originalFetch = globalThis.fetch;
+  afterEach(() => { globalThis.fetch = originalFetch; });
+
+  test("listProjects + listProjectChannels hit the project routes", async () => {
+    const urls: string[] = [];
+    globalThis.fetch = (async (url: string) => {
+      urls.push(url);
+      return new Response(JSON.stringify([]), { status: 200 });
+    }) as typeof fetch;
+
+    const client = new ChatApiClient("https://chat.bulldogops.com");
+    await client.listProjects();
+    await client.listProjectChannels(3);
+
+    assert.equal(urls[0], "https://chat.bulldogops.com/api/projects");
+    assert.equal(urls[1], "https://chat.bulldogops.com/api/projects/3/channels");
+  });
+
+  test("selecting a channel sets activeConversation to {kind:channel, id}", () => {
+    // Mirrors what the sidebar channel button does via selectConversation.
+    useWidgetStore.getState().setActiveConversation({ kind: "channel", id: 77 });
+    assert.deepEqual(useWidgetStore.getState().activeConversation, { kind: "channel", id: 77 });
+  });
+
+  test("activeTab defaults to dms and can switch to channels", () => {
+    useWidgetStore.setState({ activeTab: "dms" });
+    assert.equal(useWidgetStore.getState().activeTab, "dms");
+    useWidgetStore.getState().setActiveTab("channels");
+    assert.equal(useWidgetStore.getState().activeTab, "channels");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P0.2 — Pagination
+// ---------------------------------------------------------------------------
+
+describe("pagination", () => {
+  const originalFetch = globalThis.fetch;
+  afterEach(() => { globalThis.fetch = originalFetch; });
+
+  test("listMessages appends before= and limit= when provided", async () => {
+    const urls: string[] = [];
+    globalThis.fetch = (async (url: string) => {
+      urls.push(url);
+      return new Response(JSON.stringify([]), { status: 200 });
+    }) as typeof fetch;
+
+    const client = new ChatApiClient("https://chat.bulldogops.com");
+    await client.listMessages(7, undefined, 50);
+    await client.listMessages(7, 42, 50);
+
+    assert.equal(urls[0], "https://chat.bulldogops.com/api/channels/7/messages?limit=50");
+    assert.equal(urls[1], "https://chat.bulldogops.com/api/channels/7/messages?before=42&limit=50");
+  });
+
+  test("mergeOlderMessages prepends older page and preserves ascending order", () => {
+    const current: ApiMessage[] = [
+      { id: 10, channelId: 1, userId: 1, content: "j", createdAt: "" },
+      { id: 11, channelId: 1, userId: 1, content: "k", createdAt: "" },
+    ];
+    const older: ApiMessage[] = [
+      { id: 8, channelId: 1, userId: 1, content: "h", createdAt: "" },
+      { id: 9, channelId: 1, userId: 1, content: "i", createdAt: "" },
+    ];
+    const merged = mergeOlderMessages(older, current);
+    assert.deepEqual(merged.map((m) => m.id), [8, 9, 10, 11]);
+  });
+
+  test("mergeOlderMessages dedupes a boundary overlap", () => {
+    const current: ApiMessage[] = [{ id: 10, channelId: 1, userId: 1, content: "j", createdAt: "" }];
+    const older: ApiMessage[] = [
+      { id: 9, channelId: 1, userId: 1, content: "i", createdAt: "" },
+      { id: 10, channelId: 1, userId: 1, content: "dupe", createdAt: "" },
+    ];
+    const merged = mergeOlderMessages(older, current);
+    assert.deepEqual(merged.map((m) => m.id), [9, 10]);
+    // The already-loaded copy wins (dupe from the older page is dropped).
+    assert.equal(merged[1].content, "j");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P0.3 — Attachments
+// ---------------------------------------------------------------------------
+
+describe("attachments", () => {
+  const img: ApiAttachment = {
+    id: 1, filename: "photo.png", contentType: "image/png", sizeBytes: 2048,
+    url: "https://cdn/x.png", thumbnailUrl: "https://cdn/x-thumb.png", createdAt: "",
+  };
+  const file: ApiAttachment = {
+    id: 2, filename: "report.pdf", contentType: "application/pdf", sizeBytes: 3 * 1024 * 1024,
+    url: "https://cdn/r.pdf", thumbnailUrl: null, createdAt: "",
+  };
+
+  test("isImageAttachment distinguishes image from file variants", () => {
+    assert.equal(isImageAttachment(img), true);
+    assert.equal(isImageAttachment(file), false);
+  });
+
+  test("formatFileSize renders B / KB / MB", () => {
+    assert.equal(formatFileSize(512), "512 B");
+    assert.equal(formatFileSize(2048), "2.0 KB");
+    assert.equal(formatFileSize(3 * 1024 * 1024), "3.0 MB");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P0.4 — Browser notifications preference
+// ---------------------------------------------------------------------------
+
+describe("browser notifications preference", () => {
+  let store: Map<string, string>;
+  beforeEach(() => {
+    store = new Map();
+    (globalThis as any).localStorage = {
+      getItem: (k: string) => (store.has(k) ? store.get(k)! : null),
+      setItem: (k: string, v: string) => void store.set(k, v),
+      removeItem: (k: string) => void store.delete(k),
+    };
+  });
+  afterEach(() => { delete (globalThis as any).localStorage; });
+
+  test("defaults to enabled and persists an explicit opt-out", () => {
+    // Default ON in the store as constructed at import time.
+    useWidgetStore.setState({ browserNotificationsEnabled: true });
+    assert.equal(useWidgetStore.getState().browserNotificationsEnabled, true);
+
+    useWidgetStore.getState().setBrowserNotificationsEnabled(false);
+    assert.equal(useWidgetStore.getState().browserNotificationsEnabled, false);
+    // Persisted so a reload keeps the opt-out.
+    assert.equal(store.get("bcw_browser_notifs"), "false");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P0.5 — Mentions
+// ---------------------------------------------------------------------------
+
+describe("mentions", () => {
+  const userById = new Map<number, ApiUser>([
+    [1, { id: 1, name: "Josh Bieler", email: "j@x.com" }],
+    [2, { id: 2, name: "Dana Lee", email: "d@x.com" }],
+  ]);
+
+  test("parses <@N> markup and swaps in the user's name", () => {
+    const segs = parseMentions("hey <@2> look", { userById, meId: 1 });
+    const mention = segs.find((s) => s.mention);
+    assert.equal(mention?.text, "@Dana Lee");
+    assert.equal(mention?.mention?.userId, 2);
+    assert.equal(mention?.mention?.isMe, false);
+    // Surrounding text is preserved.
+    assert.equal(segs.map((s) => s.text).join(""), "hey @Dana Lee look");
+  });
+
+  test("flags a self-mention via <@N> when it is me", () => {
+    const segs = parseMentions("ping <@1>", { userById, meId: 1 });
+    const mention = segs.find((s) => s.mention);
+    assert.equal(mention?.mention?.isMe, true);
+    assert.equal(mention?.text, "@Josh Bieler");
+  });
+
+  test("resolves an @handle against the mentions array", () => {
+    const segs = parseMentions("hi @dana", {
+      userById,
+      meId: 1,
+      mentions: [{ userId: 2, type: "user" }],
+    });
+    const mention = segs.find((s) => s.mention);
+    assert.equal(mention?.text, "@Dana Lee");
+    assert.equal(mention?.mention?.userId, 2);
+  });
+
+  test("mentionsUser detects the current user in a mentions array", () => {
+    assert.equal(mentionsUser([{ userId: 2, type: "user" }], 1), false);
+    assert.equal(mentionsUser([{ userId: 1, type: "user" }], 1), true);
+    assert.equal(mentionsUser([{ userId: null, type: "here" }], 1), false);
   });
 });

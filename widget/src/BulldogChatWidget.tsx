@@ -1,10 +1,24 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { ChatApiClient, type ApiDmChannel, type ApiMessage, type ApiUser } from "./api";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  ChatApiClient,
+  type ApiAttachment,
+  type ApiChannel,
+  type ApiDmChannel,
+  type ApiMessage,
+  type ApiProject,
+  type ApiUser,
+} from "./api";
 import { useWidgetStore, type ConversationRef } from "./state";
 import { ChatSyncBridge } from "./sync";
 import { useMiniChatSse } from "./hooks/useMiniChatSse";
-import { useRingtone, type RingMode } from "./hooks/useRingtone";
+import { useRingtone, playMentionChime, type RingMode } from "./hooks/useRingtone";
+import { useBrowserNotifications } from "./hooks/useBrowserNotifications";
+import { formatFileSize, isImageAttachment, mentionsUser, mergeOlderMessages, parseMentions } from "./format";
 import { CallView } from "./CallView";
+
+// Number of messages fetched per page. Matches the server default limit; a
+// full page coming back is the signal that older history may still exist.
+const PAGE_SIZE = 50;
 
 export interface BulldogChatWidgetProps {
   /** Base URL of the Chat app, e.g. "https://chat.bulldogops.com". */
@@ -39,6 +53,10 @@ export function BulldogChatWidget({ apiBaseUrl, hidden }: BulldogChatWidgetProps
   const setSidebarOpen = useWidgetStore((s) => s.setSidebarOpen);
   const activeConversation = useWidgetStore((s) => s.activeConversation);
   const setActiveConversation = useWidgetStore((s) => s.setActiveConversation);
+  const activeTab = useWidgetStore((s) => s.activeTab);
+  const setActiveTab = useWidgetStore((s) => s.setActiveTab);
+  const browserNotificationsEnabled = useWidgetStore((s) => s.browserNotificationsEnabled);
+  const setBrowserNotificationsEnabled = useWidgetStore((s) => s.setBrowserNotificationsEnabled);
   const unreadCount = useWidgetStore((s) => s.unreadCount);
   const incrementUnread = useWidgetStore((s) => s.incrementUnread);
   const clearUnread = useWidgetStore((s) => s.clearUnread);
@@ -53,12 +71,26 @@ export function BulldogChatWidget({ apiBaseUrl, hidden }: BulldogChatWidgetProps
   const [me, setMe] = useState<ApiUser | null>(null);
   const [members, setMembers] = useState<ApiUser[]>([]);
   const [dms, setDms] = useState<ApiDmChannel[]>([]);
+  const [projects, setProjects] = useState<ApiProject[]>([]);
+  const [channelsByProject, setChannelsByProject] = useState<Map<number, ApiChannel[]>>(new Map());
   const [messages, setMessages] = useState<ApiMessage[]>([]);
   const [messagesLoading, setMessagesLoading] = useState(false);
+  const [loadingOlder, setLoadingOlder] = useState(false);
   const [composerValue, setComposerValue] = useState("");
   const [sending, setSending] = useState(false);
   const [startingCall, setStartingCall] = useState(false);
   const [callError, setCallError] = useState<string | null>(null);
+
+  // Pagination bookkeeping. Refs (not state) so the SSE / scroll callbacks read
+  // fresh values without being re-created every render:
+  //   loadingOlderRef → guards against overlapping "load older" fetches when
+  //     the user keeps the scrollbar pinned at the top.
+  //   hasMoreRef → false once the server returns a short page, so we stop
+  //     hammering the endpoint after the earliest message is reached.
+  const loadingOlderRef = useRef(false);
+  const hasMoreRef = useRef(true);
+
+  const { permission: notifPermission, requestPermission, notify } = useBrowserNotifications();
 
   // ── Draggable pill ────────────────────────────────────────────────────────
   const pillRef = useRef<HTMLButtonElement>(null);
@@ -112,6 +144,27 @@ export function BulldogChatWidget({ apiBaseUrl, hidden }: BulldogChatWidgetProps
         setDms(dmsRes);
       } catch {
         /* leave lists empty */
+      }
+      // Group channels load separately so a projects/channels failure never
+      // blocks the DM list (the widget's primary use). We fetch each project's
+      // channels in parallel and key them by project id for the sidebar.
+      try {
+        const projectsRes = await api.listProjects();
+        if (cancelled) return;
+        setProjects(projectsRes);
+        const entries = await Promise.all(
+          projectsRes.map(async (p) => {
+            try {
+              return [p.id, await api.listProjectChannels(p.id)] as const;
+            } catch {
+              return [p.id, [] as ApiChannel[]] as const;
+            }
+          }),
+        );
+        if (cancelled) return;
+        setChannelsByProject(new Map(entries));
+      } catch {
+        /* no group channels — sidebar Channels tab shows an empty state */
       }
     })();
     return () => { cancelled = true; };
@@ -173,13 +226,46 @@ export function BulldogChatWidget({ apiBaseUrl, hidden }: BulldogChatWidgetProps
   const loadMessages = async (conv: ConversationRef) => {
     if (!conv) return;
     setMessagesLoading(true);
+    // Reset pagination for the new conversation: assume more history exists
+    // until the first page proves otherwise, and drop any in-flight guard.
+    hasMoreRef.current = true;
+    loadingOlderRef.current = false;
     try {
-      const msgs = await api.listMessages(conv.id);
+      const msgs = await api.listMessages(conv.id, undefined, PAGE_SIZE);
       setMessages(msgs);
+      // A short first page means we already have the entire history.
+      if (msgs.length < PAGE_SIZE) hasMoreRef.current = false;
     } catch {
       setMessages([]);
     } finally {
       setMessagesLoading(false);
+    }
+  };
+
+  // Fetch the page of messages older than the earliest one currently loaded
+  // and prepend it. Guarded so overlapping scroll events (double-fetch) and
+  // scrolling past the start of history (no-more) are both no-ops. Scroll
+  // position is preserved by MessageList, which measures scrollHeight around
+  // the prepend.
+  const loadOlderMessages = async () => {
+    const conv = activeConversation;
+    if (!conv || loadingOlderRef.current || !hasMoreRef.current) return;
+    const oldest = messages[0];
+    if (!oldest) return;
+    loadingOlderRef.current = true;
+    setLoadingOlder(true);
+    try {
+      const older = await api.listMessages(conv.id, oldest.id, PAGE_SIZE);
+      if (older.length < PAGE_SIZE) hasMoreRef.current = false;
+      if (older.length > 0) {
+        // Dedupe defensively in case a boundary message overlaps.
+        setMessages((prev) => mergeOlderMessages(older, prev));
+      }
+    } catch {
+      /* keep what we have; allow a retry on the next scroll */
+    } finally {
+      loadingOlderRef.current = false;
+      setLoadingOlder(false);
     }
   };
 
@@ -188,14 +274,73 @@ export function BulldogChatWidget({ apiBaseUrl, hidden }: BulldogChatWidgetProps
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeConversation?.id, activeConversation?.kind, open]);
 
+  // Human label for a channel id, used in notification bodies. DMs resolve to
+  // member names / title; group channels to "#name". Falls back gracefully.
+  const titleForChannel = (channelId: number): string => {
+    const dm = dms.find((d) => d.id === channelId);
+    if (dm) {
+      const others = me ? dm.memberIds.filter((id) => id !== me.id) : dm.memberIds;
+      return (
+        dm.title ||
+        others.map((id) => members.find((u) => u.id === id)?.name).filter(Boolean).join(", ") ||
+        "Direct message"
+      );
+    }
+    for (const list of channelsByProject.values()) {
+      const ch = list.find((c) => c.id === channelId);
+      if (ch) return `#${ch.name}`;
+    }
+    return "Bulldog Chat";
+  };
+
+  // Whether an incoming SSE message mentions the current user. The SSE payload
+  // carries `content` (and, if the server ever adds it, `mentions`) but not the
+  // resolved mentions array today, so we also scan the raw content for both the
+  // numeric `<@id>` markup and the `@firstname` handle the composer emits.
+  const incomingMentionsMe = (data: any): boolean => {
+    if (!me) return false;
+    if (Array.isArray(data?.mentions) && mentionsUser(data.mentions, me.id)) return true;
+    const content = typeof data?.content === "string" ? data.content : "";
+    if (content.includes(`<@${me.id}>`)) return true;
+    const first = me.name.split(/\s+/)[0]?.toLowerCase();
+    if (first && new RegExp(`@${first}(?![a-z0-9_.-])`, "i").test(content)) return true;
+    return false;
+  };
+
   // SSE.
   useMiniChatSse(apiBaseUrl, authed === true, {
     onMessageNew: (data) => {
-      if (activeConversation && data?.channelId === activeConversation.id && open) {
+      const isActiveAndOpen = activeConversation && data?.channelId === activeConversation.id && open;
+      if (isActiveAndOpen) {
         loadMessages(activeConversation);
       } else if (data?.channelId) {
         incrementUnread();
         sync.broadcastUnreadChanged(unreadCount + 1);
+      }
+      // Alerting mirrors the incrementUnread rule: only alert when the message
+      // is somewhere the user isn't actively reading (widget closed, or a
+      // different conversation). Never alert for the user's own messages.
+      const isMine = me != null && data?.userId === me.id;
+      if (data?.channelId && !isActiveAndOpen && !isMine) {
+        const mentioned = incomingMentionsMe(data);
+        const convTitle = titleForChannel(data.channelId);
+        if (mentioned) {
+          // Mentions get a more prominent sound + a distinct notification title.
+          playMentionChime();
+        }
+        if (browserNotificationsEnabled) {
+          notify({
+            title: mentioned ? `You were mentioned in ${convTitle}` : convTitle,
+            body: typeof data?.content === "string" ? data.content.slice(0, 140) : undefined,
+            // tag = conversation id so repeat pings about the same conversation
+            // replace each other instead of stacking a tower of toasts.
+            tag: `bcw-conv-${data.channelId}`,
+            onClick: () => {
+              setOpen(true);
+              selectConversation(dms.some((d) => d.id === data.channelId) ? "dm" : "channel", data.channelId);
+            },
+          });
+        }
       }
       refreshDms();
     },
@@ -274,18 +419,12 @@ export function BulldogChatWidget({ apiBaseUrl, hidden }: BulldogChatWidgetProps
       : null;
   useRingtone(ringMode);
 
-  // Ask for Notification permission once the widget knows the user is logged
-  // in, so the browser can raise a native alert (with sound, on the lock
-  // screen if the OS allows) when a call arrives while this tab is in the
-  // background. If the user denies, we silently fall back to the in-widget
-  // banner + ringtone.
-  useEffect(() => {
-    if (authed !== true) return;
-    if (typeof Notification === "undefined") return;
-    if (Notification.permission === "default") {
-      Notification.requestPermission().catch(() => {});
-    }
-  }, [authed]);
+  // Notification permission is now requested via an explicit user gesture — the
+  // "Enable notifications" pill below — rather than eagerly on login. Browsers
+  // increasingly ignore non-gesture permission prompts, and a gesture-driven
+  // opt-in is friendlier. Call + message notifications both check
+  // Notification.permission === "granted" at fire time, so granting via the
+  // pill lights up both paths.
 
   // Keyboard shortcuts.
   useEffect(() => {
@@ -362,10 +501,15 @@ export function BulldogChatWidget({ apiBaseUrl, hidden }: BulldogChatWidgetProps
 
   const userById = new Map(members.map((u) => [u.id, u]));
   const activeDm = activeConversation?.kind === "dm" ? dms.find((d) => d.id === activeConversation.id) : undefined;
+  const activeChannel = activeConversation?.kind === "channel"
+    ? [...channelsByProject.values()].flat().find((c) => c.id === activeConversation.id)
+    : undefined;
   const activeTitle = activeDm
     ? activeDm.title ||
       (me ? activeDm.memberIds.filter((id) => id !== me.id).map((id) => userById.get(id)?.name).filter(Boolean).join(", ") : "Direct message") ||
       "Direct message"
+    : activeChannel
+    ? `# ${activeChannel.name}`
     : activeCall
     ? "In call"
     : "Select a conversation";
@@ -500,35 +644,105 @@ export function BulldogChatWidget({ apiBaseUrl, hidden }: BulldogChatWidgetProps
             </div>
           )}
 
+          {/* ── Enable-notifications pill ── */}
+          {/* Only shown while permission is still "default": granting or denying
+              hides it, and denied stays hidden so we never nag. */}
+          {authed !== false && notifPermission === "default" && (
+            <div className="bcw-px-2.5 bcw-py-1.5 bcw-border-b bcw-border-black/40 bcw-shrink-0">
+              <button
+                type="button"
+                onClick={() => { requestPermission(); }}
+                className="bcw-w-full bcw-flex bcw-items-center bcw-justify-center bcw-gap-1.5 bcw-px-2 bcw-py-1 bcw-rounded-full bcw-bg-bcw-navy-light bcw-text-white/90 bcw-text-[11px] bcw-font-medium hover:bcw-bg-bcw-red bcw-transition-colors"
+                data-testid="bulldog-chat-widget-enable-notifications"
+              >
+                <BellIcon />
+                Enable notifications
+              </button>
+            </div>
+          )}
+
           {/* ── Body ── */}
           <div className="bcw-flex-1 bcw-flex bcw-min-h-0 bcw-relative">
             {sidebarOpen && (
-              <div className="bcw-absolute bcw-inset-y-0 bcw-left-0 bcw-w-52 bcw-bg-[hsl(220,60%,9%)] bcw-border-r bcw-border-black/40 bcw-overflow-y-auto bcw-z-10">
-                {authed === false ? (
-                  <div className="bcw-p-3 bcw-text-xs bcw-text-white/60">Sign in to Bulldog Chat to see your conversations.</div>
-                ) : dms.length === 0 ? (
-                  <div className="bcw-p-3 bcw-text-xs bcw-text-white/60">No conversations yet.</div>
-                ) : (
-                  dms.map((dm) => {
-                    const others = me ? dm.memberIds.filter((id) => id !== me.id) : dm.memberIds;
-                    const label = dm.title || others.map((id) => userById.get(id)?.name).filter(Boolean).join(", ") || "Direct message";
-                    return (
-                      <button
-                        key={dm.id}
-                        type="button"
-                        onClick={() => selectConversation("dm", dm.id)}
-                        className={`bcw-w-full bcw-text-left bcw-px-3 bcw-py-2 bcw-text-xs bcw-truncate hover:bcw-bg-bcw-navy-light ${
-                          activeConversation?.kind === "dm" && activeConversation.id === dm.id
-                            ? "bcw-bg-bcw-navy-light bcw-text-white"
-                            : "bcw-text-white/80"
-                        }`}
-                        data-testid={`bulldog-chat-widget-dm-${dm.id}`}
-                      >
-                        {label}
-                      </button>
-                    );
-                  })
-                )}
+              <div className="bcw-absolute bcw-inset-y-0 bcw-left-0 bcw-w-52 bcw-bg-[hsl(220,60%,9%)] bcw-border-r bcw-border-black/40 bcw-flex bcw-flex-col bcw-z-10">
+                {/* Tab strip: DMs vs group Channels. The chosen tab is persisted
+                    in the store so it survives reopen/reload. */}
+                <div className="bcw-flex bcw-shrink-0 bcw-border-b bcw-border-black/40">
+                  {(["dms", "channels"] as const).map((tab) => (
+                    <button
+                      key={tab}
+                      type="button"
+                      onClick={() => setActiveTab(tab)}
+                      className={`bcw-flex-1 bcw-py-1.5 bcw-text-[11px] bcw-font-semibold bcw-uppercase bcw-tracking-wide ${
+                        activeTab === tab
+                          ? "bcw-text-white bcw-border-b-2 bcw-border-bcw-red"
+                          : "bcw-text-white/50 hover:bcw-text-white/80"
+                      }`}
+                      data-testid={`bulldog-chat-widget-tab-${tab}`}
+                    >
+                      {tab === "dms" ? "DMs" : "Channels"}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="bcw-flex-1 bcw-overflow-y-auto">
+                  {authed === false ? (
+                    <div className="bcw-p-3 bcw-text-xs bcw-text-white/60">Sign in to Bulldog Chat to see your conversations.</div>
+                  ) : activeTab === "dms" ? (
+                    dms.length === 0 ? (
+                      <div className="bcw-p-3 bcw-text-xs bcw-text-white/60">No conversations yet.</div>
+                    ) : (
+                      dms.map((dm) => {
+                        const others = me ? dm.memberIds.filter((id) => id !== me.id) : dm.memberIds;
+                        const label = dm.title || others.map((id) => userById.get(id)?.name).filter(Boolean).join(", ") || "Direct message";
+                        return (
+                          <button
+                            key={dm.id}
+                            type="button"
+                            onClick={() => selectConversation("dm", dm.id)}
+                            className={`bcw-w-full bcw-text-left bcw-px-3 bcw-py-2 bcw-text-xs bcw-truncate hover:bcw-bg-bcw-navy-light ${
+                              activeConversation?.kind === "dm" && activeConversation.id === dm.id
+                                ? "bcw-bg-bcw-navy-light bcw-text-white"
+                                : "bcw-text-white/80"
+                            }`}
+                            data-testid={`bulldog-chat-widget-dm-${dm.id}`}
+                          >
+                            {label}
+                          </button>
+                        );
+                      })
+                    )
+                  ) : projects.length === 0 ? (
+                    <div className="bcw-p-3 bcw-text-xs bcw-text-white/60">No channels available.</div>
+                  ) : (
+                    projects.map((project) => {
+                      const channels = channelsByProject.get(project.id) ?? [];
+                      if (channels.length === 0) return null;
+                      return (
+                        <div key={project.id} className="bcw-py-1">
+                          <div className="bcw-px-3 bcw-py-1 bcw-text-[10px] bcw-font-semibold bcw-uppercase bcw-tracking-wide bcw-text-white/40 bcw-truncate">
+                            {project.name}
+                          </div>
+                          {channels.map((ch) => (
+                            <button
+                              key={ch.id}
+                              type="button"
+                              onClick={() => selectConversation("channel", ch.id)}
+                              className={`bcw-w-full bcw-text-left bcw-px-3 bcw-py-2 bcw-text-xs bcw-truncate hover:bcw-bg-bcw-navy-light ${
+                                activeConversation?.kind === "channel" && activeConversation.id === ch.id
+                                  ? "bcw-bg-bcw-navy-light bcw-text-white"
+                                  : "bcw-text-white/80"
+                              }`}
+                              data-testid={`bulldog-chat-widget-channel-${ch.id}`}
+                            >
+                              # {ch.name}
+                            </button>
+                          ))}
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
               </div>
             )}
 
@@ -549,7 +763,15 @@ export function BulldogChatWidget({ apiBaseUrl, hidden }: BulldogChatWidgetProps
                   Pick a conversation from the menu.
                 </div>
               ) : (
-                <MessageList messages={messages} loading={messagesLoading} me={me} userById={userById} />
+                <MessageList
+                  messages={messages}
+                  loading={messagesLoading}
+                  loadingOlder={loadingOlder}
+                  hasMore={hasMoreRef.current}
+                  onLoadOlder={loadOlderMessages}
+                  me={me}
+                  userById={userById}
+                />
               )}
 
               {authed !== false && activeConversation && !activeCall && (
@@ -571,48 +793,154 @@ export function BulldogChatWidget({ apiBaseUrl, hidden }: BulldogChatWidgetProps
 // ── Sub-components ────────────────────────────────────────────────────────────
 
 function MessageList({
-  messages, loading, me, userById,
+  messages, loading, loadingOlder, hasMore, onLoadOlder, me, userById,
 }: {
   messages: ApiMessage[];
   loading: boolean;
+  loadingOlder: boolean;
+  hasMore: boolean;
+  onLoadOlder: () => void;
   me: ApiUser | null;
   userById: Map<number, ApiUser>;
 }) {
   const listRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    listRef.current?.scrollTo({ top: listRef.current.scrollHeight });
-  }, [messages.length]);
+  // When set, a "load older" prepend is in flight and holds the scrollHeight
+  // measured just before the fetch. After the older page renders we restore
+  // scroll by the exact height delta so the message the user was reading stays
+  // put instead of jumping. null means the next growth is a bottom-append (new
+  // message / initial load) and should scroll to the newest message.
+  const pendingPrepend = useRef<number | null>(null);
 
-  const VISIBLE_CAP = 100;
-  const visible = messages.length > VISIBLE_CAP ? messages.slice(-VISIBLE_CAP) : messages;
-  const hiddenCount = messages.length - visible.length;
+  useLayoutEffect(() => {
+    const el = listRef.current;
+    if (!el) return;
+    if (pendingPrepend.current != null) {
+      // Older messages were prepended: shift scrollTop down by the height that
+      // was inserted above the viewport.
+      el.scrollTop += el.scrollHeight - pendingPrepend.current;
+      pendingPrepend.current = null;
+    } else {
+      el.scrollTop = el.scrollHeight;
+    }
+  }, [messages]);
+
+  const onScroll = () => {
+    const el = listRef.current;
+    if (!el) return;
+    // Trigger a page load a little before the very top so it feels seamless.
+    if (el.scrollTop < 48 && hasMore && !loadingOlder) {
+      pendingPrepend.current = el.scrollHeight;
+      onLoadOlder();
+    }
+  };
 
   return (
-    <div ref={listRef} className="bcw-flex-1 bcw-overflow-y-auto bcw-px-3 bcw-py-2 bcw-space-y-2" data-testid="bulldog-chat-widget-messages">
-      {loading && <div className="bcw-text-xs bcw-text-white/50 bcw-text-center bcw-py-4">Loading…</div>}
-      {!loading && hiddenCount > 0 && (
-        <div className="bcw-text-[10px] bcw-text-white/40 bcw-text-center">{hiddenCount} earlier messages hidden</div>
+    <div
+      ref={listRef}
+      onScroll={onScroll}
+      className="bcw-flex-1 bcw-overflow-y-auto bcw-px-3 bcw-py-2 bcw-space-y-2"
+      data-testid="bulldog-chat-widget-messages"
+    >
+      {loadingOlder && (
+        <div className="bcw-text-[11px] bcw-text-white/50 bcw-text-center bcw-py-1.5" data-testid="bulldog-chat-widget-older-spinner">
+          Loading older messages…
+        </div>
       )}
-      {!loading && visible.length === 0 && (
+      {loading && <div className="bcw-text-xs bcw-text-white/50 bcw-text-center bcw-py-4">Loading…</div>}
+      {!loading && messages.length === 0 && (
         <div className="bcw-text-xs bcw-text-white/50 bcw-text-center bcw-py-4">No messages yet. Say hi!</div>
       )}
-      {visible.map((m) => {
-        const author = userById.get(m.userId);
-        const mine = me?.id === m.userId;
-        return (
-          <div key={m.id} className={`bcw-flex bcw-flex-col ${mine ? "bcw-items-end" : "bcw-items-start"}`}>
-            {!mine && <span className="bcw-text-[10px] bcw-text-white/40 bcw-mb-0.5">{author?.name ?? "Unknown"}</span>}
-            <div
-              className={`bcw-max-w-[85%] bcw-rounded-lg bcw-px-2.5 bcw-py-1.5 bcw-text-xs bcw-whitespace-pre-wrap bcw-break-words ${
-                mine ? "bcw-bg-bcw-red bcw-text-white" : "bcw-bg-bcw-navy-light bcw-text-white/90"
-              }`}
-            >
-              {m.deletedAt ? <em className="bcw-opacity-60">message deleted</em> : m.content}
-            </div>
-          </div>
-        );
-      })}
+      {messages.map((m) => (
+        <MessageRow key={m.id} message={m} me={me} userById={userById} />
+      ))}
     </div>
+  );
+}
+
+function MessageRow({ message, me, userById }: {
+  message: ApiMessage;
+  me: ApiUser | null;
+  userById: Map<number, ApiUser>;
+}) {
+  const author = userById.get(message.userId);
+  const mine = me?.id === message.userId;
+  const attachments = message.attachmentsList ?? [];
+  const segments = message.deletedAt
+    ? []
+    : parseMentions(message.content, { mentions: message.mentions, meId: me?.id ?? null, userById });
+
+  return (
+    <div className={`bcw-flex bcw-flex-col ${mine ? "bcw-items-end" : "bcw-items-start"}`}>
+      {!mine && <span className="bcw-text-[10px] bcw-text-white/40 bcw-mb-0.5">{author?.name ?? "Unknown"}</span>}
+      {(message.deletedAt || message.content) && (
+        <div
+          className={`bcw-max-w-[85%] bcw-rounded-lg bcw-px-2.5 bcw-py-1.5 bcw-text-xs bcw-whitespace-pre-wrap bcw-break-words ${
+            mine ? "bcw-bg-bcw-red bcw-text-white" : "bcw-bg-bcw-navy-light bcw-text-white/90"
+          }`}
+        >
+          {message.deletedAt ? (
+            <em className="bcw-opacity-60">message deleted</em>
+          ) : (
+            segments.map((seg, i) =>
+              seg.mention ? (
+                <span key={i} className={`bcw-mention${seg.mention.isMe ? " bcw-mention-me" : ""}`}>
+                  {seg.text}
+                </span>
+              ) : (
+                <span key={i}>{seg.text}</span>
+              ),
+            )
+          )}
+        </div>
+      )}
+      {!message.deletedAt && attachments.length > 0 && (
+        <div className="bcw-max-w-[85%] bcw-mt-1 bcw-space-y-1">
+          {attachments.map((att) => (
+            <AttachmentView key={att.id} attachment={att} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Read-only attachment rendering. Uploading from the mini widget is not yet
+// supported (the composer's paperclip stays disabled) — this only displays
+// attachments that already exist on a message.
+function AttachmentView({ attachment }: { attachment: ApiAttachment }) {
+  if (isImageAttachment(attachment)) {
+    return (
+      <a
+        href={attachment.url}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="bcw-block bcw-max-w-[240px] bcw-rounded-lg bcw-overflow-hidden bcw-border bcw-border-black/30"
+        data-testid="bulldog-chat-widget-attachment-image"
+      >
+        <img
+          src={attachment.thumbnailUrl ?? attachment.url}
+          alt={attachment.filename}
+          className="bcw-block bcw-w-full bcw-h-auto bcw-max-h-[200px] bcw-object-cover"
+          loading="lazy"
+        />
+      </a>
+    );
+  }
+  return (
+    <a
+      href={attachment.url}
+      target="_blank"
+      rel="noopener noreferrer"
+      download={attachment.filename}
+      className="bcw-flex bcw-items-center bcw-gap-2 bcw-max-w-[240px] bcw-rounded-lg bcw-border bcw-border-black/30 bcw-bg-[hsl(220,60%,9%)] bcw-px-2.5 bcw-py-1.5 hover:bcw-bg-bcw-navy-light"
+      data-testid="bulldog-chat-widget-attachment-file"
+    >
+      <PaperclipIcon />
+      <span className="bcw-flex-1 bcw-min-w-0">
+        <span className="bcw-block bcw-text-xs bcw-text-white/90 bcw-truncate">{attachment.filename}</span>
+        <span className="bcw-block bcw-text-[10px] bcw-text-white/40">{formatFileSize(attachment.sizeBytes)}</span>
+      </span>
+    </a>
   );
 }
 
@@ -705,6 +1033,14 @@ function SendIcon() {
   return (
     <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
       <path d="M3 20l18-8L3 4v6l12 2-12 2z" />
+    </svg>
+  );
+}
+function BellIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M18 8a6 6 0 00-12 0c0 7-3 9-3 9h18s-3-2-3-9" />
+      <path d="M13.73 21a2 2 0 01-3.46 0" />
     </svg>
   );
 }

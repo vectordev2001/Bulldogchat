@@ -27,11 +27,19 @@ export interface IncomingCall {
   kind: "voice" | "video";
 }
 
+/** Which conversation list the sidebar is currently showing. */
+export type SidebarTab = "dms" | "channels";
+
 interface WidgetState {
   open: boolean;
   sidebarOpen: boolean;
   activeConversation: ConversationRef;
   unreadCount: number;
+  /** Which sidebar list (DMs vs group channels) is active, persisted. */
+  activeTab: SidebarTab;
+  /** User preference: raise native browser notifications for new messages
+   * while the widget is closed / on another conversation. Persisted. */
+  browserNotificationsEnabled: boolean;
   /** Position of the collapsed pill, persisted to localStorage. */
   pillPosition: { right: number; bottom: number };
   /** Active outgoing/accepted call session. */
@@ -46,12 +54,16 @@ interface WidgetState {
   setUnreadCount: (n: number) => void;
   incrementUnread: () => void;
   clearUnread: () => void;
+  setActiveTab: (tab: SidebarTab) => void;
+  setBrowserNotificationsEnabled: (enabled: boolean) => void;
   setPillPosition: (pos: { right: number; bottom: number }) => void;
   setActiveCall: (call: ActiveCall | null) => void;
   setIncomingCall: (call: IncomingCall | null) => void;
 }
 
 const PILL_POS_KEY = "bcw_pill_pos";
+const ACTIVE_TAB_KEY = "bcw_active_tab";
+const NOTIFS_ENABLED_KEY = "bcw_browser_notifs";
 
 function loadPillPosition(): { right: number; bottom: number } {
   try {
@@ -66,11 +78,33 @@ function loadPillPosition(): { right: number; bottom: number } {
   return { right: 24, bottom: 88 };
 }
 
+function loadActiveTab(): SidebarTab {
+  try {
+    const raw = localStorage.getItem(ACTIVE_TAB_KEY);
+    if (raw === "dms" || raw === "channels") return raw;
+  } catch {
+    /* ignore */
+  }
+  return "dms";
+}
+
+function loadBrowserNotificationsEnabled(): boolean {
+  // Default ON. Only an explicit "false" stored by the user turns it off, so a
+  // fresh install / unavailable localStorage keeps the opt-out-by-default UX.
+  try {
+    return localStorage.getItem(NOTIFS_ENABLED_KEY) !== "false";
+  } catch {
+    return true;
+  }
+}
+
 export const useWidgetStore = create<WidgetState>((set) => ({
   open: false,
   sidebarOpen: false,
   activeConversation: null,
   unreadCount: 0,
+  activeTab: loadActiveTab(),
+  browserNotificationsEnabled: loadBrowserNotificationsEnabled(),
   pillPosition: loadPillPosition(),
   activeCall: null,
   incomingCall: null,
@@ -82,6 +116,14 @@ export const useWidgetStore = create<WidgetState>((set) => ({
   setUnreadCount: (unreadCount) => set({ unreadCount }),
   incrementUnread: () => set((s) => ({ unreadCount: s.unreadCount + 1 })),
   clearUnread: () => set({ unreadCount: 0 }),
+  setActiveTab: (activeTab) => {
+    try { localStorage.setItem(ACTIVE_TAB_KEY, activeTab); } catch { /* ignore */ }
+    set({ activeTab });
+  },
+  setBrowserNotificationsEnabled: (browserNotificationsEnabled) => {
+    try { localStorage.setItem(NOTIFS_ENABLED_KEY, String(browserNotificationsEnabled)); } catch { /* ignore */ }
+    set({ browserNotificationsEnabled });
+  },
   setPillPosition: (pillPosition) => {
     try { localStorage.setItem(PILL_POS_KEY, JSON.stringify(pillPosition)); } catch { /* ignore */ }
     set({ pillPosition });

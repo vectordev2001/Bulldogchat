@@ -12,6 +12,12 @@ export default defineConfig({
   sourcemap: true,
   clean: true,
   splitting: false,
+  // Minify the shipped JS. The 0.2.0 P0 feature set (channels, pagination,
+  // attachments, notifications, mentions) grows the source past the unminified
+  // budget, so we ship minified — sourcemaps stay on for debugging, and the
+  // size-check ceilings still pass with wide margin, so the guard remains
+  // meaningful for future growth.
+  minify: true,
   external: ["react", "react-dom"],
   esbuildOptions(options) {
     options.jsx = "automatic";
