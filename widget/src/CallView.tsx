@@ -96,8 +96,15 @@ function CallRoomInner({ onEnd, ending }: { onEnd: () => void; ending: boolean }
             key={trackRef.participant.identity}
             className="bcw-relative bcw-rounded-md bcw-overflow-hidden bcw-bg-[hsl(220,60%,9%)] bcw-aspect-video"
           >
-            {trackRef.publication?.isSubscribed || trackRef.participant === localParticipant ? (
-              <VideoTrack trackRef={trackRef} className="bcw-w-full bcw-h-full bcw-object-cover" />
+            {trackRef.publication && (trackRef.publication.isSubscribed || trackRef.participant === localParticipant) ? (
+              <VideoTrack
+                trackRef={{
+                  participant: trackRef.participant,
+                  publication: trackRef.publication,
+                  source: trackRef.source,
+                }}
+                className="bcw-w-full bcw-h-full bcw-object-cover"
+              />
             ) : (
               <ParticipantPlaceholder name={trackRef.participant.name ?? trackRef.participant.identity} />
             )}
