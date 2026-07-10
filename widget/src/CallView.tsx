@@ -1,11 +1,12 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   LiveKitRoom,
   useParticipants,
   useLocalParticipant,
   VideoTrack,
-  AudioTrack,
   useTracks,
+  RoomAudioRenderer,
+  StartAudio,
 } from "@livekit/components-react";
 import { Track } from "livekit-client";
 import type { ActiveCall } from "./state";
@@ -60,6 +61,19 @@ function CallRoomInner({ onEnd, ending }: { onEnd: () => void; ending: boolean }
   const cameraTracks = useTracks([{ source: Track.Source.Camera, withPlaceholder: true }]);
   const screenTracks = useTracks([{ source: Track.Source.ScreenShare, withPlaceholder: false }]);
 
+  // Belt-and-suspenders: ensure the mic is actually publishing after the
+  // LiveKit connection is established. `<LiveKitRoom audio />` requests the
+  // mic at connect time, but in some browsers (Safari, iOS webview, and
+  // Chrome after a permission prompt bounce) that initial publish can silently
+  // fail. Re-attempting on mount makes the mic reliably available so the
+  // other participant can hear you.
+  useEffect(() => {
+    if (!localParticipant) return;
+    localParticipant
+      .setMicrophoneEnabled(true)
+      .catch((err) => console.warn("[widget] enable mic failed", err));
+  }, [localParticipant]);
+
   const toggleMic = async () => {
     await localParticipant.setMicrophoneEnabled(!micOn);
     setMicOn((v) => !v);
@@ -95,12 +109,20 @@ function CallRoomInner({ onEnd, ending }: { onEnd: () => void; ending: boolean }
         ))}
       </div>
 
-      {/* Audio tracks (hidden) */}
-      {cameraTracks
-        .filter((t) => t.participant !== localParticipant)
-        .map((t) => (
-          <AudioTrack key={t.participant.identity + "_audio"} trackRef={t} />
-        ))}
+      {/* Remote audio renderer — attaches every remote participant's
+          microphone track to a hidden <audio> element and calls .play() so
+          browsers actually output the sound. This is the correct primitive
+          for a small call UI; the old code subscribed camera tracks as
+          <AudioTrack>, which does nothing because camera tracks are video. */}
+      <RoomAudioRenderer />
+
+      {/* If the browser blocks autoplay (Safari, background tab, etc.),
+          StartAudio surfaces a small overlay button the user taps to unlock
+          audio. Invisible in the DOM when audio playback is already allowed. */}
+      <StartAudio
+        label="Click to enable audio"
+        className="bcw-absolute bcw-top-2 bcw-left-1/2 bcw-transform bcw--translate-x-1/2 bcw-px-3 bcw-py-1.5 bcw-rounded-full bcw-bg-white/95 bcw-text-black bcw-text-xs bcw-font-semibold bcw-shadow-lg bcw-z-10"
+      />
 
       {/* Controls */}
       <div className="bcw-h-12 bcw-flex bcw-items-center bcw-justify-center bcw-gap-3 bcw-border-t bcw-border-black/40 bcw-shrink-0 bcw-bg-[hsl(220,60%,8%)]">
