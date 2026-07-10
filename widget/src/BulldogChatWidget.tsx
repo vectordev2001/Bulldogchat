@@ -3,6 +3,7 @@ import { ChatApiClient, type ApiDmChannel, type ApiMessage, type ApiUser } from 
 import { useWidgetStore, type ConversationRef } from "./state";
 import { ChatSyncBridge } from "./sync";
 import { useMiniChatSse } from "./hooks/useMiniChatSse";
+import { useRingtone, type RingMode } from "./hooks/useRingtone";
 import { CallView } from "./CallView";
 
 export interface BulldogChatWidgetProps {
@@ -225,6 +226,26 @@ export function BulldogChatWidget({ apiBaseUrl, hidden }: BulldogChatWidgetProps
           kind: data.kind ?? "video",
         });
         setOpen(true);
+        // Fire a browser Notification so the callee is alerted even when the
+        // widget's tab is backgrounded. `Notification.requestPermission()` is
+        // called eagerly on the first authed render (see effect below) so the
+        // permission is usually already granted by the time a call arrives.
+        try {
+          if (typeof Notification !== "undefined" && Notification.permission === "granted") {
+            const n = new Notification(`${data.callerName} is calling`, {
+              body: data.kind === "voice" ? "Voice call" : "Video call",
+              tag: `bulldog-call-${data.callId}`,
+              requireInteraction: true,
+              icon: "/favicon.ico",
+            });
+            n.onclick = () => {
+              window.focus();
+              n.close();
+            };
+          }
+        } catch {
+          /* Notifications are best-effort. */
+        }
       }
     },
     // Callee accepted — clear any "calling…" spinner on the caller side
@@ -242,6 +263,29 @@ export function BulldogChatWidget({ apiBaseUrl, hidden }: BulldogChatWidgetProps
       setStartingCall(false);
     },
   });
+
+  // Ringtone: incoming chime for the callee, ringback for the caller. Stops
+  // automatically when the call is accepted (activeCall becomes truthy) or
+  // ended (incomingCall + startingCall both clear).
+  const ringMode: RingMode = incomingCall && !activeCall
+    ? "incoming"
+    : startingCall && !activeCall
+      ? "outgoing"
+      : null;
+  useRingtone(ringMode);
+
+  // Ask for Notification permission once the widget knows the user is logged
+  // in, so the browser can raise a native alert (with sound, on the lock
+  // screen if the OS allows) when a call arrives while this tab is in the
+  // background. If the user denies, we silently fall back to the in-widget
+  // banner + ringtone.
+  useEffect(() => {
+    if (authed !== true) return;
+    if (typeof Notification === "undefined") return;
+    if (Notification.permission === "default") {
+      Notification.requestPermission().catch(() => {});
+    }
+  }, [authed]);
 
   // Keyboard shortcuts.
   useEffect(() => {
