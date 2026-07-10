@@ -22,7 +22,9 @@
     "build:css": "tailwindcss -i ./src/styles.css -o ./dist/style.css --minify",
     "dev": "tsup --watch",
     "check": "tsc --noEmit",
-    "test": "tsx --test --test-force-exit src/BulldogChatWidget.test.ts"
+    "test": "tsx --test --test-force-exit src/BulldogChatWidget.test.ts",
+    "size-check": "node scripts/check-size.mjs",
+    "prepublishOnly": "node scripts/prepublish-guard.mjs && npm run build && npm run size-check"
   },
   "peerDependencies": {
     "react": "^18.3.1",

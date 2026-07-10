@@ -1,0 +1,71 @@
+name: Publish chat-widget
+
+# Tag-triggered publish for @vectordev2001/chat-widget.
+#
+# Usage:
+#   1. Bump widget/package.json version (e.g. 0.1.4 → 0.2.0)
+#   2. Commit + merge to main
+#   3. git tag widget-v0.2.0 && git push origin widget-v0.2.0
+#
+# The tag version MUST match package.json version — the "verify version"
+# step below will fail the run if they diverge.
+#
+# GITHUB_TOKEN has write:packages by default in this repo, so no PAT
+# lives in the workflow. This is the whole point: PATs no longer need
+# to be pasted into terminals or committed to .npmrc files.
+
+on:
+  push:
+    tags:
+      - "widget-v*"
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    defaults:
+      run:
+        working-directory: widget
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://npm.pkg.github.com"
+          scope: "@vectordev2001"
+
+      - name: Verify tag matches package.json version
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#widget-v}"
+          PKG_VERSION="$(node -p "require('./package.json').version")"
+          echo "Tag version:     $TAG_VERSION"
+          echo "package.json:    $PKG_VERSION"
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "::error::Tag version ($TAG_VERSION) does not match package.json ($PKG_VERSION)."
+            exit 1
+          fi
+
+      - name: Install
+        run: npm ci || npm install
+
+      - name: Type-check
+        run: npm run check
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: Bundle size check
+        run: node scripts/check-size.mjs
+
+      - name: Publish
+        run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
