@@ -5,12 +5,16 @@
 // (server/index.ts, CORS_ALLOWED_ORIGINS) must include the calling origin
 // AND set Access-Control-Allow-Credentials: true for this to work.
 
+/** Presence state as stored on the user (Chat app Phase 1.9). Anything else
+ * (or absent) is treated as "offline" for the sidebar dot. */
+export type ApiPresence = "online" | "away" | "busy" | "offline";
+
 export interface ApiUser {
   id: number;
   name: string;
   email: string;
   hue?: number;
-  presence?: string;
+  presence?: ApiPresence | string;
   title?: string | null;
   deactivated?: boolean;
   role?: string;
@@ -55,6 +59,16 @@ export interface ApiMention {
   type: string;
 }
 
+/** A grouped reaction on a message. Mirrors the server serialization
+ * (server/routes.ts buildWireMessage): one entry per distinct emoji, with the
+ * total `count` and the `userIds` who reacted (used to render who-reacted
+ * tooltips and to detect the current user's own reaction). */
+export interface ApiReaction {
+  emoji: string;
+  count: number;
+  userIds: number[];
+}
+
 export interface ApiMessage {
   id: number;
   channelId: number;
@@ -63,6 +77,14 @@ export interface ApiMessage {
   attachments?: string | null;
   attachmentsList?: ApiAttachment[];
   mentions?: ApiMention[];
+  reactions?: ApiReaction[];
+  /** Number of thread replies to this message (0 when it has none). */
+  replyCount?: number;
+  /** ISO timestamp of the most recent reply, or null when there are none. */
+  lastReplyAt?: string | null;
+  /** Set on reply messages; the id of the parent they belong to. Replies are
+   * filtered out of the main channel timeline server-side. */
+  replyToMessageId?: number | null;
   createdAt: string;
   deletedAt?: string | null;
 }
@@ -136,6 +158,37 @@ export class ChatApiClient {
     return this.request("GET", `/api/channels/${channelId}/messages${q ? `?${q}` : ""}`);
   }
 
+  // ── Threads ────────────────────────────────────────────────────────────────
+
+  /** Replies to a parent message, oldest first. Backend: GET
+   * /api/messages/:id/replies (server/routes-v2.ts). */
+  listThreadReplies(messageId: number): Promise<ApiMessage[]> {
+    return this.request("GET", `/api/messages/${messageId}/replies`);
+  }
+
+  // ── Reactions ──────────────────────────────────────────────────────────────
+
+  /** Add the caller's reaction. Returns the updated wire message (with the new
+   * grouped `reactions`). Backend: POST /api/messages/:id/reactions {emoji}. */
+  addReaction(messageId: number, emoji: string): Promise<ApiMessage> {
+    return this.request("POST", `/api/messages/${messageId}/reactions`, { emoji });
+  }
+
+  /** Remove the caller's reaction. The emoji is path-encoded. Backend:
+   * DELETE /api/messages/:id/reactions/:emoji. */
+  removeReaction(messageId: number, emoji: string): Promise<ApiMessage> {
+    return this.request("DELETE", `/api/messages/${messageId}/reactions/${encodeURIComponent(emoji)}`);
+  }
+
+  // ── Read receipts ──────────────────────────────────────────────────────────
+
+  /** Advance the caller's read receipt for a channel. When `messageId` is
+   * omitted the server advances to the channel tip. Backend:
+   * POST /api/channels/:id/read (receipts only ever move forward). */
+  markChannelRead(channelId: number, messageId?: number): Promise<{ ok: boolean; messageId: number }> {
+    return this.request("POST", `/api/channels/${channelId}/read`, messageId ? { messageId } : {});
+  }
+
   // ── Group channels ─────────────────────────────────────────────────────────
 
   listProjects(): Promise<ApiProject[]> {
@@ -146,8 +199,11 @@ export class ChatApiClient {
     return this.request("GET", `/api/projects/${projectId}/channels`);
   }
 
-  sendMessage(channelId: number, content: string): Promise<ApiMessage> {
-    return this.request("POST", `/api/channels/${channelId}/messages`, { content });
+  /** Post a message. Pass `replyToMessageId` to make it a thread reply — the
+   * server threads it under the parent and keeps it out of the main timeline. */
+  sendMessage(channelId: number, content: string, replyToMessageId?: number): Promise<ApiMessage> {
+    const body = replyToMessageId ? { content, replyToMessageId } : { content };
+    return this.request("POST", `/api/channels/${channelId}/messages`, body);
   }
 
   createDm(memberIds: number[]): Promise<ApiDmChannel & { created: boolean }> {

@@ -6,6 +6,7 @@ import {
   type ApiDmChannel,
   type ApiMessage,
   type ApiProject,
+  type ApiReaction,
   type ApiUser,
 } from "./api";
 import { useWidgetStore, type ConversationRef } from "./state";
@@ -13,7 +14,20 @@ import { ChatSyncBridge } from "./sync";
 import { useMiniChatSse } from "./hooks/useMiniChatSse";
 import { useRingtone, playMentionChime, type RingMode } from "./hooks/useRingtone";
 import { useBrowserNotifications } from "./hooks/useBrowserNotifications";
-import { formatFileSize, isImageAttachment, mentionsUser, mergeOlderMessages, parseMentions } from "./format";
+import {
+  formatFileSize,
+  hasOwnReaction,
+  isImageAttachment,
+  mentionsUser,
+  mergeOlderMessages,
+  parseMentions,
+  presenceDotClass,
+  presenceLabel,
+  reactedByNames,
+  reactionToggleAction,
+  REACTION_EMOJIS,
+  threadChipLabel,
+} from "./format";
 import { CallView } from "./CallView";
 
 // Number of messages fetched per page. Matches the server default limit; a
@@ -53,6 +67,8 @@ export function BulldogChatWidget({ apiBaseUrl, hidden }: BulldogChatWidgetProps
   const setSidebarOpen = useWidgetStore((s) => s.setSidebarOpen);
   const activeConversation = useWidgetStore((s) => s.activeConversation);
   const setActiveConversation = useWidgetStore((s) => s.setActiveConversation);
+  const activeThreadId = useWidgetStore((s) => s.activeThreadId);
+  const setActiveThreadId = useWidgetStore((s) => s.setActiveThreadId);
   const activeTab = useWidgetStore((s) => s.activeTab);
   const setActiveTab = useWidgetStore((s) => s.setActiveTab);
   const browserNotificationsEnabled = useWidgetStore((s) => s.browserNotificationsEnabled);
@@ -78,6 +94,11 @@ export function BulldogChatWidget({ apiBaseUrl, hidden }: BulldogChatWidgetProps
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [composerValue, setComposerValue] = useState("");
   const [sending, setSending] = useState(false);
+  // Thread panel: replies to the parent message identified by activeThreadId.
+  const [threadReplies, setThreadReplies] = useState<ApiMessage[]>([]);
+  const [threadLoading, setThreadLoading] = useState(false);
+  const [threadComposer, setThreadComposer] = useState("");
+  const [threadSending, setThreadSending] = useState(false);
   const [startingCall, setStartingCall] = useState(false);
   const [callError, setCallError] = useState<string | null>(null);
 
@@ -89,6 +110,14 @@ export function BulldogChatWidget({ apiBaseUrl, hidden }: BulldogChatWidgetProps
   //     hammering the endpoint after the earliest message is reached.
   const loadingOlderRef = useRef(false);
   const hasMoreRef = useRef(true);
+
+  // Read-receipt bookkeeping. lastReadFiredRef throttles POST /read to at most
+  // once per 5s; readTimerRef holds the "visible 2s at bottom" delay so we only
+  // mark read once the user has actually dwelled at the latest message.
+  const lastReadFiredRef = useRef(0);
+  const readTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const READ_DEBOUNCE_MS = 5000;
+  const READ_DWELL_MS = 2000;
 
   const { permission: notifPermission, requestPermission, notify } = useBrowserNotifications();
 
@@ -269,10 +298,113 @@ export function BulldogChatWidget({ apiBaseUrl, hidden }: BulldogChatWidgetProps
     }
   };
 
+  // ── Read receipts ──────────────────────────────────────────────────────────
+  // POST /api/channels/:id/read advances the caller's receipt (receipts only
+  // move forward server-side). We fire it (a) immediately when a conversation
+  // is opened, and (b) after the user has dwelled ~2s scrolled near the bottom.
+  // Both paths funnel through fireMarkRead, which throttles to once per 5s so a
+  // burst of scroll events can't hammer the endpoint. `force` bypasses the
+  // throttle for the open-conversation case.
+  const fireMarkRead = (channelId: number, force = false) => {
+    const now = Date.now();
+    if (!force && now - lastReadFiredRef.current < READ_DEBOUNCE_MS) return;
+    lastReadFiredRef.current = now;
+    api.markChannelRead(channelId).catch(() => { /* best-effort */ });
+  };
+
+  // Called by MessageList as the user scrolls. When they're within 100px of the
+  // bottom we start a dwell timer; scrolling away cancels it. Firing marks the
+  // channel read (throttled).
+  const onBottomVisibilityChange = (atBottom: boolean) => {
+    if (readTimerRef.current) {
+      clearTimeout(readTimerRef.current);
+      readTimerRef.current = null;
+    }
+    if (!atBottom) return;
+    const conv = activeConversation;
+    if (!conv) return;
+    readTimerRef.current = setTimeout(() => {
+      readTimerRef.current = null;
+      fireMarkRead(conv.id);
+    }, READ_DWELL_MS);
+  };
+
   useEffect(() => {
-    if (activeConversation && open) loadMessages(activeConversation);
+    return () => { if (readTimerRef.current) clearTimeout(readTimerRef.current); };
+  }, []);
+
+  useEffect(() => {
+    if (activeConversation && open) {
+      loadMessages(activeConversation);
+      // Mark read immediately on open, then let scroll-dwell handle the rest.
+      fireMarkRead(activeConversation.id, true);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeConversation?.id, activeConversation?.kind, open]);
+
+  // ── Reactions ──────────────────────────────────────────────────────────────
+  // Replace a message in both the main timeline and the open thread panel with
+  // the server's updated wire copy (returned by add/removeReaction). Keeps pills
+  // authoritative rather than guessing counts optimistically.
+  const applyUpdatedMessage = (updated: ApiMessage) => {
+    setMessages((prev) => prev.map((m) => (m.id === updated.id ? updated : m)));
+    setThreadReplies((prev) => prev.map((m) => (m.id === updated.id ? updated : m)));
+  };
+
+  const handleToggleReaction = async (messageId: number, emoji: string) => {
+    const target =
+      messages.find((m) => m.id === messageId) ?? threadReplies.find((m) => m.id === messageId);
+    const action = reactionToggleAction(target?.reactions, emoji, me?.id ?? null);
+    try {
+      const updated =
+        action === "remove"
+          ? await api.removeReaction(messageId, emoji)
+          : await api.addReaction(messageId, emoji);
+      applyUpdatedMessage(updated);
+    } catch {
+      /* best-effort — leave existing pills as they are */
+    }
+  };
+
+  // ── Threads ────────────────────────────────────────────────────────────────
+  const loadThreadReplies = async (parentId: number) => {
+    setThreadLoading(true);
+    try {
+      setThreadReplies(await api.listThreadReplies(parentId));
+    } catch {
+      setThreadReplies([]);
+    } finally {
+      setThreadLoading(false);
+    }
+  };
+
+  const openThread = (parentId: number) => {
+    setActiveThreadId(parentId);
+    setThreadComposer("");
+    loadThreadReplies(parentId);
+  };
+
+  const closeThread = () => {
+    setActiveThreadId(null);
+    setThreadReplies([]);
+  };
+
+  const handleSendThreadReply = async () => {
+    const content = threadComposer.trim();
+    if (!content || !activeConversation || activeThreadId == null || threadSending) return;
+    setThreadSending(true);
+    try {
+      await api.sendMessage(activeConversation.id, content, activeThreadId);
+      setThreadComposer("");
+      await loadThreadReplies(activeThreadId);
+      // Refresh the main list so the parent's "N replies" chip updates.
+      await loadMessages(activeConversation);
+    } catch {
+      /* leave composer populated */
+    } finally {
+      setThreadSending(false);
+    }
+  };
 
   // Human label for a channel id, used in notification bodies. DMs resolve to
   // member names / title; group channels to "#name". Falls back gracefully.
@@ -313,6 +445,10 @@ export function BulldogChatWidget({ apiBaseUrl, hidden }: BulldogChatWidgetProps
       const isActiveAndOpen = activeConversation && data?.channelId === activeConversation.id && open;
       if (isActiveAndOpen) {
         loadMessages(activeConversation);
+        // If the new message is a reply to the thread we're viewing, refresh it.
+        if (activeThreadId != null && data?.replyToMessageId === activeThreadId) {
+          loadThreadReplies(activeThreadId);
+        }
       } else if (data?.channelId) {
         incrementUnread();
         sync.broadcastUnreadChanged(unreadCount + 1);
@@ -355,6 +491,23 @@ export function BulldogChatWidget({ apiBaseUrl, hidden }: BulldogChatWidgetProps
     onChannelDelete: (data) => {
       if (activeConversation && data?.channelId === activeConversation.id) setActiveConversation(null);
       refreshDms();
+    },
+    // A reaction changed on some message. We don't get the updated message on
+    // the wire (only {messageId, channelId}), so refetch the affected channel
+    // if it's the one we're viewing; refresh the thread too if it's open.
+    onReactionChange: (data) => {
+      if (activeConversation && data?.channelId === activeConversation.id) {
+        loadMessages(activeConversation);
+        if (activeThreadId != null) loadThreadReplies(activeThreadId);
+      }
+    },
+    // A user's presence changed — patch that user's presence in the members
+    // list so sidebar / header dots update live (no polling needed).
+    onPresenceChange: (data) => {
+      if (data?.userId == null || typeof data?.presence !== "string") return;
+      setMembers((prev) =>
+        prev.map((u) => (u.id === data.userId ? { ...u, presence: data.presence } : u)),
+      );
     },
     onReopen: () => {
       refreshDms();
@@ -440,6 +593,8 @@ export function BulldogChatWidget({ apiBaseUrl, hidden }: BulldogChatWidgetProps
     setActiveConversation({ kind, id } as ConversationRef);
     sync.broadcastConversationChanged(kind, id);
     setSidebarOpen(false);
+    // A thread panel is scoped to one conversation; drop it when switching.
+    closeThread();
     clearUnread();
     sync.broadcastUnreadChanged(0);
   };
@@ -501,6 +656,13 @@ export function BulldogChatWidget({ apiBaseUrl, hidden }: BulldogChatWidgetProps
 
   const userById = new Map(members.map((u) => [u.id, u]));
   const activeDm = activeConversation?.kind === "dm" ? dms.find((d) => d.id === activeConversation.id) : undefined;
+  // The other participant in a 1:1 DM — drives the header presence dot.
+  const activeDmOther = activeDm && me
+    ? userById.get(activeDm.memberIds.find((id) => id !== me.id) ?? -1)
+    : undefined;
+  const threadParent = activeThreadId != null
+    ? messages.find((m) => m.id === activeThreadId)
+    : undefined;
   const activeChannel = activeConversation?.kind === "channel"
     ? [...channelsByProject.values()].flat().find((c) => c.id === activeConversation.id)
     : undefined;
@@ -597,8 +759,17 @@ export function BulldogChatWidget({ apiBaseUrl, hidden }: BulldogChatWidgetProps
             >
               <MenuIcon />
             </button>
-            <div className="bcw-flex-1 bcw-min-w-0 bcw-text-xs bcw-font-semibold bcw-text-white bcw-truncate">
-              {activeTitle}
+            <div className="bcw-flex-1 bcw-min-w-0 bcw-flex bcw-items-center bcw-gap-1.5">
+              {activeDmOther && (
+                <span
+                  className={`bcw-w-2 bcw-h-2 bcw-rounded-full bcw-shrink-0 ${presenceDotClass(activeDmOther.presence)}`}
+                  title={presenceLabel(activeDmOther.presence)}
+                  data-testid="bulldog-chat-widget-header-presence"
+                />
+              )}
+              <span className="bcw-min-w-0 bcw-text-xs bcw-font-semibold bcw-text-white bcw-truncate">
+                {activeTitle}
+              </span>
             </div>
 
             {/* Video call button — only when in a DM and not already on a call */}
@@ -695,19 +866,27 @@ export function BulldogChatWidget({ apiBaseUrl, hidden }: BulldogChatWidgetProps
                       dms.map((dm) => {
                         const others = me ? dm.memberIds.filter((id) => id !== me.id) : dm.memberIds;
                         const label = dm.title || others.map((id) => userById.get(id)?.name).filter(Boolean).join(", ") || "Direct message";
+                        // Presence dot only for 1:1 DMs (a single other member);
+                        // group DMs have no single presence to show.
+                        const solo = others.length === 1 ? userById.get(others[0]) : undefined;
                         return (
                           <button
                             key={dm.id}
                             type="button"
                             onClick={() => selectConversation("dm", dm.id)}
-                            className={`bcw-w-full bcw-text-left bcw-px-3 bcw-py-2 bcw-text-xs bcw-truncate hover:bcw-bg-bcw-navy-light ${
+                            className={`bcw-w-full bcw-text-left bcw-px-3 bcw-py-2 bcw-text-xs bcw-flex bcw-items-center bcw-gap-1.5 hover:bcw-bg-bcw-navy-light ${
                               activeConversation?.kind === "dm" && activeConversation.id === dm.id
                                 ? "bcw-bg-bcw-navy-light bcw-text-white"
                                 : "bcw-text-white/80"
                             }`}
                             data-testid={`bulldog-chat-widget-dm-${dm.id}`}
                           >
-                            {label}
+                            <span
+                              className={`bcw-w-2 bcw-h-2 bcw-rounded-full bcw-shrink-0 ${solo ? presenceDotClass(solo.presence) : "bcw-bg-transparent"}`}
+                              title={solo ? presenceLabel(solo.presence) : undefined}
+                              data-testid={`bulldog-chat-widget-dm-presence-${dm.id}`}
+                            />
+                            <span className="bcw-truncate">{label}</span>
                           </button>
                         );
                       })
@@ -769,10 +948,20 @@ export function BulldogChatWidget({ apiBaseUrl, hidden }: BulldogChatWidgetProps
                   loadingOlder={loadingOlder}
                   hasMore={hasMoreRef.current}
                   onLoadOlder={loadOlderMessages}
+                  onBottomVisibilityChange={onBottomVisibilityChange}
                   me={me}
                   userById={userById}
+                  onToggleReaction={handleToggleReaction}
+                  onOpenThread={openThread}
                 />
               )}
+
+              {/* Typing indicator: intentionally not implemented. The Chat
+                  backend has no typing SSE event or POST /typing route today
+                  (verified: no `typing` references in server/), so there's
+                  nothing to subscribe to or send. This is a no-op placeholder —
+                  wire the UI here once the backend emits typing:started /
+                  typing:stopped and exposes a send endpoint. */}
 
               {authed !== false && activeConversation && !activeCall && (
                 <Composer
@@ -783,6 +972,24 @@ export function BulldogChatWidget({ apiBaseUrl, hidden }: BulldogChatWidgetProps
                 />
               )}
             </div>
+
+            {/* Thread panel: right-hand slide-in showing the parent message,
+                its replies, and a reply composer scoped to the parent. */}
+            {activeThreadId != null && !activeCall && (
+              <ThreadPanel
+                parent={threadParent}
+                replies={threadReplies}
+                loading={threadLoading}
+                me={me}
+                userById={userById}
+                composerValue={threadComposer}
+                onComposerChange={setThreadComposer}
+                onSend={handleSendThreadReply}
+                sending={threadSending}
+                onClose={closeThread}
+                onToggleReaction={handleToggleReaction}
+              />
+            )}
           </div>
         </div>
       )}
@@ -793,15 +1000,18 @@ export function BulldogChatWidget({ apiBaseUrl, hidden }: BulldogChatWidgetProps
 // ── Sub-components ────────────────────────────────────────────────────────────
 
 function MessageList({
-  messages, loading, loadingOlder, hasMore, onLoadOlder, me, userById,
+  messages, loading, loadingOlder, hasMore, onLoadOlder, onBottomVisibilityChange, me, userById, onToggleReaction, onOpenThread,
 }: {
   messages: ApiMessage[];
   loading: boolean;
   loadingOlder: boolean;
   hasMore: boolean;
   onLoadOlder: () => void;
+  onBottomVisibilityChange: (atBottom: boolean) => void;
   me: ApiUser | null;
   userById: Map<number, ApiUser>;
+  onToggleReaction: (messageId: number, emoji: string) => void;
+  onOpenThread: (parentId: number) => void;
 }) {
   const listRef = useRef<HTMLDivElement>(null);
   // When set, a "load older" prepend is in flight and holds the scrollHeight
@@ -821,7 +1031,11 @@ function MessageList({
       pendingPrepend.current = null;
     } else {
       el.scrollTop = el.scrollHeight;
+      // A bottom-append / initial load lands the user at the newest message,
+      // which counts as "viewing the bottom" for read receipts.
+      onBottomVisibilityChange(true);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [messages]);
 
   const onScroll = () => {
@@ -832,6 +1046,10 @@ function MessageList({
       pendingPrepend.current = el.scrollHeight;
       onLoadOlder();
     }
+    // Report whether the user is within 100px of the newest message so the
+    // parent can decide when to mark the conversation read.
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 100;
+    onBottomVisibilityChange(atBottom);
   };
 
   return (
@@ -851,27 +1069,65 @@ function MessageList({
         <div className="bcw-text-xs bcw-text-white/50 bcw-text-center bcw-py-4">No messages yet. Say hi!</div>
       )}
       {messages.map((m) => (
-        <MessageRow key={m.id} message={m} me={me} userById={userById} />
+        <MessageRow
+          key={m.id}
+          message={m}
+          me={me}
+          userById={userById}
+          onToggleReaction={onToggleReaction}
+          onOpenThread={onOpenThread}
+        />
       ))}
     </div>
   );
 }
 
-function MessageRow({ message, me, userById }: {
+function MessageRow({ message, me, userById, onToggleReaction, onOpenThread, inThread }: {
   message: ApiMessage;
   me: ApiUser | null;
   userById: Map<number, ApiUser>;
+  onToggleReaction: (messageId: number, emoji: string) => void;
+  onOpenThread: (parentId: number) => void;
+  /** When rendered inside the thread panel, hide the reply-in-thread action and
+   * the thread chip (you're already in the thread). */
+  inThread?: boolean;
 }) {
   const author = userById.get(message.userId);
   const mine = me?.id === message.userId;
   const attachments = message.attachmentsList ?? [];
+  const reactions = message.reactions ?? [];
+  const chip = threadChipLabel(message.replyCount, message.lastReplyAt);
   const segments = message.deletedAt
     ? []
     : parseMentions(message.content, { mentions: message.mentions, meId: me?.id ?? null, userById });
 
   return (
-    <div className={`bcw-flex bcw-flex-col ${mine ? "bcw-items-end" : "bcw-items-start"}`}>
+    <div
+      className={`bcw-group bcw-relative bcw-flex bcw-flex-col ${mine ? "bcw-items-end" : "bcw-items-start"}`}
+      data-testid={`bulldog-chat-widget-message-${message.id}`}
+    >
       {!mine && <span className="bcw-text-[10px] bcw-text-white/40 bcw-mb-0.5">{author?.name ?? "Unknown"}</span>}
+
+      {/* Hover actions — react and (outside the thread) reply in thread. */}
+      {!message.deletedAt && (
+        <div
+          className={`bcw-absolute -bcw-top-2 bcw-z-10 bcw-hidden group-hover:bcw-flex bcw-items-center bcw-gap-0.5 bcw-rounded-md bcw-bg-[hsl(220,60%,9%)] bcw-border bcw-border-black/40 bcw-px-0.5 bcw-py-0.5 bcw-shadow ${mine ? "bcw-right-0" : "bcw-right-0"}`}
+        >
+          <ReactionAdder onPick={(emoji) => onToggleReaction(message.id, emoji)} />
+          {!inThread && (
+            <button
+              type="button"
+              onClick={() => onOpenThread(message.id)}
+              className="bcw-p-1 bcw-rounded bcw-text-white/60 hover:bcw-text-white hover:bcw-bg-bcw-navy-light"
+              title="Reply in thread"
+              data-testid={`bulldog-chat-widget-reply-${message.id}`}
+            >
+              <ThreadIcon />
+            </button>
+          )}
+        </div>
+      )}
+
       {(message.deletedAt || message.content) && (
         <div
           className={`bcw-max-w-[85%] bcw-rounded-lg bcw-px-2.5 bcw-py-1.5 bcw-text-xs bcw-whitespace-pre-wrap bcw-break-words ${
@@ -879,7 +1135,7 @@ function MessageRow({ message, me, userById }: {
           }`}
         >
           {message.deletedAt ? (
-            <em className="bcw-opacity-60">message deleted</em>
+            <span className="bcw-opacity-60 bcw-italic">message deleted</span>
           ) : (
             segments.map((seg, i) =>
               seg.mention ? (
@@ -893,6 +1149,7 @@ function MessageRow({ message, me, userById }: {
           )}
         </div>
       )}
+
       {!message.deletedAt && attachments.length > 0 && (
         <div className="bcw-max-w-[85%] bcw-mt-1 bcw-space-y-1">
           {attachments.map((att) => (
@@ -900,6 +1157,178 @@ function MessageRow({ message, me, userById }: {
           ))}
         </div>
       )}
+
+      {reactions.length > 0 && (
+        <ReactionPills
+          reactions={reactions}
+          meId={me?.id ?? null}
+          userById={userById}
+          onToggle={(emoji) => onToggleReaction(message.id, emoji)}
+        />
+      )}
+
+      {chip && !inThread && (
+        <button
+          type="button"
+          onClick={() => onOpenThread(message.id)}
+          className="bcw-mt-1 bcw-text-[11px] bcw-text-bcw-red/90 hover:bcw-text-bcw-red bcw-font-medium"
+          data-testid={`bulldog-chat-widget-thread-chip-${message.id}`}
+        >
+          {chip}
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ── Reactions ──────────────────────────────────────────────────────────────
+
+function ReactionPills({ reactions, meId, userById, onToggle }: {
+  reactions: ApiReaction[];
+  meId: number | null;
+  userById: Map<number, ApiUser>;
+  onToggle: (emoji: string) => void;
+}) {
+  return (
+    <div className="bcw-mt-1 bcw-flex bcw-flex-wrap bcw-gap-1" data-testid="bulldog-chat-widget-reactions">
+      {reactions.map((r) => {
+        const own = hasOwnReaction(r, meId);
+        return (
+          <button
+            key={r.emoji}
+            type="button"
+            onClick={() => onToggle(r.emoji)}
+            title={reactedByNames(r, userById)}
+            className={`bcw-flex bcw-items-center bcw-gap-0.5 bcw-rounded-full bcw-px-1.5 bcw-py-0.5 bcw-text-[11px] bcw-border ${
+              own
+                ? "bcw-border-bcw-red bcw-bg-bcw-red/20 bcw-text-white"
+                : "bcw-border-black/40 bcw-bg-bcw-navy-light bcw-text-white/80"
+            }`}
+            data-testid={`bulldog-chat-widget-reaction-${r.emoji}`}
+          >
+            <span>{r.emoji}</span>
+            <span className="bcw-tabular-nums">{r.count}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// The "+" affordance that opens a small fixed emoji grid. Deliberately not
+// emoji-mart — a hand-picked palette keeps the widget asset-free and small.
+function ReactionAdder({ onPick }: { onPick: (emoji: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [open]);
+
+  return (
+    <div className="bcw-relative" ref={wrapRef}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="bcw-p-1 bcw-rounded bcw-text-white/60 hover:bcw-text-white hover:bcw-bg-bcw-navy-light"
+        title="Add reaction"
+        data-testid="bulldog-chat-widget-react-btn"
+      >
+        <EmojiPlusIcon />
+      </button>
+      {open && (
+        <div
+          className="bcw-absolute bcw-right-0 bcw-top-full bcw-mt-1 bcw-z-20 bcw-w-[184px] bcw-grid bcw-grid-cols-8 bcw-gap-0.5 bcw-rounded-md bcw-bg-[hsl(220,60%,9%)] bcw-border bcw-border-black/40 bcw-p-1 bcw-shadow-bcw-panel"
+          data-testid="bulldog-chat-widget-emoji-picker"
+        >
+          {REACTION_EMOJIS.map((emoji) => (
+            <button
+              key={emoji}
+              type="button"
+              onClick={() => { onPick(emoji); setOpen(false); }}
+              className="bcw-text-sm bcw-leading-none bcw-p-1 bcw-rounded hover:bcw-bg-bcw-navy-light"
+            >
+              {emoji}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Thread panel ─────────────────────────────────────────────────────────────
+
+function ThreadPanel({
+  parent, replies, loading, me, userById, composerValue, onComposerChange, onSend, sending, onClose, onToggleReaction,
+}: {
+  parent: ApiMessage | undefined;
+  replies: ApiMessage[];
+  loading: boolean;
+  me: ApiUser | null;
+  userById: Map<number, ApiUser>;
+  composerValue: string;
+  onComposerChange: (v: string) => void;
+  onSend: () => void;
+  sending: boolean;
+  onClose: () => void;
+  onToggleReaction: (messageId: number, emoji: string) => void;
+}) {
+  const noop = () => {};
+  return (
+    <div
+      className="bcw-absolute bcw-inset-y-0 bcw-right-0 bcw-w-full sm:bcw-w-[300px] bcw-bg-bcw-navy bcw-border-l bcw-border-black/40 bcw-flex bcw-flex-col bcw-z-20 bcw-shadow-bcw-panel"
+      data-testid="bulldog-chat-widget-thread-panel"
+    >
+      <header className="bcw-h-9 bcw-px-2.5 bcw-flex bcw-items-center bcw-gap-1.5 bcw-border-b bcw-border-black/40 bcw-shrink-0">
+        <span className="bcw-flex-1 bcw-text-xs bcw-font-semibold bcw-text-white">Thread</span>
+        <button
+          type="button"
+          onClick={onClose}
+          className="bcw-p-1 bcw-rounded hover:bcw-bg-bcw-navy-light bcw-text-white/80"
+          aria-label="Close thread"
+          data-testid="bulldog-chat-widget-thread-close"
+        >
+          <CloseIcon />
+        </button>
+      </header>
+
+      <div className="bcw-flex-1 bcw-overflow-y-auto bcw-px-3 bcw-py-2 bcw-space-y-2">
+        {parent && (
+          <div className="bcw-pb-2 bcw-border-b bcw-border-black/40">
+            <MessageRow
+              message={parent}
+              me={me}
+              userById={userById}
+              onToggleReaction={onToggleReaction}
+              onOpenThread={noop}
+              inThread
+            />
+          </div>
+        )}
+        {loading && <div className="bcw-text-xs bcw-text-white/50 bcw-text-center bcw-py-2">Loading replies…</div>}
+        {!loading && replies.length === 0 && (
+          <div className="bcw-text-xs bcw-text-white/50 bcw-text-center bcw-py-2">No replies yet.</div>
+        )}
+        {replies.map((r) => (
+          <MessageRow
+            key={r.id}
+            message={r}
+            me={me}
+            userById={userById}
+            onToggleReaction={onToggleReaction}
+            onOpenThread={noop}
+            inThread
+          />
+        ))}
+      </div>
+
+      <Composer value={composerValue} onChange={onComposerChange} onSend={onSend} disabled={sending} placeholder="Reply…" />
     </div>
   );
 }
@@ -944,8 +1373,8 @@ function AttachmentView({ attachment }: { attachment: ApiAttachment }) {
   );
 }
 
-function Composer({ value, onChange, onSend, disabled }: {
-  value: string; onChange: (v: string) => void; onSend: () => void; disabled: boolean;
+function Composer({ value, onChange, onSend, disabled, placeholder = "Message…" }: {
+  value: string; onChange: (v: string) => void; onSend: () => void; disabled: boolean; placeholder?: string;
 }) {
   return (
     <div className="bcw-h-12 bcw-px-2 bcw-flex bcw-items-center bcw-gap-1.5 bcw-border-t bcw-border-black/40 bcw-shrink-0">
@@ -963,7 +1392,7 @@ function Composer({ value, onChange, onSend, disabled }: {
         value={value}
         onChange={(e) => onChange(e.target.value)}
         onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); onSend(); } }}
-        placeholder="Message…"
+        placeholder={placeholder}
         className="bcw-flex-1 bcw-bg-[hsl(220,60%,9%)] bcw-border bcw-border-black/40 bcw-text-xs bcw-text-white bcw-placeholder-white/30 bcw-rounded-md bcw-px-2.5 bcw-py-1.5 focus:bcw-outline-none"
         data-testid="bulldog-chat-widget-composer-input"
       />
@@ -1041,6 +1470,22 @@ function BellIcon() {
     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d="M18 8a6 6 0 00-12 0c0 7-3 9-3 9h18s-3-2-3-9" />
       <path d="M13.73 21a2 2 0 01-3.46 0" />
+    </svg>
+  );
+}
+function ThreadIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z" />
+    </svg>
+  );
+}
+function EmojiPlusIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="12" cy="12" r="9" />
+      <path d="M8.5 14a4 4 0 007 0" />
+      <path d="M9 9h.01M15 9h.01" />
     </svg>
   );
 }

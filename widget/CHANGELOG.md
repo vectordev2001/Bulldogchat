@@ -2,6 +2,29 @@
 
 All notable changes to `@vectordev2001/chat-widget` are documented here.
 
+## 0.3.0
+
+Message-row features that bring the mini widget closer to parity with the full
+Chat app. Minor bump for new, user-visible capabilities.
+
+- Threads / reply-to: rows with replies show an "N replies · last <time>" chip
+  that opens a right-hand slide-in thread panel (parent + replies + a composer
+  scoped to the parent). Every row also gains a hover "Reply in thread" action.
+- Reactions: reaction pills render beneath messages; clicking toggles your own
+  reaction (own reactions get a distinct red border), hovering shows who
+  reacted, and a "+" opens a small fixed emoji palette (no emoji-mart, to keep
+  the bundle small). Remote reaction changes refetch via the reaction:change
+  SSE event.
+- Presence indicators: colored dots (green online, amber away, red busy, gray
+  offline) on 1:1 DMs in the sidebar and on the DM header, updated live from the
+  presence:change SSE event.
+- Read receipts: opening a conversation marks it read immediately, and dwelling
+  ~2s scrolled near the bottom marks it read again, throttled to at most once
+  per 5s (POST /api/channels/:id/read).
+- Typing indicators: deferred. The Chat backend has no typing SSE event or send
+  endpoint today, so this ships as a documented no-op placeholder rather than a
+  fake indicator.
+
 ## 0.2.0
 
 First genuinely usable release: closes all five P0 gaps that stood between the

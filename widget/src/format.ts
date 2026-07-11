@@ -2,7 +2,7 @@
 // directly by the test suite (no jsdom/RTL is wired up, so anything that needs
 // a unit test lives here as a plain function rather than inside a component).
 
-import type { ApiAttachment, ApiMention, ApiUser } from "./api";
+import type { ApiAttachment, ApiMention, ApiReaction, ApiUser } from "./api";
 
 /** Human-readable file size (B / KB / MB) for the attachment file card. */
 export function formatFileSize(bytes: number): string {
@@ -118,4 +118,100 @@ export function mentionsUser(mentions: ApiMention[] | undefined, meId: number | 
 export function mergeOlderMessages<T extends { id: number }>(older: T[], current: T[]): T[] {
   const seen = new Set(current.map((m) => m.id));
   return [...older.filter((m) => !seen.has(m.id)), ...current];
+}
+
+// ── Reactions ────────────────────────────────────────────────────────────────
+
+/** The small fixed emoji palette the "+" pill opens. Deliberately hand-picked
+ * (not emoji-mart) so the widget stays asset-free and under the bundle budget. */
+export const REACTION_EMOJIS = [
+  "👍", "👎", "❤️", "😂", "🎉", "😮", "😢", "🙏",
+  "🔥", "✅", "👀", "🚀", "💯", "😅", "🤔", "👏",
+  "😍", "😎", "🙌", "💪", "⚡", "❓", "❗", "🥳",
+] as const;
+
+/** True when the given user has already reacted with this emoji — drives the
+ * "own reaction" highlight and whether a click adds or removes. */
+export function hasOwnReaction(reaction: ApiReaction, meId: number | null | undefined): boolean {
+  return meId != null && reaction.userIds.includes(meId);
+}
+
+/** Whether clicking a reaction pill should add or remove the caller's reaction,
+ * given the current grouped reactions and the emoji clicked. */
+export function reactionToggleAction(
+  reactions: ApiReaction[] | undefined,
+  emoji: string,
+  meId: number | null | undefined,
+): "add" | "remove" {
+  const existing = reactions?.find((r) => r.emoji === emoji);
+  return existing && hasOwnReaction(existing, meId) ? "remove" : "add";
+}
+
+/** Names of the users who reacted with an emoji, for the hover tooltip. Falls
+ * back to the raw id when a user isn't in the members map. */
+export function reactedByNames(reaction: ApiReaction, userById: Map<number, ApiUser>): string {
+  return reaction.userIds.map((id) => userById.get(id)?.name ?? `User ${id}`).join(", ");
+}
+
+// ── Presence ─────────────────────────────────────────────────────────────────
+
+/** Tailwind background class for a presence dot. Unknown / missing presence is
+ * treated as offline (gray). online=green, away=amber, busy=red, offline=gray. */
+export function presenceDotClass(presence: string | null | undefined): string {
+  switch (presence) {
+    case "online": return "bcw-bg-green-500";
+    case "away": return "bcw-bg-amber-400";
+    case "busy": return "bcw-bg-red-500";
+    default: return "bcw-bg-gray-500";
+  }
+}
+
+/** Human label for a presence value (title attribute on the dot). */
+export function presenceLabel(presence: string | null | undefined): string {
+  switch (presence) {
+    case "online": return "Online";
+    case "away": return "Away";
+    case "busy": return "Busy";
+    default: return "Offline";
+  }
+}
+
+// ── Threads ──────────────────────────────────────────────────────────────────
+
+/** Label for the "N replies" chip under a message that has thread replies.
+ * Returns null when there are none (caller renders no chip). */
+export function threadChipLabel(replyCount: number | undefined, lastReplyAt?: string | null): string | null {
+  if (!replyCount || replyCount <= 0) return null;
+  const base = `${replyCount} ${replyCount === 1 ? "reply" : "replies"}`;
+  const rel = lastReplyAt ? formatRelativeTime(lastReplyAt) : null;
+  return rel ? `${base} · last ${rel}` : base;
+}
+
+/** Coarse relative-time string ("just now", "5m", "3h", "2d") for reply chips
+ * and typing/last-seen affordances. Invalid input yields an empty string. */
+export function formatRelativeTime(iso: string | null | undefined, now: number = Date.now()): string {
+  if (!iso) return "";
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return "";
+  const secs = Math.max(0, Math.floor((now - t) / 1000));
+  if (secs < 45) return "just now";
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return `${mins}m`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h`;
+  const days = Math.floor(hours / 24);
+  return `${days}d`;
+}
+
+// ── Typing indicator ─────────────────────────────────────────────────────────
+
+/** Build the "… is typing" line from the display names of users currently
+ * typing. 0 → empty string, 1 → "Alice is typing…", 2 → "Alice and Bob are
+ * typing…", 3+ → "Several people are typing…". */
+export function typingLabel(names: string[]): string {
+  const list = names.filter(Boolean);
+  if (list.length === 0) return "";
+  if (list.length === 1) return `${list[0]} is typing…`;
+  if (list.length === 2) return `${list[0]} and ${list[1]} are typing…`;
+  return "Several people are typing…";
 }
