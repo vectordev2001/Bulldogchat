@@ -34,6 +34,10 @@ interface WidgetState {
   open: boolean;
   sidebarOpen: boolean;
   activeConversation: ConversationRef;
+  /** Parent message id whose thread panel is open, or null when closed.
+   * Ephemeral UI state — not persisted (a thread view shouldn't survive a
+   * reload the way the active conversation does). */
+  activeThreadId: number | null;
   unreadCount: number;
   /** Which sidebar list (DMs vs group channels) is active, persisted. */
   activeTab: SidebarTab;
@@ -51,6 +55,7 @@ interface WidgetState {
   toggleOpen: () => void;
   setSidebarOpen: (open: boolean) => void;
   setActiveConversation: (ref: ConversationRef) => void;
+  setActiveThreadId: (id: number | null) => void;
   setUnreadCount: (n: number) => void;
   incrementUnread: () => void;
   clearUnread: () => void;
@@ -102,6 +107,7 @@ export const useWidgetStore = create<WidgetState>((set) => ({
   open: false,
   sidebarOpen: false,
   activeConversation: null,
+  activeThreadId: null,
   unreadCount: 0,
   activeTab: loadActiveTab(),
   browserNotificationsEnabled: loadBrowserNotificationsEnabled(),
@@ -113,6 +119,7 @@ export const useWidgetStore = create<WidgetState>((set) => ({
   toggleOpen: () => set((s) => ({ open: !s.open })),
   setSidebarOpen: (sidebarOpen) => set({ sidebarOpen }),
   setActiveConversation: (activeConversation) => set({ activeConversation }),
+  setActiveThreadId: (activeThreadId) => set({ activeThreadId }),
   setUnreadCount: (unreadCount) => set({ unreadCount }),
   incrementUnread: () => set((s) => ({ unreadCount: s.unreadCount + 1 })),
   clearUnread: () => set({ unreadCount: 0 }),

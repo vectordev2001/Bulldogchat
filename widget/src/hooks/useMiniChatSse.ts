@@ -19,6 +19,13 @@ interface Handlers {
   onDmCreated?: (data: any) => void;
   onChannelDelete?: (data: any) => void;
   onReopen?: () => void;
+  /** Fired when a reaction is added/removed on a message. Payload:
+   * { messageId, channelId }. The widget refetches the affected channel so
+   * pills stay in sync across users. */
+  onReactionChange?: (data: any) => void;
+  /** Fired when a user's presence changes. Payload: { userId, presence }
+   * where presence is online|away|busy|offline. */
+  onPresenceChange?: (data: any) => void;
   /** Fired when another user initiates a call to the current user. */
   onCallIncoming?: (data: any) => void;
   /** Fired when the callee accepts the call — both peers receive this. */
@@ -78,6 +85,14 @@ export function useMiniChatSse(apiBaseUrl: string, enabled: boolean, handlers: H
       });
       es.addEventListener("channel:delete", (e: MessageEvent) => {
         try { handlersRef.current.onChannelDelete?.(JSON.parse(e.data)); } catch {}
+      });
+      // Reaction add/remove on a message (server emits emitReactionChange).
+      es.addEventListener("reaction:change", (e: MessageEvent) => {
+        try { handlersRef.current.onReactionChange?.(JSON.parse(e.data)); } catch {}
+      });
+      // Presence transition for a user (server emits emitPresenceChange).
+      es.addEventListener("presence:change", (e: MessageEvent) => {
+        try { handlersRef.current.onPresenceChange?.(JSON.parse(e.data)); } catch {}
       });
       // Incoming call from another user — widget shows accept/decline banner.
       es.addEventListener("call:incoming", (e: MessageEvent) => {

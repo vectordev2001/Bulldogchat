@@ -9,7 +9,7 @@
 
 import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { ChatApiClient, ApiError, type ApiMessage, type ApiUser, type ApiAttachment } from "./api";
+import { ChatApiClient, ApiError, type ApiMessage, type ApiReaction, type ApiUser, type ApiAttachment } from "./api";
 import { ChatSyncBridge, SYNC_CHANNEL_NAME, LAST_CONVERSATION_KEY } from "./sync";
 import { useWidgetStore } from "./state";
 import {
@@ -18,6 +18,14 @@ import {
   mergeOlderMessages,
   parseMentions,
   mentionsUser,
+  hasOwnReaction,
+  reactionToggleAction,
+  reactedByNames,
+  presenceDotClass,
+  presenceLabel,
+  threadChipLabel,
+  formatRelativeTime,
+  typingLabel,
 } from "./format";
 
 // ---------------------------------------------------------------------------
@@ -438,5 +446,186 @@ describe("mentions", () => {
     assert.equal(mentionsUser([{ userId: 2, type: "user" }], 1), false);
     assert.equal(mentionsUser([{ userId: 1, type: "user" }], 1), true);
     assert.equal(mentionsUser([{ userId: null, type: "here" }], 1), false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P1.1 — Threads / reply-to
+// ---------------------------------------------------------------------------
+
+describe("threads", () => {
+  const originalFetch = globalThis.fetch;
+  afterEach(() => { globalThis.fetch = originalFetch; });
+
+  test("listThreadReplies hits GET /api/messages/:id/replies", async () => {
+    let capturedUrl = "";
+    let capturedMethod = "";
+    globalThis.fetch = (async (url: string, init?: RequestInit) => {
+      capturedUrl = url;
+      capturedMethod = init?.method ?? "";
+      return new Response(JSON.stringify([]), { status: 200 });
+    }) as typeof fetch;
+
+    const client = new ChatApiClient("https://chat.bulldogops.com");
+    await client.listThreadReplies(88);
+    assert.equal(capturedUrl, "https://chat.bulldogops.com/api/messages/88/replies");
+    assert.equal(capturedMethod, "GET");
+  });
+
+  test("sendMessage includes replyToMessageId in the body only when provided", async () => {
+    const bodies: any[] = [];
+    globalThis.fetch = (async (_url: string, init?: RequestInit) => {
+      bodies.push(JSON.parse(init!.body as string));
+      return new Response(JSON.stringify({ id: 1 }), { status: 200 });
+    }) as typeof fetch;
+
+    const client = new ChatApiClient("https://chat.bulldogops.com");
+    await client.sendMessage(5, "hi");
+    await client.sendMessage(5, "in thread", 42);
+
+    assert.deepEqual(bodies[0], { content: "hi" });
+    assert.deepEqual(bodies[1], { content: "in thread", replyToMessageId: 42 });
+  });
+
+  test("threadChipLabel: none, singular, plural, and with last-reply time", () => {
+    assert.equal(threadChipLabel(0), null);
+    assert.equal(threadChipLabel(undefined), null);
+    assert.equal(threadChipLabel(1), "1 reply");
+    assert.equal(threadChipLabel(3), "3 replies");
+    const now = Date.parse("2026-01-01T00:00:00Z");
+    const twoMinAgo = new Date(now - 2 * 60 * 1000).toISOString();
+    const label = threadChipLabel(2, twoMinAgo);
+    assert.match(label!, /^2 replies · last /);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P1.2 — Reactions
+// ---------------------------------------------------------------------------
+
+describe("reactions", () => {
+  const originalFetch = globalThis.fetch;
+  afterEach(() => { globalThis.fetch = originalFetch; });
+
+  const userById = new Map<number, ApiUser>([
+    [1, { id: 1, name: "Josh Bieler", email: "j@x.com" }],
+    [2, { id: 2, name: "Dana Lee", email: "d@x.com" }],
+  ]);
+
+  test("addReaction POSTs the emoji, removeReaction DELETEs it url-encoded", async () => {
+    const calls: Array<{ url: string; method: string; body?: string }> = [];
+    globalThis.fetch = (async (url: string, init?: RequestInit) => {
+      calls.push({ url, method: init?.method ?? "", body: init?.body as string | undefined });
+      return new Response(JSON.stringify({ id: 7 }), { status: 200 });
+    }) as typeof fetch;
+
+    const client = new ChatApiClient("https://chat.bulldogops.com");
+    await client.addReaction(7, "🔥");
+    await client.removeReaction(7, "🔥");
+
+    assert.equal(calls[0].method, "POST");
+    assert.equal(calls[0].url, "https://chat.bulldogops.com/api/messages/7/reactions");
+    assert.deepEqual(JSON.parse(calls[0].body!), { emoji: "🔥" });
+
+    assert.equal(calls[1].method, "DELETE");
+    assert.equal(calls[1].url, `https://chat.bulldogops.com/api/messages/7/reactions/${encodeURIComponent("🔥")}`);
+  });
+
+  test("hasOwnReaction detects the current user among reactors", () => {
+    const r: ApiReaction = { emoji: "👍", count: 2, userIds: [1, 3] };
+    assert.equal(hasOwnReaction(r, 1), true);
+    assert.equal(hasOwnReaction(r, 2), false);
+    assert.equal(hasOwnReaction(r, null), false);
+  });
+
+  test("reactionToggleAction removes when the user already reacted, else adds", () => {
+    const reactions: ApiReaction[] = [{ emoji: "👍", count: 1, userIds: [1] }];
+    assert.equal(reactionToggleAction(reactions, "👍", 1), "remove");
+    assert.equal(reactionToggleAction(reactions, "👍", 2), "add");
+    assert.equal(reactionToggleAction(reactions, "🎉", 1), "add");
+    assert.equal(reactionToggleAction(undefined, "🎉", 1), "add");
+  });
+
+  test("reactedByNames resolves ids to names with a fallback", () => {
+    const r: ApiReaction = { emoji: "❤️", count: 2, userIds: [2, 9] };
+    assert.equal(reactedByNames(r, userById), "Dana Lee, User 9");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P1.3 — Presence
+// ---------------------------------------------------------------------------
+
+describe("presence", () => {
+  test("presenceDotClass maps each state, defaulting unknown to gray", () => {
+    assert.equal(presenceDotClass("online"), "bcw-bg-green-500");
+    assert.equal(presenceDotClass("away"), "bcw-bg-amber-400");
+    assert.equal(presenceDotClass("busy"), "bcw-bg-red-500");
+    assert.equal(presenceDotClass("offline"), "bcw-bg-gray-500");
+    assert.equal(presenceDotClass(undefined), "bcw-bg-gray-500");
+    assert.equal(presenceDotClass("weird"), "bcw-bg-gray-500");
+  });
+
+  test("presenceLabel is human-readable and defaults to Offline", () => {
+    assert.equal(presenceLabel("online"), "Online");
+    assert.equal(presenceLabel("busy"), "Busy");
+    assert.equal(presenceLabel(null), "Offline");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P1.4 — Typing (deferred; the label helper is still exercised)
+// ---------------------------------------------------------------------------
+
+describe("typing label", () => {
+  test("builds 0 / 1 / 2 / 3+ typing text", () => {
+    assert.equal(typingLabel([]), "");
+    assert.equal(typingLabel(["Alice"]), "Alice is typing…");
+    assert.equal(typingLabel(["Alice", "Bob"]), "Alice and Bob are typing…");
+    assert.equal(typingLabel(["Alice", "Bob", "Cara"]), "Several people are typing…");
+    // Empty names are ignored before counting.
+    assert.equal(typingLabel(["", "Bob"]), "Bob is typing…");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P1.5 — Read receipts
+// ---------------------------------------------------------------------------
+
+describe("read receipts", () => {
+  const originalFetch = globalThis.fetch;
+  afterEach(() => { globalThis.fetch = originalFetch; });
+
+  test("markChannelRead POSTs to /read, with the messageId only when given", async () => {
+    const calls: Array<{ url: string; method: string; body?: string }> = [];
+    globalThis.fetch = (async (url: string, init?: RequestInit) => {
+      calls.push({ url, method: init?.method ?? "", body: init?.body as string | undefined });
+      return new Response(JSON.stringify({ ok: true, messageId: 0 }), { status: 200 });
+    }) as typeof fetch;
+
+    const client = new ChatApiClient("https://chat.bulldogops.com");
+    await client.markChannelRead(12);
+    await client.markChannelRead(12, 99);
+
+    assert.equal(calls[0].method, "POST");
+    assert.equal(calls[0].url, "https://chat.bulldogops.com/api/channels/12/read");
+    assert.deepEqual(JSON.parse(calls[0].body!), {});
+    assert.deepEqual(JSON.parse(calls[1].body!), { messageId: 99 });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Relative time helper (thread chips / affordances)
+// ---------------------------------------------------------------------------
+
+describe("formatRelativeTime", () => {
+  test("renders coarse buckets and handles bad input", () => {
+    const now = Date.parse("2026-01-01T12:00:00Z");
+    assert.equal(formatRelativeTime(new Date(now - 10 * 1000).toISOString(), now), "just now");
+    assert.equal(formatRelativeTime(new Date(now - 5 * 60 * 1000).toISOString(), now), "5m");
+    assert.equal(formatRelativeTime(new Date(now - 3 * 3600 * 1000).toISOString(), now), "3h");
+    assert.equal(formatRelativeTime(new Date(now - 2 * 86400 * 1000).toISOString(), now), "2d");
+    assert.equal(formatRelativeTime(null), "");
+    assert.equal(formatRelativeTime("not-a-date"), "");
   });
 });
