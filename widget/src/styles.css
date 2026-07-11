@@ -6,3 +6,20 @@
    the host app's global styles; base is still included for a handful of
    harmless resets (box-sizing on our own elements) scoped by the bcw-
    utility classes that reference them. */
+
+/* @mention chips. Authored as a plain scoped class (not Tailwind utilities)
+   so the widget component and the Chat app can share the same visual
+   language without depending on prefixed utility generation. Default is a
+   subtle blue tint for mentions of other users; .bcw-mention-me overrides
+   with the brand red so a self-mention pops. */
+.bcw-mention {
+  background-color: hsl(210, 90%, 60%, 0.18);
+  color: hsl(210, 90%, 78%);
+  padding: 0 3px;
+  border-radius: 3px;
+  font-weight: 600;
+}
+.bcw-mention-me {
+  background-color: hsl(0, 72%, 51%, 0.22);
+  color: hsl(0, 80%, 78%);
+}

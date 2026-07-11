@@ -30,12 +30,39 @@ export interface ApiDmChannel extends ApiChannel {
   memberIds: number[];
 }
 
+export interface ApiProject {
+  id: number;
+  name: string;
+  authCompanyId?: string | null;
+}
+
+/** A single file attached to a message. Mirrors the server serialization in
+ * server/routes.ts (the `attachmentsList` field on the messages response). */
+export interface ApiAttachment {
+  id: number;
+  filename: string;
+  contentType: string;
+  sizeBytes: number;
+  url: string;
+  thumbnailUrl?: string | null;
+  createdAt: string;
+}
+
+/** A resolved mention entry. `userId` is null for broadcast mentions
+ * (@here / @everyone); `type` is "user" | "here" | "everyone". */
+export interface ApiMention {
+  userId: number | null;
+  type: string;
+}
+
 export interface ApiMessage {
   id: number;
   channelId: number;
   userId: number;
   content: string;
   attachments?: string | null;
+  attachmentsList?: ApiAttachment[];
+  mentions?: ApiMention[];
   createdAt: string;
   deletedAt?: string | null;
 }
@@ -101,9 +128,22 @@ export class ChatApiClient {
     return this.request("GET", `/api/channels/${id}`);
   }
 
-  listMessages(channelId: number, before?: number): Promise<ApiMessage[]> {
-    const q = before ? `?before=${before}` : "";
-    return this.request("GET", `/api/channels/${channelId}/messages${q}`);
+  listMessages(channelId: number, before?: number, limit?: number): Promise<ApiMessage[]> {
+    const params = new URLSearchParams();
+    if (before) params.set("before", String(before));
+    if (limit) params.set("limit", String(limit));
+    const q = params.toString();
+    return this.request("GET", `/api/channels/${channelId}/messages${q ? `?${q}` : ""}`);
+  }
+
+  // ── Group channels ─────────────────────────────────────────────────────────
+
+  listProjects(): Promise<ApiProject[]> {
+    return this.request("GET", "/api/projects");
+  }
+
+  listProjectChannels(projectId: number): Promise<ApiChannel[]> {
+    return this.request("GET", `/api/projects/${projectId}/channels`);
   }
 
   sendMessage(channelId: number, content: string): Promise<ApiMessage> {

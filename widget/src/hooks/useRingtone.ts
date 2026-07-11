@@ -133,3 +133,52 @@ export function useRingtone(mode: RingMode) {
     };
   }, []);
 }
+
+// ── playMentionChime ─────────────────────────────────────────────────────────
+// One-shot, more prominent alert for @mentions. Unlike the call ringtones
+// above (which are persistent, mode-driven loops), a mention is a discrete
+// event, so this is an imperative fire-and-forget: it spins up a short-lived
+// AudioContext, plays a three-note ascending chime louder than the incoming
+// chime, and closes the context when done. Kept separate from useRingtone's
+// AudioContext so a mention arriving mid-call doesn't disrupt the ringtone.
+export function playMentionChime() {
+  try {
+    const Ctor =
+      (window.AudioContext ||
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (window as any).webkitAudioContext) as typeof AudioContext | undefined;
+    if (!Ctor) return;
+    const ctx = new Ctor();
+    ctx.resume().catch(() => {});
+    const t0 = ctx.currentTime;
+    const master = ctx.createGain();
+    master.gain.value = 0;
+    master.connect(ctx.destination);
+    // C5 → E5 → G5, a touch louder (0.24 vs the 0.18 incoming chime).
+    const notes: Array<{ freq: number; start: number; len: number }> = [
+      { freq: 523.25, start: 0.0, len: 0.16 },
+      { freq: 659.25, start: 0.14, len: 0.16 },
+      { freq: 783.99, start: 0.28, len: 0.26 },
+    ];
+    let end = 0;
+    for (const n of notes) {
+      const osc = ctx.createOscillator();
+      osc.type = "sine";
+      osc.frequency.value = n.freq;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0, t0 + n.start);
+      g.gain.linearRampToValueAtTime(0.24, t0 + n.start + 0.02);
+      g.gain.setValueAtTime(0.24, t0 + n.start + n.len - 0.04);
+      g.gain.linearRampToValueAtTime(0, t0 + n.start + n.len);
+      osc.connect(g);
+      g.connect(master);
+      osc.start(t0 + n.start);
+      osc.stop(t0 + n.start + n.len + 0.02);
+      end = Math.max(end, n.start + n.len);
+    }
+    // Close the context shortly after the last note to free resources.
+    window.setTimeout(() => { ctx.close().catch(() => {}); }, (end + 0.3) * 1000);
+  } catch {
+    /* best-effort */
+  }
+}
