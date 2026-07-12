@@ -14,6 +14,15 @@ import { ChatSyncBridge, SYNC_CHANNEL_NAME, LAST_CONVERSATION_KEY } from "./sync
 import { useWidgetStore } from "./state";
 import { bindOpenJobListener, OPEN_JOB_EVENT, type OpenJobEventDetail } from "./hooks/useOpenJobBus";
 import {
+  DEVICE_PREFS_KEY,
+  parseDevicePrefs,
+  readDevicePrefs,
+  writeDevicePrefs,
+  reconcileDevicePrefs,
+  applyDevicePrefs,
+} from "./hooks/useDevicePreferences";
+import { mapDevices } from "./DeviceSettingsMenu";
+import {
   formatFileSize,
   isImageAttachment,
   mergeOlderMessages,
@@ -1025,5 +1034,140 @@ describe("call target picker", () => {
 
     useWidgetStore.getState().setActiveCall(null);
     globalThis.fetch = originalFetch;
+  });
+});
+
+// ---------------------------------------------------------------------------
+// device picker (useDevicePreferences)
+// ---------------------------------------------------------------------------
+
+describe("useDevicePreferences", () => {
+  let store: Map<string, string>;
+
+  beforeEach(() => {
+    store = new Map();
+    (globalThis as any).localStorage = {
+      getItem: (k: string) => (store.has(k) ? store.get(k)! : null),
+      setItem: (k: string, v: string) => void store.set(k, v),
+      removeItem: (k: string) => void store.delete(k),
+    };
+  });
+
+  afterEach(() => {
+    delete (globalThis as any).localStorage;
+  });
+
+  test("reads and writes device prefs to localStorage under the documented key", () => {
+    assert.deepEqual(readDevicePrefs(), {});
+
+    writeDevicePrefs({ videoInput: "cam-1", audioInput: "mic-2", audioOutput: "spk-3" });
+
+    assert.equal(store.get(DEVICE_PREFS_KEY), JSON.stringify({ videoInput: "cam-1", audioInput: "mic-2", audioOutput: "spk-3" }));
+    assert.deepEqual(readDevicePrefs(), { videoInput: "cam-1", audioInput: "mic-2", audioOutput: "spk-3" });
+  });
+
+  test("writeDevicePrefs is a full read-modify-write patch (only changed keys move)", () => {
+    writeDevicePrefs({ videoInput: "cam-1" });
+    writeDevicePrefs({ ...readDevicePrefs(), audioOutput: "spk-9" });
+
+    assert.deepEqual(readDevicePrefs(), { videoInput: "cam-1", audioOutput: "spk-9" });
+  });
+
+  test("parseDevicePrefs tolerates malformed JSON, null, and non-object shapes", () => {
+    assert.deepEqual(parseDevicePrefs(null), {});
+    assert.deepEqual(parseDevicePrefs("{not-json"), {});
+    assert.deepEqual(parseDevicePrefs("42"), {});
+    assert.deepEqual(parseDevicePrefs(JSON.stringify({ videoInput: 7 })), {});
+    assert.deepEqual(parseDevicePrefs(JSON.stringify({ videoInput: "cam-1", extra: "ignored" })), { videoInput: "cam-1" });
+  });
+
+  test("reconcileDevicePrefs drops a stored deviceId that no longer exists in the current enumeration", () => {
+    const prefs = { videoInput: "cam-old", audioInput: "mic-1", audioOutput: "spk-1" };
+
+    const reconciled = reconcileDevicePrefs(prefs, {
+      videoInput: ["cam-new"],
+      audioInput: ["mic-1"],
+      audioOutput: ["spk-1"],
+    });
+
+    // videoInput's stored id ('cam-old') isn't in the new enumeration, so it's
+    // cleared back to system default; the other two are still present so they
+    // survive untouched.
+    assert.deepEqual(reconciled, { audioInput: "mic-1", audioOutput: "spk-1" });
+  });
+
+  test("reconcileDevicePrefs leaves prefs untouched when the availableIds list for a kind is omitted", () => {
+    const prefs = { videoInput: "cam-1" };
+    assert.deepEqual(reconcileDevicePrefs(prefs, {}), { videoInput: "cam-1" });
+  });
+
+  test("applyDevicePrefs calls room.switchActiveDevice for videoInput and audioInput, skipping unset audioOutput", () => {
+    const calls: Array<[string, string]> = [];
+    const fakeRoom = {
+      switchActiveDevice: (kind: "videoinput" | "audioinput", deviceId: string) => {
+        calls.push([kind, deviceId]);
+      },
+    };
+
+    applyDevicePrefs({ videoInput: "cam-77" }, fakeRoom);
+
+    assert.deepEqual(calls, [["videoinput", "cam-77"]]);
+  });
+
+  test("applyDevicePrefs calls switchActiveDevice for both camera and mic when both are set", () => {
+    const calls: Array<[string, string]> = [];
+    const fakeRoom = {
+      switchActiveDevice: (kind: "videoinput" | "audioinput", deviceId: string) => {
+        calls.push([kind, deviceId]);
+      },
+    };
+
+    applyDevicePrefs({ videoInput: "cam-1", audioInput: "mic-2", audioOutput: "spk-3" }, fakeRoom);
+
+    // audioOutput is deliberately NOT dispatched through switchActiveDevice —
+    // speaker selection goes through setSinkId on <audio> elements instead
+    // (see CallView.tsx), so only camera + mic show up here.
+    assert.deepEqual(calls.sort(), [
+      ["audioinput", "mic-2"],
+      ["videoinput", "cam-1"],
+    ]);
+  });
+
+  test("applyDevicePrefs is a no-op when no prefs are set", () => {
+    let callCount = 0;
+    const fakeRoom = { switchActiveDevice: () => { callCount += 1; } };
+    applyDevicePrefs({}, fakeRoom);
+    assert.equal(callCount, 0);
+  });
+});
+
+describe("device settings menu — mapDevices", () => {
+  test("filters by kind and preserves label", () => {
+    const devices = [
+      { kind: "videoinput", deviceId: "cam-1", label: "HD Webcam" },
+      { kind: "audioinput", deviceId: "mic-1", label: "Built-in Mic" },
+      { kind: "audiooutput", deviceId: "spk-1", label: "Speakers" },
+    ];
+    assert.deepEqual(mapDevices(devices, "videoinput"), [{ deviceId: "cam-1", label: "HD Webcam" }]);
+    assert.deepEqual(mapDevices(devices, "audioinput"), [{ deviceId: "mic-1", label: "Built-in Mic" }]);
+    assert.deepEqual(mapDevices(devices, "audiooutput"), [{ deviceId: "spk-1", label: "Speakers" }]);
+  });
+
+  test("falls back to 'Device N' labels when the browser withholds labels (no permission granted yet)", () => {
+    const devices = [
+      { kind: "audioinput", deviceId: "mic-1", label: "" },
+      { kind: "audioinput", deviceId: "mic-2", label: "   " },
+      { kind: "audioinput", deviceId: "mic-3", label: "Real Label" },
+    ];
+    assert.deepEqual(mapDevices(devices, "audioinput"), [
+      { deviceId: "mic-1", label: "Device 1" },
+      { deviceId: "mic-2", label: "Device 2" },
+      { deviceId: "mic-3", label: "Real Label" },
+    ]);
+  });
+
+  test("returns an empty list when there are no devices of the requested kind", () => {
+    const devices = [{ kind: "videoinput", deviceId: "cam-1", label: "Cam" }];
+    assert.deepEqual(mapDevices(devices, "audiooutput"), []);
   });
 });
