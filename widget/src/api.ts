@@ -40,6 +40,26 @@ export interface ApiProject {
   authCompanyId?: string | null;
 }
 
+/** A work object ("job") — mirrors the server's publicWorkObject() shape
+ * (server/routes-work-objects.ts). Used by the cross-app openJob bus (widget
+ * 0.4.0): bulldog-ops/bulldog-contracts dispatch a `bulldog:widget:openJob`
+ * CustomEvent, and the widget resolves it to a work object + its channels. */
+export interface ApiWorkObject {
+  id: number;
+  orgId: number;
+  projectId: number | null;
+  kind: string;
+  ref: string;
+  title: string;
+  status: string;
+  description: string | null;
+  parentId: number | null;
+  ownerUserId: number | null;
+  createdAt: string | number;
+  updatedAt: string | number;
+  closedAt: string | number | null;
+}
+
 /** A single file attached to a message. Mirrors the server serialization in
  * server/routes.ts (the `attachmentsList` field on the messages response). */
 export interface ApiAttachment {
@@ -197,6 +217,38 @@ export class ChatApiClient {
 
   listProjectChannels(projectId: number): Promise<ApiChannel[]> {
     return this.request("GET", `/api/projects/${projectId}/channels`);
+  }
+
+  // ── Work objects / jobs (cross-app openJob bus, widget 0.4.0) ──────────────
+
+  /** Backend: GET /api/work-objects/:id (server/routes-work-objects.ts). */
+  getWorkObject(id: number): Promise<ApiWorkObject> {
+    return this.request("GET", `/api/work-objects/${id}`);
+  }
+
+  /** Backend: GET /api/work-objects/by-ref?ref=X&kind=job_site. `kind`
+   * defaults to "job_site", which is what bulldog-ops/bulldog-contracts mean
+   * by "job" (see server/suite-change-orders-outbound.ts). */
+  getWorkObjectByRef(ref: string, kind = "job_site"): Promise<ApiWorkObject> {
+    return this.request(
+      "GET",
+      `/api/work-objects/by-ref?ref=${encodeURIComponent(ref)}&kind=${encodeURIComponent(kind)}`,
+    );
+  }
+
+  /** Backend: GET /api/work-objects/:id/channels. Order comes from the
+   * server's listChannelsForWorkObject (creation order). */
+  listWorkObjectChannels(id: number): Promise<ApiChannel[]> {
+    return this.request("GET", `/api/work-objects/${id}/channels`);
+  }
+
+  /** Backend: POST /api/projects/:id/channels. Used by the "No channels yet"
+   * prompt to create a #general channel nested under a job. */
+  createChannel(
+    projectId: number,
+    body: { name: string; type?: "text" | "voice"; workObjectId?: number; topic?: string },
+  ): Promise<ApiChannel> {
+    return this.request("POST", `/api/projects/${projectId}/channels`, { type: "text", ...body });
   }
 
   /** Post a message. Pass `replyToMessageId` to make it a thread reply — the

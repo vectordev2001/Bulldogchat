@@ -2,6 +2,26 @@
 
 All notable changes to `@vectordev2001/chat-widget` are documented here.
 
+## 0.4.0
+
+Expand-to-fullscreen, pop-out, and a cross-app job bus so bulldog-ops and
+bulldog-contracts can drive the widget straight to a job's channel. Minor
+bump for new, user-visible capabilities.
+
+- Expand-to-fullscreen: a new header button grows the panel to cover the
+  whole viewport (reusing the existing mobile "fixed inset-0" CSS path), with
+  a restore button to collapse back to the floating panel. Hidden on mobile,
+  where the panel is already fullscreen.
+- Pop-out: a new header button opens the full Chat app in a new tab
+  (`chatAppUrl` prop, defaulting to `apiBaseUrl`).
+- Cross-app openJob bus: a `useOpenJobBus` hook listens for a
+  `bulldog:widget:openJob` CustomEvent on `window` (dispatched by host pages
+  with `{ jobId | jobRef | jobNumber, source }`). The widget opens, resolves
+  the job (via the new `GET /api/work-objects/by-ref` endpoint, plus the
+  already-existing `GET /api/work-objects/:id` and `:id/channels`), and
+  either jumps straight to its first channel or shows a "No channels yet for
+  job <ref>" prompt with a "Create #general channel" action.
+
 ## 0.3.0
 
 Message-row features that bring the mini widget closer to parity with the full

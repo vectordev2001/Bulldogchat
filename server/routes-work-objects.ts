@@ -7,6 +7,7 @@
  * Routes:
  *   GET    /api/work-objects                  list (filter by kind, status, ref)
  *   POST   /api/work-objects                  create
+ *   GET    /api/work-objects/by-ref           resolve by (orgId, kind, ref) — widget openJob bus
  *   GET    /api/work-objects/:id              detail (incl. activity, channels)
  *   PATCH  /api/work-objects/:id              update (title, status, owner, attributes)
  *   POST   /api/work-objects/:id/close        close
@@ -192,6 +193,39 @@ export function registerWorkObjectRoutes(app: Express) {
       payload: JSON.stringify({ kind: created.kind, ref: created.ref, title: created.title }),
     });
     res.json(publicWorkObject(created));
+  });
+
+  /* ─── resolve by (kind, ref) — used by the cross-app openJob bus ───
+   * Widget 0.4.0: bulldog-ops/bulldog-contracts dispatch
+   * `bulldog:widget:openJob` with a job ref (e.g. "BOE-FIBER-01") rather
+   * than a numeric id. Defaults kind to "job_site" since that's what the
+   * rest of the codebase means by "job" (see suite-change-orders-outbound.ts).
+   * Query: ?ref=<ref>&kind=<job_site|work_project|change_order|safety_incident>
+   *
+   * MUST be registered before GET /api/work-objects/:id below — otherwise
+   * "by-ref" would be captured as the :id param (Number("by-ref") = NaN)
+   * and always 404.
+   */
+  app.get("/api/work-objects/by-ref", requireAuth, (req, res) => {
+    const u = (req as AuthedRequest).user;
+    const ref = String(req.query.ref ?? "").trim();
+    if (!ref) return res.status(400).json({ message: "ref is required" });
+    const rawKind = String(req.query.kind ?? "job_site");
+    if (!(workObjectKinds as readonly string[]).includes(rawKind)) {
+      return res.status(400).json({ message: `Invalid kind "${rawKind}"` });
+    }
+    const kind = rawKind as WorkObjectKind;
+    const wo = storage.getWorkObjectByRef(u.orgId, kind, ref);
+    if (!wo) return res.status(404).json({ message: `No ${kind} with ref "${ref}"` });
+    if (wo.projectId != null) {
+      const project = storage.getProject(wo.projectId);
+      if (!project || project.orgId !== u.orgId) return res.status(404).json({ message: "Not found" });
+      if (!storage.isProjectMember(wo.projectId, u.id)) return res.status(404).json({ message: "Not found" });
+      if (!gateProjectById((req as AuthedRequest).access, wo.projectId)) {
+        return res.status(404).json({ message: "Not found" });
+      }
+    }
+    res.json(publicWorkObject(wo));
   });
 
   /* ─── detail (incl. activity + linked channels) ─── */

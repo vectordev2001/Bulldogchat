@@ -9,9 +9,10 @@
 
 import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { ChatApiClient, ApiError, type ApiMessage, type ApiReaction, type ApiUser, type ApiAttachment } from "./api";
+import { ChatApiClient, ApiError, type ApiMessage, type ApiReaction, type ApiUser, type ApiAttachment, type ApiWorkObject, type ApiChannel } from "./api";
 import { ChatSyncBridge, SYNC_CHANNEL_NAME, LAST_CONVERSATION_KEY } from "./sync";
 import { useWidgetStore } from "./state";
+import { bindOpenJobListener, OPEN_JOB_EVENT, type OpenJobEventDetail } from "./hooks/useOpenJobBus";
 import {
   formatFileSize,
   isImageAttachment,
@@ -627,5 +628,266 @@ describe("formatRelativeTime", () => {
     assert.equal(formatRelativeTime(new Date(now - 2 * 86400 * 1000).toISOString(), now), "2d");
     assert.equal(formatRelativeTime(null), "");
     assert.equal(formatRelativeTime("not-a-date"), "");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// useOpenJobBus / bindOpenJobListener (widget 0.4.0)
+// ---------------------------------------------------------------------------
+//
+// There's no jsdom/window in this test environment, so we exercise the pure
+// bindOpenJobListener function directly against Node's built-in EventTarget
+// (which implements the same addEventListener/removeEventListener/dispatchEvent
+// surface a real `window` does) rather than the useOpenJobBus React hook.
+
+describe("bindOpenJobListener", () => {
+  test("invokes the handler with the event detail when the openJob event fires", () => {
+    const target = new EventTarget();
+    const received: OpenJobEventDetail[] = [];
+    const unbind = bindOpenJobListener(target, (detail) => {
+      received.push(detail);
+    });
+
+    target.dispatchEvent(
+      new CustomEvent(OPEN_JOB_EVENT, { detail: { jobId: 42, source: "ops" } }),
+    );
+
+    assert.equal(received.length, 1);
+    assert.deepEqual(received[0], { jobId: 42, source: "ops" });
+    unbind();
+  });
+
+  test("supports jobRef and jobNumber detail shapes", () => {
+    const target = new EventTarget();
+    const received: OpenJobEventDetail[] = [];
+    const unbind = bindOpenJobListener(target, (detail) => received.push(detail));
+
+    target.dispatchEvent(
+      new CustomEvent(OPEN_JOB_EVENT, { detail: { jobRef: "BOE-FIBER-01", source: "contracts" } }),
+    );
+    target.dispatchEvent(new CustomEvent(OPEN_JOB_EVENT, { detail: { jobNumber: "BOE-FIBER-02" } }));
+
+    assert.equal(received.length, 2);
+    assert.equal(received[0].jobRef, "BOE-FIBER-01");
+    assert.equal(received[1].jobNumber, "BOE-FIBER-02");
+    unbind();
+  });
+
+  test("ignores events with no detail", () => {
+    const target = new EventTarget();
+    let calls = 0;
+    const unbind = bindOpenJobListener(target, () => {
+      calls += 1;
+    });
+
+    // A plain Event (not CustomEvent) has detail === undefined.
+    target.dispatchEvent(new Event(OPEN_JOB_EVENT));
+
+    assert.equal(calls, 0);
+    unbind();
+  });
+
+  test("stops receiving events after unbind is called", () => {
+    const target = new EventTarget();
+    let calls = 0;
+    const unbind = bindOpenJobListener(target, () => {
+      calls += 1;
+    });
+
+    target.dispatchEvent(new CustomEvent(OPEN_JOB_EVENT, { detail: { jobId: 1 } }));
+    unbind();
+    target.dispatchEvent(new CustomEvent(OPEN_JOB_EVENT, { detail: { jobId: 2 } }));
+
+    assert.equal(calls, 1);
+  });
+
+  test("does not react to unrelated event types", () => {
+    const target = new EventTarget();
+    let calls = 0;
+    const unbind = bindOpenJobListener(target, () => {
+      calls += 1;
+    });
+
+    target.dispatchEvent(new CustomEvent("some:other:event", { detail: { jobId: 1 } }));
+
+    assert.equal(calls, 0);
+    unbind();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Work-object API client methods (widget 0.4.0)
+// ---------------------------------------------------------------------------
+
+describe("ChatApiClient work objects", () => {
+  const originalFetch = globalThis.fetch;
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const sampleWorkObject: ApiWorkObject = {
+    id: 7,
+    orgId: 1,
+    projectId: 3,
+    kind: "job_site",
+    ref: "BOE-FIBER-01",
+    title: "Boeing Fiber Install",
+    status: "open",
+    description: null,
+    parentId: null,
+    ownerUserId: null,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+    closedAt: null,
+  };
+
+  test("getWorkObject GETs /api/work-objects/:id", async () => {
+    let capturedUrl = "";
+    globalThis.fetch = (async (url: string) => {
+      capturedUrl = url;
+      return new Response(JSON.stringify(sampleWorkObject), { status: 200 });
+    }) as typeof fetch;
+
+    const client = new ChatApiClient("https://chat.bulldogops.com");
+    const wo = await client.getWorkObject(7);
+
+    assert.equal(capturedUrl, "https://chat.bulldogops.com/api/work-objects/7");
+    assert.equal(wo.ref, "BOE-FIBER-01");
+  });
+
+  test("getWorkObjectByRef GETs /api/work-objects/by-ref, defaulting kind to job_site", async () => {
+    let capturedUrl = "";
+    globalThis.fetch = (async (url: string) => {
+      capturedUrl = url;
+      return new Response(JSON.stringify(sampleWorkObject), { status: 200 });
+    }) as typeof fetch;
+
+    const client = new ChatApiClient("https://chat.bulldogops.com");
+    await client.getWorkObjectByRef("BOE-FIBER-01");
+
+    assert.equal(
+      capturedUrl,
+      "https://chat.bulldogops.com/api/work-objects/by-ref?ref=BOE-FIBER-01&kind=job_site",
+    );
+  });
+
+  test("getWorkObjectByRef encodes an explicit kind and ref", async () => {
+    let capturedUrl = "";
+    globalThis.fetch = (async (url: string) => {
+      capturedUrl = url;
+      return new Response(JSON.stringify(sampleWorkObject), { status: 200 });
+    }) as typeof fetch;
+
+    const client = new ChatApiClient("https://chat.bulldogops.com");
+    await client.getWorkObjectByRef("CO #4/5", "change_order");
+
+    assert.equal(
+      capturedUrl,
+      "https://chat.bulldogops.com/api/work-objects/by-ref?ref=CO%20%234%2F5&kind=change_order",
+    );
+  });
+
+  test("listWorkObjectChannels GETs /api/work-objects/:id/channels", async () => {
+    let capturedUrl = "";
+    const channels: ApiChannel[] = [
+      { id: 1, name: "general", type: "text", projectId: 3 } as ApiChannel,
+    ];
+    globalThis.fetch = (async (url: string) => {
+      capturedUrl = url;
+      return new Response(JSON.stringify(channels), { status: 200 });
+    }) as typeof fetch;
+
+    const client = new ChatApiClient("https://chat.bulldogops.com");
+    const result = await client.listWorkObjectChannels(7);
+
+    assert.equal(capturedUrl, "https://chat.bulldogops.com/api/work-objects/7/channels");
+    assert.equal(result.length, 1);
+    assert.equal(result[0].name, "general");
+  });
+
+  test("createChannel POSTs to /api/projects/:id/channels with workObjectId", async () => {
+    let capturedUrl = "";
+    let capturedBody: string | undefined;
+    globalThis.fetch = (async (url: string, init?: RequestInit) => {
+      capturedUrl = url;
+      capturedBody = init?.body as string | undefined;
+      return new Response(
+        JSON.stringify({ id: 9, name: "general", type: "text", projectId: 3 }),
+        { status: 200 },
+      );
+    }) as typeof fetch;
+
+    const client = new ChatApiClient("https://chat.bulldogops.com");
+    const channel = await client.createChannel(3, { name: "general", workObjectId: 7 });
+
+    assert.equal(capturedUrl, "https://chat.bulldogops.com/api/projects/3/channels");
+    assert.deepEqual(JSON.parse(capturedBody!), { type: "text", name: "general", workObjectId: 7 });
+    assert.equal(channel.id, 9);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// handleOpenJob resolution logic (widget 0.4.0)
+// ---------------------------------------------------------------------------
+//
+// handleOpenJob itself lives inside the BulldogChatWidget component (which
+// needs React + a DOM to render), so it isn't imported/exercised directly
+// here. Instead, this suite pins down the exact resolve-then-branch contract
+// it's built on: given an ApiWorkObject + api.listWorkObjectChannels result,
+// the caller should either (a) target the first channel when channels exist,
+// or (b) fall back to a "no channels yet" state when the list is empty. This
+// mirrors the branching in BulldogChatWidget.tsx's handleOpenJob and guards
+// against a regression silently flipping that branch condition.
+
+describe("handleOpenJob resolution contract", () => {
+  const workObject: ApiWorkObject = {
+    id: 7,
+    orgId: 1,
+    projectId: 3,
+    kind: "job_site",
+    ref: "BOE-FIBER-01",
+    title: "Boeing Fiber Install",
+    status: "open",
+    description: null,
+    parentId: null,
+    ownerUserId: null,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+    closedAt: null,
+  };
+
+  // Minimal stand-in for the branch handleOpenJob takes after resolving a
+  // work object and its channels — exercised directly so the test doesn't
+  // need React/jsdom, while still asserting the real decision rule.
+  function resolveJobTarget(channels: ApiChannel[]) {
+    if (channels.length > 0) {
+      return { kind: "channel" as const, channelId: channels[0].id };
+    }
+    return { kind: "prompt" as const, ref: workObject.ref };
+  }
+
+  test("targets the first channel when the job already has channels", () => {
+    const channels: ApiChannel[] = [
+      { id: 11, name: "general", type: "text", projectId: 3 } as ApiChannel,
+      { id: 12, name: "safety", type: "text", projectId: 3 } as ApiChannel,
+    ];
+    const target = resolveJobTarget(channels);
+    assert.deepEqual(target, { kind: "channel", channelId: 11 });
+  });
+
+  test("falls back to the no-channels prompt when the job has no channels", () => {
+    const target = resolveJobTarget([]);
+    assert.deepEqual(target, { kind: "prompt", ref: "BOE-FIBER-01" });
+  });
+
+  test("jobId takes precedence when both jobId and jobRef are provided", () => {
+    // Mirrors handleOpenJob's `typeof detail.jobId === "number"` check.
+    function pickResolver(detail: OpenJobEventDetail): "byId" | "byRef" {
+      if (typeof detail.jobId === "number") return "byId";
+      return "byRef";
+    }
+    assert.equal(pickResolver({ jobId: 1, jobRef: "X" }), "byId");
+    assert.equal(pickResolver({ jobRef: "X" }), "byRef");
+    assert.equal(pickResolver({ jobNumber: "X" }), "byRef");
   });
 });

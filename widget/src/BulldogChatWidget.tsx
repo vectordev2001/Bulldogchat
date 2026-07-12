@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   ChatApiClient,
   type ApiAttachment,
@@ -8,12 +8,14 @@ import {
   type ApiProject,
   type ApiReaction,
   type ApiUser,
+  type ApiWorkObject,
 } from "./api";
 import { useWidgetStore, type ConversationRef } from "./state";
 import { ChatSyncBridge } from "./sync";
 import { useMiniChatSse } from "./hooks/useMiniChatSse";
 import { useRingtone, playMentionChime, type RingMode } from "./hooks/useRingtone";
 import { useBrowserNotifications } from "./hooks/useBrowserNotifications";
+import { useOpenJobBus, type OpenJobEventDetail } from "./hooks/useOpenJobBus";
 import {
   formatFileSize,
   hasOwnReaction,
@@ -39,6 +41,9 @@ export interface BulldogChatWidgetProps {
   apiBaseUrl: string;
   /** Optional: hide the widget entirely (e.g. host app knows user is logged out). */
   hidden?: boolean;
+  /** Optional: URL to open in a new tab when the pop-out button is clicked.
+   * Defaults to apiBaseUrl, since the Chat app IS the full chat experience. */
+  chatAppUrl?: string;
 }
 
 const MOBILE_BREAKPOINT = 768;
@@ -55,10 +60,13 @@ function useIsMobile() {
   return isMobile;
 }
 
-export function BulldogChatWidget({ apiBaseUrl, hidden }: BulldogChatWidgetProps) {
+export function BulldogChatWidget({ apiBaseUrl, hidden, chatAppUrl }: BulldogChatWidgetProps) {
   const api = useMemo(() => new ChatApiClient(apiBaseUrl), [apiBaseUrl]);
   const sync = useMemo(() => new ChatSyncBridge(), []);
   const isMobile = useIsMobile();
+  // Expand-to-fullscreen (widget 0.4.0). Hidden on mobile, where the panel is
+  // already fullscreen via the existing isMobile CSS path.
+  const [expanded, setExpanded] = useState(false);
 
   const open = useWidgetStore((s) => s.open);
   const setOpen = useWidgetStore((s) => s.setOpen);
@@ -652,6 +660,98 @@ export function BulldogChatWidget({ apiBaseUrl, hidden }: BulldogChatWidgetProps
     setIncomingCall(null);
   };
 
+  // ── Cross-app openJob bus (widget 0.4.0) ────────────────────────────────────
+  // bulldog-ops / bulldog-contracts dispatch `bulldog:widget:openJob` on
+  // window when the user clicks a "Chat about this job" trigger. We resolve
+  // the job, jump straight to its first channel, or — if it has none yet —
+  // surface a lightweight "create #general" prompt.
+  const [pendingJobPrompt, setPendingJobPrompt] = useState<{
+    workObject: ApiWorkObject;
+    creating: boolean;
+    error?: string;
+  } | null>(null);
+
+  const handleOpenJob = useCallback(async (detail: OpenJobEventDetail) => {
+    setOpen(true);
+    try {
+      // Resolve the work object.
+      let wo: ApiWorkObject | null = null;
+      if (typeof detail.jobId === "number") {
+        wo = await api.getWorkObject(detail.jobId);
+      } else {
+        const ref = detail.jobRef ?? detail.jobNumber;
+        if (!ref) throw new Error("openJob requires jobId, jobRef, or jobNumber");
+        wo = await api.getWorkObjectByRef(ref);
+      }
+      if (!wo) throw new Error("Job not found");
+
+      // Find channels attached to this job.
+      const channels = await api.listWorkObjectChannels(wo.id);
+      if (channels.length > 0) {
+        // Activate the first channel (order comes from listChannelsForWorkObject).
+        setActiveTab("channels");
+        setSidebarOpen(false); // focus on the message list, not the sidebar
+        setActiveConversation({ kind: "channel", id: channels[0].id });
+        setPendingJobPrompt(null);
+      } else {
+        // Nothing yet — surface the create prompt.
+        setPendingJobPrompt({ workObject: wo, creating: false });
+      }
+    } catch (err) {
+      console.error("[widget] openJob failed:", err, "source:", detail.source);
+      setPendingJobPrompt(null);
+      // Best-effort: leave the widget open with whatever conversation was active.
+    }
+  }, [api, setOpen, setActiveTab, setSidebarOpen, setActiveConversation]);
+
+  useOpenJobBus(handleOpenJob);
+
+  const handleCreateJobChannel = async () => {
+    if (!pendingJobPrompt || pendingJobPrompt.creating) return;
+    const { workObject } = pendingJobPrompt;
+    if (workObject.projectId == null) {
+      setPendingJobPrompt({
+        ...pendingJobPrompt,
+        error: "This job isn't attached to a company yet — create the channel from Chat directly.",
+      });
+      return;
+    }
+    setPendingJobPrompt({ ...pendingJobPrompt, creating: true, error: undefined });
+    try {
+      await api.createChannel(workObject.projectId, {
+        name: "general",
+        type: "text",
+        workObjectId: workObject.id,
+      });
+      const channels = await api.listWorkObjectChannels(workObject.id);
+      if (channels.length > 0) {
+        setActiveTab("channels");
+        setSidebarOpen(false);
+        setActiveConversation({ kind: "channel", id: channels[0].id });
+      }
+      setPendingJobPrompt(null);
+      refreshProjectChannels(workObject.projectId);
+    } catch (err) {
+      const msg = (err as { message?: string })?.message ?? "Failed to create channel";
+      setPendingJobPrompt({ ...pendingJobPrompt, creating: false, error: msg });
+    }
+  };
+
+  // Refresh a single project's channel list in channelsByProject (used after
+  // creating a job channel so the sidebar picks it up without a full reload).
+  const refreshProjectChannels = async (projectId: number) => {
+    try {
+      const channels = await api.listProjectChannels(projectId);
+      setChannelsByProject((prev) => {
+        const next = new Map(prev);
+        next.set(projectId, channels);
+        return next;
+      });
+    } catch {
+      /* best-effort */
+    }
+  };
+
   if (hidden) return null;
 
   const userById = new Map(members.map((u) => [u.id, u]));
@@ -676,13 +776,16 @@ export function BulldogChatWidget({ apiBaseUrl, hidden }: BulldogChatWidgetProps
     ? "In call"
     : "Select a conversation";
 
-  const panelSizeClass = isMobile
+  // Expand-to-fullscreen (widget 0.4.0): when toggled, the panel takes over
+  // the same "fixed inset-0" CSS path the mobile breakpoint already uses, so
+  // there's no new layout code to maintain — just an extra condition.
+  const panelSizeClass = isMobile || expanded
     ? "bcw-fixed bcw-inset-0 bcw-w-full bcw-h-full bcw-rounded-none"
     : "bcw-w-[360px] bcw-h-[480px] bcw-rounded-xl";
 
   // Panel position: clamp so it doesn't go off-screen
   const panelRight = Math.max(8, pillPosition.right - 8);
-  const panelBottom = isMobile ? 0 : Math.max(8, pillPosition.bottom + 64);
+  const panelBottom = isMobile || expanded ? 0 : Math.max(8, pillPosition.bottom + 64);
 
   return (
     <div
@@ -721,7 +824,7 @@ export function BulldogChatWidget({ apiBaseUrl, hidden }: BulldogChatWidgetProps
       {open && (
         <div
           className={`bcw-bg-bcw-navy bcw-shadow-bcw-panel bcw-flex bcw-flex-col bcw-overflow-hidden bcw-border bcw-border-black/30 ${panelSizeClass}`}
-          style={isMobile ? {} : { position: "fixed", right: panelRight, bottom: panelBottom }}
+          style={isMobile || expanded ? {} : { position: "fixed", right: panelRight, bottom: panelBottom }}
           data-testid="bulldog-chat-widget-panel"
         >
           {/* ── Incoming call banner ── */}
@@ -787,6 +890,33 @@ export function BulldogChatWidget({ apiBaseUrl, hidden }: BulldogChatWidgetProps
               </button>
             )}
 
+            {/* Expand-to-fullscreen — hidden on mobile, where the panel is
+                already fullscreen. */}
+            {!isMobile && (
+              <button
+                type="button"
+                onClick={() => setExpanded((v) => !v)}
+                className="bcw-p-1.5 bcw-rounded hover:bcw-bg-bcw-navy-light bcw-text-white/70 hover:bcw-text-white"
+                aria-label={expanded ? "Restore" : "Expand to fullscreen"}
+                title={expanded ? "Restore" : "Expand to fullscreen"}
+                data-testid="bulldog-chat-widget-expand"
+              >
+                {expanded ? <CollapseIcon /> : <ExpandIcon />}
+              </button>
+            )}
+
+            {/* Pop-out — opens the full Chat app in a new tab. */}
+            <button
+              type="button"
+              onClick={() => window.open(chatAppUrl ?? apiBaseUrl, "_blank", "noopener,noreferrer")}
+              className="bcw-p-1.5 bcw-rounded hover:bcw-bg-bcw-navy-light bcw-text-white/70 hover:bcw-text-white"
+              aria-label="Open in Chat"
+              title="Open in Chat"
+              data-testid="bulldog-chat-widget-popout"
+            >
+              <PopOutIcon />
+            </button>
+
             <button
               type="button"
               onClick={() => setOpen(false)}
@@ -834,6 +964,46 @@ export function BulldogChatWidget({ apiBaseUrl, hidden }: BulldogChatWidgetProps
 
           {/* ── Body ── */}
           <div className="bcw-flex-1 bcw-flex bcw-min-h-0 bcw-relative">
+            {/* "No channels yet" prompt — surfaced by the openJob bus (widget
+                0.4.0) when a resolved job has no channels attached. Sits above
+                the sidebar and message list so it's the first thing the user
+                sees after opening the widget from a job trigger. */}
+            {pendingJobPrompt && (
+              <div
+                className="bcw-absolute bcw-inset-0 bcw-z-30 bcw-flex bcw-items-center bcw-justify-center bcw-bg-bcw-navy/95 bcw-p-4"
+                data-testid="bulldog-chat-widget-job-prompt"
+              >
+                <div className="bcw-max-w-[280px] bcw-text-center bcw-space-y-3">
+                  <p className="bcw-text-sm bcw-text-white/90">
+                    No channels yet for job{" "}
+                    <span className="bcw-font-semibold">{pendingJobPrompt.workObject.ref}</span>
+                  </p>
+                  {pendingJobPrompt.error && (
+                    <p className="bcw-text-xs bcw-text-red-300" data-testid="bulldog-chat-widget-job-prompt-error">
+                      {pendingJobPrompt.error}
+                    </p>
+                  )}
+                  <button
+                    type="button"
+                    onClick={handleCreateJobChannel}
+                    disabled={pendingJobPrompt.creating}
+                    className="bcw-w-full bcw-px-3 bcw-py-1.5 bcw-rounded-md bcw-bg-bcw-red bcw-text-white bcw-text-xs bcw-font-semibold disabled:bcw-opacity-50"
+                    data-testid="bulldog-chat-widget-job-prompt-create"
+                  >
+                    {pendingJobPrompt.creating ? "Creating…" : "Create #general channel"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPendingJobPrompt(null)}
+                    className="bcw-w-full bcw-px-3 bcw-py-1.5 bcw-rounded-md bcw-bg-bcw-navy-light bcw-text-white/80 bcw-text-xs bcw-font-medium"
+                    data-testid="bulldog-chat-widget-job-prompt-cancel"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+
             {sidebarOpen && (
               <div className="bcw-absolute bcw-inset-y-0 bcw-left-0 bcw-w-52 bcw-bg-[hsl(220,60%,9%)] bcw-border-r bcw-border-black/40 bcw-flex bcw-flex-col bcw-z-10">
                 {/* Tab strip: DMs vs group Channels. The chosen tab is persisted
@@ -1441,6 +1611,38 @@ function MinimizeIcon() {
   return (
     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
       <path d="M6 12h12" />
+    </svg>
+  );
+}
+// Two diagonal arrows pointing outward — "expand to fullscreen".
+function ExpandIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M8 3H5a2 2 0 00-2 2v3" />
+      <path d="M16 3h3a2 2 0 012 2v3" />
+      <path d="M16 21h3a2 2 0 002-2v-3" />
+      <path d="M8 21H5a2 2 0 01-2-2v-3" />
+    </svg>
+  );
+}
+// Two diagonal arrows pointing inward — "restore" from fullscreen.
+function CollapseIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M9 3v4a2 2 0 01-2 2H3" />
+      <path d="M15 3v4a2 2 0 002 2h4" />
+      <path d="M15 21v-4a2 2 0 012-2h4" />
+      <path d="M9 21v-4a2 2 0 00-2-2H3" />
+    </svg>
+  );
+}
+// Arrow escaping a box — "open in a new tab / pop out".
+function PopOutIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6" />
+      <path d="M15 3h6v6" />
+      <path d="M10 14L21 3" />
     </svg>
   );
 }
