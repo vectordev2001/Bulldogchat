@@ -2,7 +2,7 @@
 // directly by the test suite (no jsdom/RTL is wired up, so anything that needs
 // a unit test lives here as a plain function rather than inside a component).
 
-import type { ApiAttachment, ApiMention, ApiReaction, ApiUser } from "./api";
+import type { ApiAttachment, ApiChannel, ApiDmChannel, ApiMention, ApiReaction, ApiUser } from "./api";
 
 /** Human-readable file size (B / KB / MB) for the attachment file card. */
 export function formatFileSize(bytes: number): string {
@@ -201,6 +201,83 @@ export function formatRelativeTime(iso: string | null | undefined, now: number =
   if (hours < 24) return `${hours}h`;
   const days = Math.floor(hours / 24);
   return `${days}d`;
+}
+
+// ── Call target picker (widget 0.4.1) ───────────────────────────────────────
+
+/** A single row in the "who do you want to call?" picker. */
+export interface CallTarget {
+  user: ApiUser;
+  /** true when this user is the other participant of the currently-active
+   * DM — used to pre-select / pin them at the top of the list. */
+  isActiveDmOther: boolean;
+}
+
+/** Build the deduplicated, self-excluded list of people the current user can
+ * call: everyone from their DM list, plus everyone from channel membership
+ * data (when available). Order: the active DM's other participant first (if
+ * any, per the "two-click call" shortcut), then the rest in the order
+ * encountered — DMs before channel members.
+ *
+ * `channelMembers` is optional because this build of the client only loads
+ * channel rosters if a project/channel API exposes memberIds directly. When
+ * it's absent, `orgMembers` (already loaded for the whole widget) supplies
+ * everyone else the user could reach via a shared channel. */
+export function buildCallableUsers(
+  meId: number | null | undefined,
+  userById: Map<number, ApiUser>,
+  dms: ApiDmChannel[],
+  orgMembers: ApiUser[],
+  channelMembers?: ApiChannel[],
+  activeDmId?: number | null,
+): CallTarget[] {
+  const activeDm = activeDmId != null ? dms.find((d) => d.id === activeDmId) : undefined;
+  const activeDmOtherId = activeDm && meId != null
+    ? activeDm.memberIds.find((id) => id !== meId)
+    : undefined;
+
+  const seen = new Set<number>();
+  const ordered: number[] = [];
+
+  const add = (id: number) => {
+    if (id === meId) return; // exclude self
+    if (seen.has(id)) return;
+    seen.add(id);
+    ordered.push(id);
+  };
+
+  // Pin the active DM's other participant first, if any.
+  if (activeDmOtherId != null) add(activeDmOtherId);
+
+  // Everyone from the user's DM list.
+  for (const dm of dms) {
+    for (const id of dm.memberIds) add(id);
+  }
+
+  // Everyone reachable via channel membership. Channels in this client don't
+  // always carry memberIds; when they do, fold them in too.
+  for (const ch of channelMembers ?? []) {
+    for (const id of (ch as ApiDmChannel).memberIds ?? []) add(id);
+  }
+
+  // Fall back to / augment with the org-wide member list, which represents
+  // everyone the user shares a channel with in this deployment.
+  for (const u of orgMembers) add(u.id);
+
+  return ordered
+    .map((id) => userById.get(id) ?? orgMembers.find((u) => u.id === id))
+    .filter((u): u is ApiUser => Boolean(u))
+    .map((user) => ({ user, isActiveDmOther: user.id === activeDmOtherId }));
+}
+
+/** Case-insensitive substring filter over a callable-users list, applied to
+ * the picker's search box. Empty/whitespace query returns the list as-is. */
+export function filterCallTargets(targets: CallTarget[], query: string): CallTarget[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return targets;
+  return targets.filter(
+    (t) => t.user.name.toLowerCase().includes(q) || t.user.email.toLowerCase().includes(q),
+  );
 }
 
 // ── Typing indicator ─────────────────────────────────────────────────────────

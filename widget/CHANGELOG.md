@@ -2,6 +2,33 @@
 
 All notable changes to `@vectordev2001/chat-widget` are documented here.
 
+## 0.4.1
+
+The header call button is now always visible instead of only appearing while
+a 1:1 DM is active — clicking it opens a small "who do you want to call?"
+picker instead of always calling the current DM's other participant. Patch
+bump: no breaking API changes, same `api.startCall(userId, "video")` call on
+the wire.
+
+- The call button (`data-testid="bulldog-chat-widget-call-btn"`) shows
+  whenever the widget panel is open and there's no active call — no longer
+  gated on `activeDm`. It's reachable even before any conversation is
+  selected.
+- Clicking it opens a floating popover (`bulldog-chat-widget-call-btn-picker`)
+  listing everyone callable: the user's DMs plus everyone reachable via
+  channel membership, deduplicated and with the caller excluded. Longer
+  lists get a text filter; a fresh account with nobody to call shows an
+  empty state ("No one to call yet").
+- If a 1:1 DM is the active conversation when the picker opens, that DM's
+  other participant is pinned at the top of the list (a two-click call is
+  still fast) — selecting them is still an explicit click, not an
+  auto-call.
+- Selecting a row dispatches the same `api.startCall(userId, "video")` call
+  the old DM-only button used; no server changes.
+- New pure helpers in `format.ts`: `buildCallableUsers` (dedup + self-excl +
+  DM-shortcut ordering) and `filterCallTargets` (case-insensitive name/email
+  filter), both covered by new tests.
+
 ## 0.4.0
 
 Expand-to-fullscreen, pop-out, and a cross-app job bus so bulldog-ops and
