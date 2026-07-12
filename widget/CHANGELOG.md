@@ -2,6 +2,41 @@
 
 All notable changes to `@vectordev2001/chat-widget` are documented here.
 
+## 0.4.2
+
+In-call device picker: a gear icon in the call controls opens a small popover
+to choose camera, microphone, and speaker, applied immediately and persisted
+across calls. Patch bump: additive UI, no breaking API changes.
+
+- New gear button (`data-testid="bulldog-chat-widget-device-gear"`) sits in
+  `CallRoomInner`'s controls bar next to the mic/camera toggles. Clicking it
+  opens an upward-anchored popover (`bulldog-chat-widget-device-menu`) with
+  three native `<select>` dropdowns — Camera, Microphone, Speaker
+  (`bulldog-chat-widget-device-select-camera|mic|speaker`) — closable via
+  outside click or ESC and fully keyboard-operable.
+- Camera and microphone selections apply immediately via LiveKit's
+  `room.switchActiveDevice("videoinput" | "audioinput", deviceId)` (reached
+  through `@livekit/components-react`'s `useRoomContext()` — in the installed
+  livekit-client this method lives on the `Room` instance rather than
+  `LocalParticipant`). Speaker selection calls `.setSinkId(deviceId)` on the
+  `<audio>` elements rendered by `RoomAudioRenderer`, re-applied via a
+  `MutationObserver` as remote participants join.
+- `setSinkId` is Chromium/Edge only today (partial in Safari macOS 13+, absent
+  in Firefox). When unsupported, the Speaker dropdown is disabled with a
+  "Speaker selection not supported in this browser." tooltip instead of
+  silently no-op'ing.
+- Device lists come from `navigator.mediaDevices.enumerateDevices()`, refreshed
+  on the `devicechange` event; devices with no label yet (permission not
+  granted) show as "Device N".
+- New `useDevicePreferences` hook persists the chosen deviceIds to
+  localStorage under `bulldog-chat-widget:devicePrefs` — `{ videoInput?,
+  audioInput?, audioOutput? }` — and re-applies them once after connecting to
+  a new call. A stored deviceId that no longer exists in the current
+  enumeration is dropped back to system default rather than erroring.
+- Preserves PR #101's audio primitives (`RoomAudioRenderer`, `StartAudio`,
+  `useRingtone`) and 0.4.1's always-visible call button + call-target picker
+  untouched.
+
 ## 0.4.1
 
 The header call button is now always visible instead of only appearing while

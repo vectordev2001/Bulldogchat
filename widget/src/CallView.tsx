@@ -1,8 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   LiveKitRoom,
   useParticipants,
   useLocalParticipant,
+  useRoomContext,
   VideoTrack,
   useTracks,
   RoomAudioRenderer,
@@ -11,6 +12,8 @@ import {
 import { Track } from "livekit-client";
 import type { ActiveCall } from "./state";
 import type { ChatApiClient } from "./api";
+import { useDevicePreferences, applyDevicePrefs } from "./hooks/useDevicePreferences";
+import { DeviceSettingsMenu, DeviceGearButton } from "./DeviceSettingsMenu";
 
 // ── CallView ──────────────────────────────────────────────────────────────────
 // Compact video call panel that renders inside the widget.
@@ -55,8 +58,16 @@ export function CallView({ call, api, onCallEnded }: CallViewProps) {
 function CallRoomInner({ onEnd, ending }: { onEnd: () => void; ending: boolean }) {
   const participants = useParticipants();
   const { localParticipant } = useLocalParticipant();
+  // switchActiveDevice lives on the Room instance (not LocalParticipant) in
+  // the installed livekit-client — grab it via components-react's room
+  // context so the device picker can call room.switchActiveDevice(kind, id).
+  const room = useRoomContext();
   const [micOn, setMicOn] = useState(true);
   const [camOn, setCamOn] = useState(true);
+  const [deviceMenuOpen, setDeviceMenuOpen] = useState(false);
+  const gearButtonRef = useRef<HTMLButtonElement>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const { prefs, update: updateDevicePrefs } = useDevicePreferences();
 
   const cameraTracks = useTracks([{ source: Track.Source.Camera, withPlaceholder: true }]);
   const screenTracks = useTracks([{ source: Track.Source.ScreenShare, withPlaceholder: false }]);
@@ -74,6 +85,67 @@ function CallRoomInner({ onEnd, ending }: { onEnd: () => void; ending: boolean }
       .catch((err) => console.warn("[widget] enable mic failed", err));
   }, [localParticipant]);
 
+  // Initial application of persisted device prefs once the room is connected.
+  // Camera/mic go through LiveKit's switchActiveDevice; speaker (setSinkId)
+  // is handled separately below since it targets <audio> elements, not the
+  // LocalParticipant.
+  useEffect(() => {
+    if (!room) return;
+    applyDevicePrefs(prefs, room);
+    // Only run once per connect — re-applying on every prefs change would
+    // fight with the user actively picking a new device in the menu, which
+    // already calls switchActiveDevice directly (see handleSelect* below).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [room]);
+
+  // Speaker (setSinkId) application: LiveKit's RoomAudioRenderer renders
+  // <audio> elements as a side effect of remote participants publishing
+  // audio, so we can't grab them at mount time — query for them whenever the
+  // preference changes or the DOM under this component mutates (a remote
+  // participant joining adds a new <audio> element that also needs the sink
+  // applied), and re-query on devicechange.
+  const applySinkId = (deviceId: string | undefined) => {
+    if (!deviceId || !rootRef.current) return;
+    const audioEls = rootRef.current.querySelectorAll("audio");
+    audioEls.forEach((el) => {
+      const withSink = el as HTMLAudioElement & { setSinkId?: (id: string) => Promise<void> };
+      if (typeof withSink.setSinkId === "function") {
+        withSink.setSinkId(deviceId).catch((err) => console.warn("[widget] setSinkId failed", err));
+      }
+    });
+  };
+
+  useEffect(() => {
+    if (!rootRef.current) return;
+    applySinkId(prefs.audioOutput);
+    const observer = new MutationObserver(() => applySinkId(prefs.audioOutput));
+    observer.observe(rootRef.current, { childList: true, subtree: true });
+    return () => observer.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prefs.audioOutput]);
+
+  // setSinkId is Chromium/Edge only today; Firefox and Safari (macOS 13+
+  // partial) lack it. Detect support once so the Speaker dropdown can be
+  // disabled with an explanatory tooltip instead of silently no-op'ing.
+  const [speakerSupported] = useState(() => {
+    if (typeof document === "undefined") return false;
+    const probe = document.createElement("audio") as HTMLAudioElement & { setSinkId?: unknown };
+    return typeof probe.setSinkId === "function";
+  });
+
+  const handleSelectCamera = (deviceId: string) => {
+    updateDevicePrefs({ videoInput: deviceId || undefined });
+    if (deviceId) void room.switchActiveDevice("videoinput", deviceId);
+  };
+  const handleSelectMic = (deviceId: string) => {
+    updateDevicePrefs({ audioInput: deviceId || undefined });
+    if (deviceId) void room.switchActiveDevice("audioinput", deviceId);
+  };
+  const handleSelectSpeaker = (deviceId: string) => {
+    updateDevicePrefs({ audioOutput: deviceId || undefined });
+    applySinkId(deviceId || undefined);
+  };
+
   const toggleMic = async () => {
     await localParticipant.setMicrophoneEnabled(!micOn);
     setMicOn((v) => !v);
@@ -85,7 +157,7 @@ function CallRoomInner({ onEnd, ending }: { onEnd: () => void; ending: boolean }
   };
 
   return (
-    <div className="bcw-flex bcw-flex-col bcw-flex-1 bcw-min-h-0">
+    <div ref={rootRef} className="bcw-flex bcw-flex-col bcw-flex-1 bcw-min-h-0">
       {/* Video tile grid — max 4 tiles, 2-col */}
       <div
         className="bcw-flex-1 bcw-grid bcw-gap-1 bcw-p-1.5 bcw-min-h-0"
@@ -132,13 +204,28 @@ function CallRoomInner({ onEnd, ending }: { onEnd: () => void; ending: boolean }
       />
 
       {/* Controls */}
-      <div className="bcw-h-12 bcw-flex bcw-items-center bcw-justify-center bcw-gap-3 bcw-border-t bcw-border-black/40 bcw-shrink-0 bcw-bg-[hsl(220,60%,8%)]">
+      <div className="bcw-relative bcw-h-12 bcw-flex bcw-items-center bcw-justify-center bcw-gap-3 bcw-border-t bcw-border-black/40 bcw-shrink-0 bcw-bg-[hsl(220,60%,8%)]">
         <CallControlBtn active={micOn} onClick={toggleMic} title={micOn ? "Mute mic" : "Unmute mic"}>
           {micOn ? <MicOnIcon /> : <MicOffIcon />}
         </CallControlBtn>
         <CallControlBtn active={camOn} onClick={toggleCam} title={camOn ? "Stop camera" : "Start camera"}>
           {camOn ? <CamOnIcon /> : <CamOffIcon />}
         </CallControlBtn>
+        <DeviceGearButton
+          active={deviceMenuOpen}
+          onClick={() => setDeviceMenuOpen((v) => !v)}
+          buttonRef={gearButtonRef}
+        />
+        <DeviceSettingsMenu
+          open={deviceMenuOpen}
+          onClose={() => setDeviceMenuOpen(false)}
+          anchorRef={gearButtonRef}
+          prefs={prefs}
+          onSelectCamera={handleSelectCamera}
+          onSelectMic={handleSelectMic}
+          onSelectSpeaker={handleSelectSpeaker}
+          speakerSupported={speakerSupported}
+        />
         <button
           type="button"
           onClick={onEnd}
