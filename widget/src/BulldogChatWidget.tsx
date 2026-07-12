@@ -17,6 +17,8 @@ import { useRingtone, playMentionChime, type RingMode } from "./hooks/useRington
 import { useBrowserNotifications } from "./hooks/useBrowserNotifications";
 import { useOpenJobBus, type OpenJobEventDetail } from "./hooks/useOpenJobBus";
 import {
+  buildCallableUsers,
+  filterCallTargets,
   formatFileSize,
   hasOwnReaction,
   isImageAttachment,
@@ -29,6 +31,7 @@ import {
   reactionToggleAction,
   REACTION_EMOJIS,
   threadChipLabel,
+  type CallTarget,
 } from "./format";
 import { CallView } from "./CallView";
 
@@ -109,6 +112,11 @@ export function BulldogChatWidget({ apiBaseUrl, hidden, chatAppUrl }: BulldogCha
   const [threadSending, setThreadSending] = useState(false);
   const [startingCall, setStartingCall] = useState(false);
   const [callError, setCallError] = useState<string | null>(null);
+  // Call target picker (widget 0.4.1): the call button is always visible in
+  // the header now, so clicking it opens a small popover of callable people
+  // instead of immediately calling the active DM's other participant.
+  const [callPickerOpen, setCallPickerOpen] = useState(false);
+  const [callPickerFilter, setCallPickerFilter] = useState("");
 
   // Pagination bookkeeping. Refs (not state) so the SSE / scroll callbacks read
   // fresh values without being re-created every render:
@@ -622,11 +630,13 @@ export function BulldogChatWidget({ apiBaseUrl, hidden, chatAppUrl }: BulldogCha
     }
   };
 
-  // ── Start a 1:1 video call ────────────────────────────────────────────────
-  const handleStartCall = async () => {
-    if (!activeDm || !me || startingCall) return;
-    const calleeId = activeDm.memberIds.find((id) => id !== me.id);
-    if (!calleeId) return;
+  // ── Start a video call ───────────────────────────────────────────────────
+  // `calleeId` is explicit now that the call button always opens a picker
+  // (widget 0.4.1) rather than only ever calling the active DM's other
+  // participant. Picker rows pass their own userId; nothing else changes.
+  const handleStartCall = async (calleeId: number) => {
+    if (!me || startingCall) return;
+    if (calleeId === me.id) return; // can't call yourself
     setStartingCall(true);
     setCallError(null);
     try {
@@ -640,6 +650,13 @@ export function BulldogChatWidget({ apiBaseUrl, hidden, chatAppUrl }: BulldogCha
     } finally {
       setStartingCall(false);
     }
+  };
+
+  // Selecting a row in the call target picker: place the call and close it.
+  const handleSelectCallTarget = async (userId: number) => {
+    setCallPickerOpen(false);
+    setCallPickerFilter("");
+    await handleStartCall(userId);
   };
 
   // ── Accept / decline incoming call ───────────────────────────────────────
@@ -776,6 +793,19 @@ export function BulldogChatWidget({ apiBaseUrl, hidden, chatAppUrl }: BulldogCha
     ? "In call"
     : "Select a conversation";
 
+  // Call target picker (widget 0.4.1): everyone from DMs + channel members,
+  // deduped and self-excluded, with the active DM's other participant (if
+  // any) pinned first for the two-click call shortcut.
+  const callableUsers = buildCallableUsers(
+    me?.id,
+    userById,
+    dms,
+    members,
+    [...channelsByProject.values()].flat(),
+    activeDm?.id ?? null,
+  );
+  const filteredCallableUsers = filterCallTargets(callableUsers, callPickerFilter);
+
   // Expand-to-fullscreen (widget 0.4.0): when toggled, the panel takes over
   // the same "fixed inset-0" CSS path the mobile breakpoint already uses, so
   // there's no new layout code to maintain — just an extra condition.
@@ -875,19 +905,20 @@ export function BulldogChatWidget({ apiBaseUrl, hidden, chatAppUrl }: BulldogCha
               </span>
             </div>
 
-            {/* Video call button — only when in a DM and not already on a call */}
-            {activeDm && !activeCall && (
-              <button
-                type="button"
-                onClick={handleStartCall}
+            {/* Video call button — always visible in the header while the
+                panel is open and not already on a call (widget 0.4.1).
+                Clicking it opens a picker of callable people instead of
+                immediately dialing, since there may be no active DM. */}
+            {!activeCall && (
+              <CallTargetPicker
+                open={callPickerOpen}
+                onOpenChange={setCallPickerOpen}
+                targets={filteredCallableUsers}
+                filter={callPickerFilter}
+                onFilterChange={setCallPickerFilter}
+                onSelect={handleSelectCallTarget}
                 disabled={startingCall}
-                className="bcw-p-1.5 bcw-rounded hover:bcw-bg-bcw-navy-light bcw-text-white/70 hover:bcw-text-white disabled:bcw-opacity-40"
-                aria-label="Start video call"
-                title="Start video call"
-                data-testid="bulldog-chat-widget-call-btn"
-              >
-                <VideoCallIcon />
-              </button>
+              />
             )}
 
             {/* Expand-to-fullscreen — hidden on mobile, where the panel is
@@ -1426,6 +1457,110 @@ function ReactionAdder({ onPick }: { onPick: (emoji: string) => void }) {
               {emoji}
             </button>
           ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// The always-visible header call button (widget 0.4.1). Clicking it opens a
+// small floating popover listing everyone the user can call — their DMs plus
+// everyone reachable via channel membership, deduped, with themselves shown
+// disabled. Closes on outside click and on ESC, same pattern as ReactionAdder
+// above. Kept inline (no new files) per the spec.
+function CallTargetPicker({
+  open,
+  onOpenChange,
+  targets,
+  filter,
+  onFilterChange,
+  onSelect,
+  disabled,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  targets: CallTarget[];
+  filter: string;
+  onFilterChange: (value: string) => void;
+  onSelect: (userId: number) => void;
+  disabled?: boolean;
+}) {
+  const wrapRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) onOpenChange(false);
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onOpenChange(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open, onOpenChange]);
+
+  // Long lists get a text filter per the spec; a handful of people don't need
+  // one, so it only renders once the unfiltered list crosses this threshold.
+  const showFilter = targets.length > 6 || filter.length > 0;
+
+  return (
+    <div className="bcw-relative" ref={wrapRef}>
+      <button
+        type="button"
+        onClick={() => onOpenChange(!open)}
+        disabled={disabled}
+        className="bcw-p-1.5 bcw-rounded hover:bcw-bg-bcw-navy-light bcw-text-white/70 hover:bcw-text-white disabled:bcw-opacity-40"
+        aria-label="Start a call"
+        title="Start a call"
+        data-testid="bulldog-chat-widget-call-btn"
+      >
+        <VideoCallIcon />
+      </button>
+      {open && (
+        <div
+          className="bcw-absolute bcw-right-0 bcw-top-full bcw-mt-1 bcw-z-20 bcw-w-56 bcw-max-h-64 bcw-flex bcw-flex-col bcw-rounded-md bcw-bg-[hsl(220,60%,9%)] bcw-border bcw-border-black/40 bcw-shadow-bcw-panel bcw-overflow-hidden"
+          data-testid="bulldog-chat-widget-call-btn-picker"
+        >
+          {showFilter && (
+            <input
+              type="text"
+              value={filter}
+              onChange={(e) => onFilterChange(e.target.value)}
+              placeholder="Search people…"
+              autoFocus
+              className="bcw-m-1.5 bcw-px-2 bcw-py-1 bcw-rounded bcw-bg-bcw-navy-light bcw-text-white bcw-text-xs bcw-placeholder-white/40 bcw-outline-none"
+              data-testid="bulldog-chat-widget-call-btn-picker-filter"
+            />
+          )}
+          <div className="bcw-flex-1 bcw-overflow-y-auto bcw-pb-1">
+            {targets.length === 0 ? (
+              <div className="bcw-px-3 bcw-py-3 bcw-text-xs bcw-text-white/60" data-testid="bulldog-chat-widget-call-btn-picker-empty">
+                No one to call yet
+              </div>
+            ) : (
+              targets.map(({ user, isActiveDmOther }) => (
+                <button
+                  key={user.id}
+                  type="button"
+                  onClick={() => onSelect(user.id)}
+                  className={`bcw-w-full bcw-text-left bcw-px-3 bcw-py-1.5 bcw-text-xs bcw-flex bcw-items-center bcw-gap-1.5 hover:bcw-bg-bcw-navy-light ${
+                    isActiveDmOther ? "bcw-bg-bcw-navy-light/60 bcw-text-white" : "bcw-text-white/80"
+                  }`}
+                  data-testid={`bulldog-chat-widget-call-target-${user.id}`}
+                >
+                  <span
+                    className={`bcw-w-2 bcw-h-2 bcw-rounded-full bcw-shrink-0 ${presenceDotClass(user.presence)}`}
+                    title={presenceLabel(user.presence)}
+                  />
+                  <span className="bcw-truncate">{user.name}</span>
+                </button>
+              ))
+            )}
+          </div>
         </div>
       )}
     </div>

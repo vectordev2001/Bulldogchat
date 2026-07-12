@@ -27,7 +27,10 @@ import {
   threadChipLabel,
   formatRelativeTime,
   typingLabel,
+  buildCallableUsers,
+  filterCallTargets,
 } from "./format";
+import type { ApiDmChannel } from "./api";
 
 // ---------------------------------------------------------------------------
 // ChatApiClient
@@ -889,5 +892,138 @@ describe("handleOpenJob resolution contract", () => {
     assert.equal(pickResolver({ jobId: 1, jobRef: "X" }), "byId");
     assert.equal(pickResolver({ jobRef: "X" }), "byRef");
     assert.equal(pickResolver({ jobNumber: "X" }), "byRef");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Call target picker (widget 0.4.1) — always-visible call button
+// ---------------------------------------------------------------------------
+
+describe("call target picker", () => {
+  const me: ApiUser = { id: 1, name: "Me", email: "me@example.com" };
+  const alice: ApiUser = { id: 2, name: "Alice", email: "alice@example.com", presence: "online" };
+  const bob: ApiUser = { id: 3, name: "Bob", email: "bob@example.com", presence: "away" };
+  const carol: ApiUser = { id: 4, name: "Carol", email: "carol@example.com", presence: "offline" };
+
+  const userById = new Map<number, ApiUser>([
+    [me.id, me],
+    [alice.id, alice],
+    [bob.id, bob],
+    [carol.id, carol],
+  ]);
+
+  const dmWithAlice: ApiDmChannel = {
+    id: 10,
+    projectId: 0,
+    name: "dm-2",
+    type: "dm",
+    topic: null,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    memberIds: [me.id, alice.id],
+  };
+  const dmWithBob: ApiDmChannel = {
+    id: 11,
+    projectId: 0,
+    name: "dm-3",
+    type: "dm",
+    topic: null,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    memberIds: [me.id, bob.id],
+  };
+
+  test("builds the callable list from DMs + channel members, deduped and excluding self", () => {
+    // Bob appears in both a DM and (redundantly) the org/channel roster;
+    // Carol only ever shows up via the org roster (channel membership).
+    const targets = buildCallableUsers(
+      me.id,
+      userById,
+      [dmWithAlice, dmWithBob],
+      [me, alice, bob, carol], // orgMembers stands in for channel-derived members
+    );
+
+    const ids = targets.map((t) => t.user.id);
+    // Self must never appear.
+    assert.ok(!ids.includes(me.id));
+    // Everyone else appears exactly once each, despite Bob/Alice being
+    // reachable via both the DM list and the org/channel roster.
+    assert.deepEqual([...ids].sort(), [alice.id, bob.id, carol.id].sort());
+    assert.equal(ids.length, new Set(ids).size, "no duplicate rows");
+  });
+
+  test("pins the active DM's other participant first (two-click call shortcut)", () => {
+    const targets = buildCallableUsers(
+      me.id,
+      userById,
+      [dmWithAlice, dmWithBob],
+      [me, alice, bob, carol],
+      undefined,
+      dmWithBob.id,
+    );
+    assert.equal(targets[0].user.id, bob.id);
+    assert.equal(targets[0].isActiveDmOther, true);
+    assert.ok(targets.slice(1).every((t) => !t.isActiveDmOther));
+  });
+
+  test("returns an empty list when there are no DMs or channel members (fresh account)", () => {
+    const targets = buildCallableUsers(me.id, new Map([[me.id, me]]), [], [me]);
+    assert.deepEqual(targets, []);
+  });
+
+  test("filterCallTargets matches name or email, case-insensitively", () => {
+    const targets = buildCallableUsers(me.id, userById, [dmWithAlice, dmWithBob], [me, alice, bob, carol]);
+    const byName = filterCallTargets(targets, "ali");
+    assert.deepEqual(byName.map((t) => t.user.id), [alice.id]);
+
+    const byEmail = filterCallTargets(targets, "CAROL@EXAMPLE");
+    assert.deepEqual(byEmail.map((t) => t.user.id), [carol.id]);
+
+    const empty = filterCallTargets(targets, "nobody");
+    assert.deepEqual(empty, []);
+
+    const unfiltered = filterCallTargets(targets, "   ");
+    assert.equal(unfiltered.length, targets.length);
+  });
+
+  test("clicking a picker row calls api.startCall(userId, video) and sets activeCall", async () => {
+    const originalFetch = globalThis.fetch;
+    let capturedUrl = "";
+    let capturedBody: string | undefined;
+    globalThis.fetch = (async (url: string, init?: RequestInit) => {
+      capturedUrl = url;
+      capturedBody = init?.body as string | undefined;
+      return new Response(
+        JSON.stringify({ callId: 99, roomName: "room-99", token: "tok", ws_url: "wss://livekit.example/room-99" }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }) as typeof fetch;
+
+    const client = new ChatApiClient("https://chat.bulldogops.com");
+
+    // Mirrors handleSelectCallTarget: picker close + startCall + setActiveCall,
+    // exercised directly since there's no jsdom/RTL to click a real button.
+    useWidgetStore.getState().setActiveCall(null);
+    async function selectCallTarget(userId: number) {
+      const session = await client.startCall(userId, "video");
+      useWidgetStore.getState().setActiveCall({
+        callId: session.callId,
+        roomName: session.roomName,
+        token: session.token,
+        wsUrl: session.ws_url,
+      });
+    }
+
+    await selectCallTarget(bob.id);
+
+    assert.equal(capturedUrl, "https://chat.bulldogops.com/api/calls/start");
+    assert.deepEqual(JSON.parse(capturedBody!), { calleeId: bob.id, kind: "video" });
+    assert.deepEqual(useWidgetStore.getState().activeCall, {
+      callId: 99,
+      roomName: "room-99",
+      token: "tok",
+      wsUrl: "wss://livekit.example/room-99",
+    });
+
+    useWidgetStore.getState().setActiveCall(null);
+    globalThis.fetch = originalFetch;
   });
 });
