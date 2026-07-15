@@ -112,6 +112,11 @@ export function BulldogChatWidget({ apiBaseUrl, hidden, chatAppUrl }: BulldogCha
   const [threadSending, setThreadSending] = useState(false);
   const [startingCall, setStartingCall] = useState(false);
   const [callError, setCallError] = useState<string | null>(null);
+  // Set when any Chat API call returns 401 — vc_token cookie expired or was
+  // cleared. We surface a Sign in to Chat action rather than the raw
+  // "Invalid token" server message. Cleared when the widget re-verifies auth
+  // on tab focus (see visibility effect below).
+  const [sessionExpired, setSessionExpired] = useState(false);
   // Call target picker (widget 0.4.1): the call button is always visible in
   // the header now, so clicking it opens a small popover of callable people
   // instead of immediately calling the active DM's other participant.
@@ -214,6 +219,29 @@ export function BulldogChatWidget({ apiBaseUrl, hidden, chatAppUrl }: BulldogCha
     })();
     return () => { cancelled = true; };
   }, [api]);
+
+  // Re-check auth whenever the tab becomes visible again. If the user re-auths
+  // at chat.bulldogops.com in another tab, the shared .bulldogops.com cookie
+  // will now verify — clear the session-expired banner. Also fires on window
+  // focus to catch the case where the user returns without a visibility change
+  // (e.g. clicked the widget after re-auth completed in a background tab).
+  useEffect(() => {
+    if (!sessionExpired) return;
+    const revalidate = async () => {
+      if (document.visibilityState !== "visible") return;
+      const ok = await api.isAuthenticated();
+      if (ok) {
+        setSessionExpired(false);
+        setAuthed(true);
+      }
+    };
+    document.addEventListener("visibilitychange", revalidate);
+    window.addEventListener("focus", revalidate);
+    return () => {
+      document.removeEventListener("visibilitychange", revalidate);
+      window.removeEventListener("focus", revalidate);
+    };
+  }, [api, sessionExpired]);
 
   // ?joinCall=<id> — when the widget is mounted on Contracts/Ops after the user
   // clicked "Pop Out" on an active Chat call, auto-join that call immediately.
@@ -643,10 +671,21 @@ export function BulldogChatWidget({ apiBaseUrl, hidden, chatAppUrl }: BulldogCha
       const session = await api.startCall(calleeId, "video");
       setActiveCall({ callId: session.callId, roomName: session.roomName, token: session.token, wsUrl: session.ws_url });
     } catch (err) {
-      const msg = (err as { message?: string })?.message ?? "Call failed";
+      const status = (err as { status?: number })?.status;
+      const rawMsg = (err as { message?: string })?.message ?? "Call failed";
       console.warn("[widget] startCall failed", err);
-      setCallError(msg);
-      setTimeout(() => setCallError(null), 4000);
+      // 401 = expired/invalid vc_token. Rather than show "Invalid token" (which
+      // means nothing to a user), flip the widget into a "session expired"
+      // state that surfaces a Sign in to Chat action. The banner clears
+      // automatically when the user re-auths in the other tab (via focus /
+      // visibility handler below).
+      if (status === 401) {
+        setSessionExpired(true);
+        setCallError(null);
+      } else {
+        setCallError(rawMsg);
+        setTimeout(() => setCallError(null), 4000);
+      }
     } finally {
       setStartingCall(false);
     }
@@ -969,8 +1008,28 @@ export function BulldogChatWidget({ apiBaseUrl, hidden, chatAppUrl }: BulldogCha
             </button>
           </header>
 
-          {/* ── Call error banner ── */}
-          {callError && (
+          {/* ── Session-expired banner ── */}
+          {/* Shown when any Chat request returns 401. Gives the user a
+              one-click way to re-auth in a new tab — the cookie is shared
+              (.bulldogops.com), so once they log back in and refocus this
+              tab we clear the banner automatically. */}
+          {sessionExpired && (
+            <div className="bcw-px-3 bcw-py-2 bcw-bg-red-900/80 bcw-border-b bcw-border-red-700/50 bcw-shrink-0 bcw-flex bcw-items-center bcw-justify-between bcw-gap-2">
+              <span className="bcw-text-xs bcw-text-red-100">Your chat session expired.</span>
+              <a
+                href="https://chat.bulldogops.com/login"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="bcw-text-[11px] bcw-font-semibold bcw-px-2 bcw-py-1 bcw-rounded-full bcw-bg-white/90 bcw-text-red-900 hover:bcw-bg-white bcw-transition-colors"
+                data-testid="bulldog-chat-widget-signin"
+              >
+                Sign in to Chat
+              </a>
+            </div>
+          )}
+
+          {/* ── Call error banner (non-auth failures) ── */}
+          {callError && !sessionExpired && (
             <div className="bcw-px-3 bcw-py-1.5 bcw-bg-red-900/80 bcw-border-b bcw-border-red-700/50 bcw-shrink-0">
               <span className="bcw-text-xs bcw-text-red-200">{callError}</span>
             </div>
