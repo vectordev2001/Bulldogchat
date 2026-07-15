@@ -26,7 +26,9 @@ const LIMITS = {
 };
 
 // Total ceiling across the three shipped artifacts (js + cjs + css).
-const TOTAL_LIMIT = 130 * 1024;
+// Raised from 130 to 132 in 0.4.3 to accommodate the session-expired banner
+// + revalidation effect (net +~300 bytes across index.js/index.cjs).
+const TOTAL_LIMIT = 132 * 1024;
 
 let total = 0;
 let failed = false;
