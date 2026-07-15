@@ -1,6 +1,6 @@
 {
   "name": "@vectordev2001/chat-widget",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "description": "Cross-app floating mini-chat widget for Bulldog Contracts/Ops. Mounts a collapsed draggable pill that expands into a DM/channel panel with video calls backed by the same Bulldogchat API + SSE stream.",
   "type": "module",
   "main": "dist/index.cjs",
