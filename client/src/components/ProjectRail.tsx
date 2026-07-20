@@ -249,8 +249,22 @@ function ProjectPill({
         {project.short}
       </span>
 
+      {/*
+         Numeric unread badge. Kept solid-red on a dark ring so it stays
+         legible on any pill background (unselected pills are near-navy,
+         selected pills carry a project-hue gradient). `tabular-nums`
+         locks the digit width so "1", "12", and "99+" don't jitter as
+         messages arrive. Hidden entirely when the count is zero so an
+         all-caught-up company shows no chrome at all.
+       */}
       {unread > 0 && !active && (
-        <span className="absolute -bottom-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-vs-red text-white text-[10px] font-bold flex items-center justify-center ring-2 ring-[hsl(220_60%_9%)]">
+        <span
+          className="absolute -bottom-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full text-white text-[11px] font-bold leading-none flex items-center justify-center ring-2 ring-[hsl(220_60%_9%)] shadow-md tabular-nums"
+          style={{ backgroundColor: "#ff3b30" /* Apple system red */ }}
+          data-testid={`badge-unread-count-${project.id}`}
+          title={`${unread} unread — right-click to mark all read`}
+          aria-label={`${unread} unread`}
+        >
           {unread > 99 ? "99+" : unread}
         </span>
       )}
@@ -260,15 +274,20 @@ function ProjectPill({
          signal (new chat or missed call), regardless of whether it's
          also the active company. That way the star is a stable at-a-glance
          indicator on the rail even for the pill you're currently viewing
-         (it clears once the channel is marked read). Uses vs-amber so it
-         doesn't clash with the red numeric badge above.
+         (it clears once the channel is marked read). We also hide the
+         star when a numeric badge would sit right next to it AND that
+         badge already conveys the same signal — avoids a two-icon
+         overlap on the pill. The star still shines on the currently-
+         active pill (where the numeric badge is suppressed) and on any
+         company whose only unread signal is a missed call (chat=0, so
+         we still want a visual cue but not necessarily a "1").
        */}
-      {hasUnread && (
+      {hasUnread && !(unread > 0 && !active) && (
         <span
-          className="absolute -top-1 -right-1 w-4 h-4 flex items-center justify-center rounded-full bg-[hsl(220_60%_9%)] ring-2 ring-[hsl(220_60%_9%)]"
+          className="absolute -top-1 -right-1 w-4 h-4 flex items-center justify-center rounded-full bg-[hsl(220_60%_9%)] ring-2 ring-[hsl(220_60%_9%)] shadow-md"
           data-testid={`badge-unread-star-${project.id}`}
-          title="New activity"
-          aria-label="New activity"
+          title={`${project.name} — new activity`}
+          aria-label={`${project.name} — new activity`}
         >
           <Star className="w-3 h-3 text-vs-amber fill-vs-amber" />
         </span>

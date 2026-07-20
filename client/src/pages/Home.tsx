@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -289,6 +289,19 @@ export default function Home() {
 
   // SSE: invalidate messages on relevant events. New DM messages also kick
   // the DM list query so the sender re-sorts to the top of the section.
+  //
+  // Refs used inside the SSE handler. The onMessageNew closure is captured
+  // once by useSSE, so reading React state directly here would freeze it at
+  // the mount-time value and leave the auto-mark-read logic looking at a
+  // stale active channel forever. Refs let us read the live values without
+  // re-subscribing the SSE connection on every state change.
+  const activeChannelIdRef = useRef<number | null>(null);
+  const activeDmIdRef = useRef<number | null>(null);
+  const meIdRef = useRef<number | null>(null);
+  useEffect(() => { activeChannelIdRef.current = activeChannelId; }, [activeChannelId]);
+  useEffect(() => { activeDmIdRef.current = activeDmId; }, [activeDmId]);
+  useEffect(() => { meIdRef.current = (user as ApiUser)?.id ?? null; }, [user]);
+
   const sseStatus = useSSE(!!user, {
     onMessageNew: (data) => {
       if (data?.channelId) {
@@ -296,6 +309,27 @@ export default function Home() {
         // Cheap: always poke the DM list. The server returns 0 rows for
         // users who aren't in any DM channel, so the cost is negligible.
         queryClient.invalidateQueries({ queryKey: ["/api/dms"] });
+
+        // Auto-mark-read when the arriving message lands in the channel or
+        // DM the user is CURRENTLY viewing AND the tab is visible. Without
+        // this, opening a channel only clears the pre-existing backlog and
+        // any new messages sent by teammates while you're actively reading
+        // stay counted forever — that's the "stuck badge" bug on the
+        // company rail. Skips messages the user sent themselves (their own
+        // sends never contribute to their unread count anyway).
+        const activeCid = activeChannelIdRef.current;
+        const activeDid = activeDmIdRef.current;
+        const meId = meIdRef.current;
+        const isVisible = typeof document === "undefined" || document.visibilityState === "visible";
+        const isMine = meId != null && data?.userId === meId;
+        const inViewChannel = activeCid != null && data.channelId === activeCid && !activeDid;
+        const inViewDm = activeDid != null && data.channelId === activeDid;
+        if (isVisible && !isMine && (inViewChannel || inViewDm)) {
+          // Fire and forget — the unread hook will optimistically drop the
+          // channel's count and refetch the server rollup shortly after.
+          markChannelRead(data.channelId);
+        }
+
         // Nudge the unread hook so the star-badge rail refreshes. Debounced
         // inside the hook so a burst of messages collapses to one HTTP
         // call.
@@ -366,6 +400,22 @@ export default function Home() {
       queryClient.invalidateQueries({ queryKey: ["/api/dms"] });
     },
   });
+
+  // When the tab regains focus AND the user has a channel or DM open,
+  // advance the read receipt to whatever tip landed while they were away.
+  // Same reasoning as the SSE auto-mark-read above: this makes sure the
+  // company rail's star and count badges reflect the fact that the user
+  // has clearly seen everything up to now.
+  useEffect(() => {
+    if (!user) return;
+    const onVis = () => {
+      if (document.visibilityState !== "visible") return;
+      const cid = activeDmIdRef.current ?? activeChannelIdRef.current;
+      if (cid && cid > 0) markChannelRead(cid);
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, [user, markChannelRead]);
 
   const selectProject = (id: number) => {
     setActiveProjectId(id);
