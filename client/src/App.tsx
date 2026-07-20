@@ -20,6 +20,7 @@ import { PresenceProvider } from "@/hooks/use-presence";
 import { CallProvider } from "@/lib/CallContext";
 import { CallOverlays } from "@/components/CallOverlays";
 import { IosInstallBanner } from "@/components/IosInstallBanner";
+import BogeyBubble from "@/components/BogeyBubble";
 import { useEffect } from "react";
 import { Loader2 } from "lucide-react";
 import { VectorLogo } from "@/components/VectorLogo";
@@ -103,6 +104,11 @@ function App() {
             <MeetingProvider>
               <Router hook={useHashLocation}>
                 <AppRouter />
+                {/* Bogey — Bulldog Suite AI. Renders as a floating bubble on
+                    every eligible page. The component gates its own
+                    visibility (managers + admins only) and hides itself on
+                    auth screens and inside active meetings. */}
+                <BogeyBubble />
               </Router>
             </MeetingProvider>
             <CallOverlays />

@@ -5,6 +5,7 @@ import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { syncDeactivatedFromAuth } from "./users-sync";
 import { createServer } from "node:http";
+import { recordBogeyDiagnostic } from "./bogey-storage";
 
 const app = express();
 // Behind Render's TLS-terminating reverse proxy. Honor X-Forwarded-* so
@@ -112,11 +113,29 @@ app.use((req, res, next) => {
 (async () => {
   await registerRoutes(httpServer, app);
 
-  app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
+  app.use((err: any, req: Request, res: Response, next: NextFunction) => {
     const status = err.status || err.statusCode || 500;
     const message = err.message || "Internal Server Error";
 
     console.error("Internal Server Error:", err);
+
+    // Record diagnostic so Bogey's Help Desk can surface it when the user
+    // says "X is broken". Scoped to the requesting user when we know them;
+    // otherwise userId=0 so admins can still see it. Fire-and-forget —
+    // recordBogeyDiagnostic never throws.
+    if (status >= 400 && req.path.startsWith("/api")) {
+      const sessionUser = (req as any).user?.id ?? (req as any).session?.userId ?? 0;
+      const stackHead = String(err?.stack || "").split("\n").slice(0, 4).join("\n");
+      recordBogeyDiagnostic({
+        userId: typeof sessionUser === "number" ? sessionUser : 0,
+        severity: status >= 500 ? "error" : "warn",
+        app: "chat",
+        code: err.code || `http_${status}`,
+        summary: message.slice(0, 500),
+        path: `${req.method} ${req.path}`,
+        context: { status, stackHead },
+      });
+    }
 
     if (res.headersSent) {
       return next(err);
