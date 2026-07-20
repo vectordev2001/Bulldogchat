@@ -1410,4 +1410,69 @@ export function runMigrations() {
   } catch (e: any) {
     console.warn("[migrate v35] channels.title add skipped:", e?.message);
   }
+
+  // v36 (Bogey — Bulldog Suite AI in Chat). Four tables that back the Bogey
+  // bubble: conversations, messages, approval-gated proposals, and diagnostic
+  // events (last-24h errors for the Help Desk). Kept close to the shape used
+  // in bulldog-contracts so a future shared bulldog-suite package can dedupe.
+  try {
+    rawDb.exec(`
+      CREATE TABLE IF NOT EXISTS bogey_conversations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        org_id INTEGER NOT NULL,
+        title TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_bogey_conversations_user_updated
+        ON bogey_conversations (user_id, updated_at DESC);
+
+      CREATE TABLE IF NOT EXISTS bogey_messages (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        conversation_id INTEGER NOT NULL,
+        role TEXT NOT NULL,
+        content_json TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_bogey_messages_conv_created
+        ON bogey_messages (conversation_id, created_at ASC);
+
+      CREATE TABLE IF NOT EXISTS bogey_proposals (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        conversation_id INTEGER NOT NULL,
+        kind TEXT NOT NULL,
+        status TEXT NOT NULL,
+        payload_json TEXT NOT NULL,
+        summary TEXT NOT NULL,
+        reason TEXT,
+        expires_at INTEGER NOT NULL,
+        resolved_at INTEGER,
+        error_message TEXT,
+        created_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_bogey_proposals_user_status
+        ON bogey_proposals (user_id, status, created_at DESC);
+
+      CREATE TABLE IF NOT EXISTS bogey_diagnostic_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        severity TEXT NOT NULL,
+        app TEXT NOT NULL,
+        code TEXT NOT NULL,
+        summary TEXT NOT NULL,
+        path TEXT,
+        context_json TEXT,
+        created_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_bogey_diag_user_created
+        ON bogey_diagnostic_events (user_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_bogey_diag_created
+        ON bogey_diagnostic_events (created_at DESC);
+    `);
+    console.log("[migrate] v36 ensured bogey_* tables");
+  } catch (e: any) {
+    console.warn("[migrate v36] bogey tables skipped:", e?.message);
+  }
 }

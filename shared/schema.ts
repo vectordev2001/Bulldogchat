@@ -1091,3 +1091,68 @@ export const sendMessageSchema = z.object({
 export const reactionSchema = z.object({
   emoji: z.string().min(1).max(32),
 });
+
+/* ─────────────────── BOGEY (Bulldog Suite AI in Chat) ─────────────────── */
+// Kept close to bulldog-contracts' shape so a future shared bulldog-suite
+// package can dedupe. Any drift here has to be justified inline.
+
+export const BOGEY_PROPOSAL_KINDS = ["schedule_meeting"] as const;
+export type BogeyProposalKind = (typeof BOGEY_PROPOSAL_KINDS)[number];
+
+export const bogeyConversations = sqliteTable("bogey_conversations", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  userId: integer("user_id").notNull(),
+  orgId: integer("org_id").notNull(),
+  title: text("title"),
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+});
+
+export const bogeyMessages = sqliteTable("bogey_messages", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  conversationId: integer("conversation_id").notNull(),
+  role: text("role").notNull(), // "user" | "assistant" | "tool"
+  contentJson: text("content_json").notNull(), // JSON: array of content blocks
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+});
+
+export const bogeyProposals = sqliteTable("bogey_proposals", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  userId: integer("user_id").notNull(),
+  conversationId: integer("conversation_id").notNull(),
+  kind: text("kind").notNull(), // BogeyProposalKind
+  status: text("status").notNull(), // "pending" | "approved" | "rejected" | "expired"
+  payloadJson: text("payload_json").notNull(),
+  summary: text("summary").notNull(),
+  reason: text("reason"),
+  expiresAt: integer("expires_at", { mode: "timestamp" }).notNull(),
+  resolvedAt: integer("resolved_at", { mode: "timestamp" }),
+  errorMessage: text("error_message"),
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+});
+
+export const bogeyDiagnosticEvents = sqliteTable("bogey_diagnostic_events", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  userId: integer("user_id").notNull(), // 0 = server-wide (no session)
+  severity: text("severity").notNull(), // "info" | "warn" | "error"
+  app: text("app").notNull(), // "chat"
+  code: text("code").notNull(),
+  summary: text("summary").notNull(),
+  path: text("path"),
+  contextJson: text("context_json"),
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+});
+
+export type BogeyConversation = typeof bogeyConversations.$inferSelect;
+export type BogeyMessage = typeof bogeyMessages.$inferSelect;
+export type BogeyProposal = typeof bogeyProposals.$inferSelect;
+export type BogeyDiagnosticEvent = typeof bogeyDiagnosticEvents.$inferSelect;
+
+// Zod schema for the /api/bogey/chat request body.
+export const bogeyMessageInputSchema = z.object({
+  message: z.string().min(1).max(4000),
+  pagePath: z.string().max(500).optional().nullable(),
+  pageContext: z.record(z.string()).optional().nullable(),
+  conversationId: z.number().int().positive().optional().nullable(),
+});
+export type BogeyMessageInput = z.infer<typeof bogeyMessageInputSchema>;

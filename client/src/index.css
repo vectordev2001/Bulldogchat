@@ -353,3 +353,420 @@
   }
   .call-ring-dot { animation: vs-call-ring-dot 1.2s ease-in-out infinite; }
 }
+/* ==========================================================================
+   Bogey chat bubble — floating Apple Aqua FAB + glass panel
+   ========================================================================== */
+
+.bogey-fab {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 60;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  color: #ffffff;
+  overflow: hidden;
+  isolation: isolate;
+  cursor: pointer;
+  transition: transform 180ms cubic-bezier(0.2, 0.9, 0.35, 1),
+              box-shadow 180ms cubic-bezier(0.2, 0.9, 0.35, 1);
+  background:
+    linear-gradient(180deg,
+      #4dc7ff 0%,
+      #1e93ff 45%,
+      #0f66d0 100%);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.65) inset,
+    0 -1px 0 rgba(255, 255, 255, 0.15) inset,
+    0 16px 32px -12px rgba(15, 102, 208, 0.55),
+    0 6px 12px -4px rgba(15, 102, 208, 0.35);
+}
+
+.bogey-fab:hover {
+  transform: translateY(-1px);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.65) inset,
+    0 -1px 0 rgba(255, 255, 255, 0.15) inset,
+    0 20px 36px -12px rgba(15, 102, 208, 0.6),
+    0 8px 14px -4px rgba(15, 102, 208, 0.4);
+}
+
+.bogey-fab:active {
+  transform: translateY(0);
+}
+
+.bogey-fab:focus-visible {
+  outline: 3px solid rgba(30, 147, 255, 0.45);
+  outline-offset: 3px;
+}
+
+.bogey-fab-gloss {
+  position: absolute;
+  inset: 1px 1px auto 1px;
+  height: 45%;
+  border-radius: 999px 999px 40% 40% / 999px 999px 100% 100%;
+  background: linear-gradient(180deg,
+    rgba(255, 255, 255, 0.55) 0%,
+    rgba(255, 255, 255, 0.15) 60%,
+    rgba(255, 255, 255, 0) 100%);
+  pointer-events: none;
+}
+
+.bogey-panel {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  width: min(380px, calc(100vw - 32px));
+  height: min(560px, calc(100vh - 48px));
+  border-radius: 20px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.98);
+  border: 1px solid rgba(226, 232, 240, 0.9);
+  box-shadow:
+    0 24px 48px -16px rgba(15, 102, 208, 0.28),
+    0 8px 24px -8px rgba(15, 23, 42, 0.15);
+  backdrop-filter: saturate(180%) blur(20px);
+}
+
+.bogey-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  color: #ffffff;
+  background:
+    linear-gradient(180deg,
+      #4dc7ff 0%,
+      #1e93ff 55%,
+      #0f66d0 100%);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.5) inset,
+    0 -1px 0 rgba(15, 102, 208, 0.4) inset;
+}
+
+.bogey-messages {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 14px;
+  background: linear-gradient(180deg,
+    rgba(240, 249, 255, 0.6) 0%,
+    rgba(255, 255, 255, 1) 30%);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.bogey-msg {
+  max-width: 88%;
+  padding: 10px 12px;
+  border-radius: 14px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+  word-break: break-word;
+}
+
+.bogey-msg-user {
+  align-self: flex-end;
+  color: #ffffff;
+  background:
+    linear-gradient(180deg,
+      #4dc7ff 0%,
+      #1e93ff 100%);
+  border-bottom-right-radius: 4px;
+}
+
+.bogey-msg-assistant {
+  align-self: flex-start;
+  color: #1f2937;
+  background: #ffffff;
+  border: 1px solid rgba(226, 232, 240, 0.9);
+  border-bottom-left-radius: 4px;
+}
+
+.bogey-input-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 10px;
+  border-top: 1px solid rgba(226, 232, 240, 0.9);
+  background: #ffffff;
+}
+
+.bogey-send {
+  height: 40px;
+  min-width: 40px;
+  padding: 0 12px;
+  border-radius: 12px;
+  color: #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  background:
+    linear-gradient(180deg,
+      #4dc7ff 0%,
+      #1e93ff 55%,
+      #0f66d0 100%);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.5) inset,
+    0 6px 12px -4px rgba(15, 102, 208, 0.4);
+}
+
+.bogey-send:hover:not(:disabled) {
+  filter: brightness(1.05);
+}
+
+.bogey-send:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Streaming caret — a thin blinking bar tacked onto the tail of an assistant
+   message while tokens are still arriving. */
+.bogey-caret {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 2px;
+  vertical-align: -0.15em;
+  background: currentColor;
+  opacity: 0.75;
+  animation: bogey-caret-blink 1s steps(2, start) infinite;
+}
+
+@keyframes bogey-caret-blink {
+  to {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bogey-caret {
+    animation: none;
+    opacity: 0.6;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Bogey proposal card — draft-to-action Approve/Dismiss card inside the chat.
+   Aqua look, transparent-ish background, DocuSign-simple layout. Buttons get
+   the same "pizzaz" gradient as .bogey-send.
+   --------------------------------------------------------------------------- */
+
+.bogey-proposal-card {
+  position: relative;
+  border-radius: 14px;
+  padding: 12px 12px 10px;
+  background:
+    linear-gradient(180deg,
+      rgba(240, 249, 255, 0.85) 0%,
+      rgba(219, 240, 255, 0.75) 100%);
+  border: 1px solid rgba(30, 147, 255, 0.35);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.7) inset,
+    0 4px 12px -6px rgba(15, 102, 208, 0.25);
+  overflow: hidden;
+}
+
+.bogey-proposal-card::before {
+  /* Subtle top glass highlight so it matches the aqua bubble family. */
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 40%;
+  background: linear-gradient(180deg,
+    rgba(255, 255, 255, 0.55) 0%,
+    rgba(255, 255, 255, 0) 100%);
+  pointer-events: none;
+}
+
+.bogey-proposal-header {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 8px;
+}
+
+.bogey-proposal-kind {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #0f66d0;
+}
+
+.bogey-proposal-summary {
+  font-size: 13px;
+  font-weight: 600;
+  color: #0b3a72;
+  line-height: 1.3;
+}
+
+.bogey-proposal-diff {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid rgba(30, 147, 255, 0.2);
+  margin-bottom: 8px;
+}
+
+.bogey-proposal-diff-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+}
+
+.bogey-proposal-diff-key {
+  font-weight: 600;
+  color: #1f2937;
+  font-size: 11px;
+}
+
+.bogey-proposal-diff-values {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  color: #374151;
+}
+
+.bogey-proposal-before {
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: rgba(248, 113, 113, 0.12);
+  color: #9f1239;
+  text-decoration: line-through;
+  text-decoration-color: rgba(159, 18, 57, 0.55);
+}
+
+.bogey-proposal-arrow {
+  color: #64748b;
+  font-weight: 600;
+}
+
+.bogey-proposal-after {
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: rgba(34, 197, 94, 0.12);
+  color: #14532d;
+  font-weight: 600;
+}
+
+.bogey-proposal-reason {
+  position: relative;
+  font-size: 12px;
+  color: #334155;
+  margin-bottom: 8px;
+  line-height: 1.35;
+}
+
+.bogey-proposal-reason-label {
+  font-weight: 600;
+  color: #0f66d0;
+}
+
+.bogey-proposal-error {
+  position: relative;
+  font-size: 12px;
+  color: #9f1239;
+  background: rgba(254, 226, 226, 0.7);
+  border: 1px solid rgba(248, 113, 113, 0.4);
+  border-radius: 8px;
+  padding: 6px 8px;
+  margin-bottom: 8px;
+}
+
+.bogey-proposal-actions {
+  position: relative;
+  display: flex;
+  gap: 8px;
+}
+
+.bogey-btn {
+  flex: 1;
+  height: 34px;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: filter 0.15s ease, transform 0.05s ease;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+}
+
+.bogey-btn:active {
+  transform: translateY(1px);
+}
+
+.bogey-btn-approve {
+  color: #ffffff;
+  background:
+    linear-gradient(180deg,
+      #4dc7ff 0%,
+      #1e93ff 55%,
+      #0f66d0 100%);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.5) inset,
+    0 6px 12px -4px rgba(15, 102, 208, 0.45);
+}
+
+.bogey-btn-approve:hover {
+  filter: brightness(1.05);
+}
+
+.bogey-btn-dismiss {
+  color: #0b3a72;
+  background:
+    linear-gradient(180deg,
+      rgba(255, 255, 255, 0.9) 0%,
+      rgba(226, 240, 255, 0.9) 100%);
+  border: 1px solid rgba(30, 147, 255, 0.35);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.9) inset;
+}
+
+.bogey-btn-dismiss:hover {
+  filter: brightness(0.98);
+}
+
+.bogey-proposal-resolved {
+  position: relative;
+  font-size: 12px;
+  font-weight: 600;
+  color: #0b3a72;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid rgba(30, 147, 255, 0.25);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.bogey-proposal-resolved-time {
+  font-weight: 400;
+  color: #475569;
+}
+
+.bogey-proposal-approved {
+  border-color: rgba(34, 197, 94, 0.45);
+}
+
+.bogey-proposal-rejected {
+  border-color: rgba(148, 163, 184, 0.5);
+  opacity: 0.85;
+}
+
+.bogey-proposal-expired {
+  border-color: rgba(148, 163, 184, 0.5);
+  opacity: 0.7;
+}

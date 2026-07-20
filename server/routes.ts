@@ -44,6 +44,7 @@ function escapeHtml(s: string): string {
 import { registerScheduledCallRoutes, startReminderLoop } from "./scheduled-calls";
 import { registerMeetingRoutes } from "./routes-meetings";
 import { registerTeamsLobbyRoutes } from "./routes-teams-lobby";
+import { registerBogeyChatRoutes } from "./bogey-chat-routes";
 import { createMeeting as createMeetingRow, linkExistingCallToMeeting, getMeetingById, getActiveHuddleForChannel, type CreateMeetingInput } from "./storage/meetings";
 import { syncDeactivatedFromAuth } from "./users-sync";
 import {
@@ -253,6 +254,7 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
   registerTeamsLobbyRoutes(app);
   registerScheduledCallRoutes(app);
   registerMeetingRoutes(app);
+  registerBogeyChatRoutes(app, requireAuth);
 
   // Clean public meeting URLs → SPA hash routes. The app uses wouter's
   // useHashLocation, so a bare https://chat.bulldogops.com/m/<code> would boot
