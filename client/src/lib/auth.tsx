@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useState, ReactNode, useCallback } from "react";
 import { apiRequest, setAuthToken as setQCToken, queryClient } from "./queryClient";
+import { publishAuthJwtToNative, clearAuthJwtOnNative } from "./push-bridge";
 
 export interface PublicUser {
   id: number;
@@ -51,6 +52,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (cancelled) return;
         setUser(res.user);
         setOrg(res.org);
+        // Session restored on boot — publish central JWT to native so APNs
+        // registration can complete without waiting for another login.
+        void publishAuthJwtToNative("chat");
       } catch {
         // not authenticated — fine
       } finally {
@@ -65,6 +69,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setToken(tok);
     setUser(u);
     setOrg(o);
+    // Publish the central Bulldog auth JWT to the native iOS shell so
+    // Swift can register this device against auth.bulldogops.com/api/devices.
+    // No-op in the browser. See lib/push-bridge.ts.
+    void publishAuthJwtToNative("chat");
   }, []);
 
   const login = useCallback(async (email: string, password: string) => {
@@ -92,6 +100,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null);
     setOrg(null);
     queryClient.clear();
+    // Tell native to drop the stored JWT so we won't retry APNs registration.
+    clearAuthJwtOnNative("chat");
   }, []);
 
   return (
