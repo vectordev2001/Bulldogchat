@@ -20,6 +20,41 @@
  */
 
 const AUTH_TOKEN_URL = "https://auth.bulldogops.com/api/auth/token";
+const DIAG_URL = "https://auth.bulldogops.com/api/ios-diag";
+
+/**
+ * Best-effort SPA-side diagnostic ping. Mirrors ios/App/App/ApnsRegistrar.swift's
+ * `diag()` — same endpoint, same shape — so we can see the browser-side branch
+ * as easily as the native-side branch in Render logs. Never throws, never blocks.
+ * Adds `spa=<slug>` to `extra` so entries are easy to grep.
+ */
+function spaDiag(event: string, appSlug: string, extra?: Record<string, unknown>): void {
+  try {
+    const body = {
+      event,
+      app: appSlug,
+      extra: JSON.stringify({ source: "spa", ...(extra ?? {}) }).slice(0, 200),
+    };
+    if (typeof navigator !== "undefined" && typeof navigator.sendBeacon === "function") {
+      const blob = new Blob([JSON.stringify(body)], { type: "application/json" });
+      navigator.sendBeacon(DIAG_URL, blob);
+      return;
+    }
+    void fetch(DIAG_URL, {
+      method: "POST",
+      keepalive: true,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } catch {
+    // ignore
+  }
+}
+
+function tail(s: string | null | undefined): string | undefined {
+  if (!s || s.length < 8) return s ?? undefined;
+  return s.slice(-8);
+}
 
 type BulldogBridge = {
   reportJwt?: (app: string, jwt: string) => void | Promise<void>;
@@ -48,6 +83,11 @@ export async function publishAuthJwtToNative(appSlug: string): Promise<void> {
     "hasBULLDOG=", typeof w.__BULLDOG__,
     "hasWebkit=", typeof w.webkit,
   );
+  spaDiag("spa.publishAuthJwtToNative.begin", appSlug, {
+    hasBridge: !!bridge,
+    hasBULLDOG: typeof w.__BULLDOG__,
+    hasWebkit: typeof w.webkit,
+  });
 
   // Fetch the central auth JWT. `credentials:include` sends the shared
   // `.bulldogops.com` bulldog_access cookie so auth can identify the user.
@@ -61,27 +101,36 @@ export async function publishAuthJwtToNative(appSlug: string): Promise<void> {
     });
     if (!res.ok) {
       console.warn("[push-bridge] auth /api/auth/token ->", res.status);
+      spaDiag("spa.authToken.notOk", appSlug, { httpStatus: res.status });
       return;
     }
     const json = (await res.json()) as { token?: string };
     token = json.token ?? null;
   } catch (err) {
     console.warn("[push-bridge] failed to fetch central auth JWT", err);
+    spaDiag("spa.authToken.fetchError", appSlug, { error: String(err).slice(0, 120) });
     return;
   }
   if (!token) {
     console.warn("[push-bridge] auth /api/auth/token returned no token");
+    spaDiag("spa.authToken.emptyToken", appSlug);
     return;
   }
   if (!bridge?.reportJwt) {
     console.info("[push-bridge] no native bridge — skipping (normal in browser)");
+    spaDiag("spa.publishAuthJwtToNative.noBridge", appSlug, {
+      jwtTail: tail(token),
+      hasBULLDOG: typeof w.__BULLDOG__,
+    });
     return;
   }
   try {
     await bridge.reportJwt(appSlug, token);
     console.info("[push-bridge] central JWT published to native bridge for", appSlug);
+    spaDiag("spa.publishAuthJwtToNative.called", appSlug, { jwtTail: tail(token) });
   } catch (err) {
     console.warn("[push-bridge] bridge.reportJwt threw", err);
+    spaDiag("spa.publishAuthJwtToNative.threw", appSlug, { error: String(err).slice(0, 120) });
   }
 }
 
