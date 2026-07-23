@@ -67,24 +67,53 @@ function getBridge(): BulldogBridge | null {
 }
 
 /**
+ * Wait up to ~10s for the native bridge to appear on window. On real device
+ * (iOS 1015+), the WKUserScript that installs __BULLDOG__ runs at
+ * .atDocumentStart, which normally beats React by a wide margin. But we've
+ * observed races in production where the SPA fires before the injection lands,
+ * so we poll for up to 10s (100ms intervals) with exponential backoff before
+ * conceding. Returns null in normal browsers where the bridge never appears.
+ */
+async function waitForBridge(): Promise<BulldogBridge | null> {
+  const immediate = getBridge();
+  if (immediate) return immediate;
+  if (typeof window === "undefined") return null;
+  // Only poll when we have some signal that we're inside a native shell — i.e.
+  // window.webkit is present (WKWebView). In a plain browser this bails fast
+  // and returns null, which the caller handles correctly.
+  const w = window as unknown as { webkit?: unknown };
+  if (!w.webkit) return null;
+  const deadline = Date.now() + 10_000;
+  let delay = 100;
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, delay));
+    const b = getBridge();
+    if (b) return b;
+    // Backoff: 100, 150, 225, 337, 500, 500, 500...
+    delay = Math.min(500, Math.round(delay * 1.5));
+  }
+  return null;
+}
+
+/**
  * Fetch the central Bulldog auth JWT and hand it to the native iOS shell.
  * `appSlug` MUST match the values Swift's ApnsRegistrar KNOWN_APPS knows:
  * "chat" | "contracts" | "ops".
  */
 export async function publishAuthJwtToNative(appSlug: string): Promise<void> {
-  const bridge = getBridge();
   const w = typeof window !== "undefined"
     ? (window as unknown as { __BULLDOG__?: unknown; webkit?: unknown })
     : ({} as { __BULLDOG__?: unknown; webkit?: unknown });
+  const immediateBridge = getBridge();
   console.info(
     "[push-bridge] publishAuthJwtToNative",
     "app=", appSlug,
-    "bridge=", !!bridge,
+    "bridge=", !!immediateBridge,
     "hasBULLDOG=", typeof w.__BULLDOG__,
     "hasWebkit=", typeof w.webkit,
   );
   spaDiag("spa.publishAuthJwtToNative.begin", appSlug, {
-    hasBridge: !!bridge,
+    hasBridge: !!immediateBridge,
     hasBULLDOG: typeof w.__BULLDOG__,
     hasWebkit: typeof w.webkit,
   });
@@ -116,13 +145,21 @@ export async function publishAuthJwtToNative(appSlug: string): Promise<void> {
     spaDiag("spa.authToken.emptyToken", appSlug);
     return;
   }
+  // If the bridge wasn't present at flow entry, wait up to 10s for it to
+  // appear — covers a race where the SPA boots before the WKUserScript that
+  // installs __BULLDOG__ has finished. In a plain browser this bails fast.
+  const bridge = immediateBridge ?? (await waitForBridge());
   if (!bridge?.reportJwt) {
     console.info("[push-bridge] no native bridge — skipping (normal in browser)");
     spaDiag("spa.publishAuthJwtToNative.noBridge", appSlug, {
       jwtTail: tail(token),
       hasBULLDOG: typeof w.__BULLDOG__,
+      polled: !immediateBridge,
     });
     return;
+  }
+  if (!immediateBridge) {
+    spaDiag("spa.publishAuthJwtToNative.bridgeAppearedAfterPolling", appSlug);
   }
   try {
     await bridge.reportJwt(appSlug, token);
