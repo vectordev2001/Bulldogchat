@@ -4,6 +4,54 @@ import { sendExpoNotificationToUsers } from "./expo-push";
 import { rawDb } from "./db";
 import { canSeeChannel, computeAccess } from "./multitenant-access";
 
+const AUTH_BASE = process.env.AUTH_BASE_URL ?? "https://auth.bulldogops.com";
+const SUITE_INTERNAL_SECRET = process.env.SUITE_INTERNAL_SECRET;
+
+/**
+ * Fire native APNs pushes for chat messages by proxying through the auth
+ * service's /api/notify endpoint. The auth service owns the APNs registration
+ * for the unified iOS app; this is the only path that reaches the native
+ * shell's push notifications.
+ *
+ * Chat user rows have email; auth user rows have UUID id. /api/notify accepts
+ * `email` and resolves it internally, so no round-trip lookup is needed here.
+ */
+async function fanOutApnsViaAuth(
+  userIds: number[],
+  payload: PushPayload,
+): Promise<void> {
+  if (!SUITE_INTERNAL_SECRET) return; // dev/local: quiet no-op
+  const users = storage.listUsersByIds(userIds);
+  const emails = users
+    .map((u) => (u as { email?: string }).email)
+    .filter((e): e is string => typeof e === "string" && e.length > 0);
+  if (emails.length === 0) return;
+  await Promise.all(
+    emails.map(async (email) => {
+      try {
+        await fetch(`${AUTH_BASE}/api/notify`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Suite-Secret": SUITE_INTERNAL_SECRET,
+          },
+          body: JSON.stringify({
+            email,
+            title: payload.title,
+            body: payload.body,
+            app: "chat",
+            path: payload.url ?? "/",
+            collapse_id: payload.tag,
+          }),
+        });
+      } catch (err) {
+        // Never block sending on APNs — log and continue.
+        console.warn(`[push] APNs (via auth) failed for ${email}:`, err);
+      }
+    }),
+  );
+}
+
 let configured = false;
 
 export function setupWebPush() {
@@ -89,6 +137,14 @@ export async function sendNotificationToUsers(
   // Always try Expo in parallel (it's a no-op if no tokens / not configured)
   const expoPromise = sendExpoNotificationToUsers(userIds, payload).catch(err => {
     console.warn("[push] expo send err:", err);
+  });
+
+  // Native iOS shell: fire APNs via bulldog-auth's central /api/notify. The
+  // unified iOS app registers ONE device with auth (not per-app), so this
+  // is where chat pushes reach the native shell. Fire-and-forget; do not
+  // block message delivery on APNs latency.
+  void fanOutApnsViaAuth(userIds, payload).catch(err => {
+    console.warn("[push] apns fan-out (via auth) failed:", err);
   });
 
   if (configured) {
