@@ -548,7 +548,18 @@ export default function Join() {
           <BulldogWordmark />
           <ThemeToggle />
         </header>
-        <main className="mx-auto flex w-full max-w-lg flex-1 flex-col items-center justify-center px-5 pb-16 text-center">
+        <main
+          className="mx-auto flex w-full max-w-lg flex-1 flex-col items-center justify-center px-5 text-center"
+          // Honour the iOS-18 floating tab-bar inset bridged by the native
+          // shell into `--bulldog-safe-bottom`. Falls back to 4rem (the
+          // previous pb-16) on web / non-iOS18 where the var is unset, so
+          // there's no visual change outside the affected platforms.
+          // See: bulldog-ios MainTabBarController.viewDidLayoutSubviews.
+          style={{
+            paddingBottom:
+              "max(4rem, calc(env(safe-area-inset-bottom) + var(--bulldog-safe-bottom, 0px) + 1rem))",
+          }}
+        >
           <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-muted text-muted-foreground">
             <VideoOffIcon size={22} />
           </div>
@@ -593,7 +604,21 @@ export default function Join() {
         <ThemeToggle />
       </header>
 
-      <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-6 px-5 pb-10 sm:px-8 lg:flex-row lg:items-center lg:gap-10">
+      <main
+        className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-6 px-5 sm:px-8 lg:flex-row lg:items-center lg:gap-10"
+        // On iOS the native shell's floating tab bar (Chat/Contracts/Ops)
+        // sits OVER the WebView and was covering the "Join meeting" button
+        // on phones (single-column layout) because pb-10 (2.5rem) is
+        // shorter than the pill's height. `--bulldog-safe-bottom` is set
+        // by WebTabViewController to the native additional safe-area
+        // inset; we max it with the OS env() and add a touch of breathing
+        // room. Falls back to the original 2.5rem everywhere else.
+        // See: bulldog-ios MainTabBarController.viewDidLayoutSubviews.
+        style={{
+          paddingBottom:
+            "max(2.5rem, calc(env(safe-area-inset-bottom) + var(--bulldog-safe-bottom, 0px) + 1rem))",
+        }}
+      >
         {/* LEFT: live camera preview */}
         <section className="flex flex-col gap-4 lg:w-[55%]">
           <div className="relative aspect-video w-full overflow-hidden rounded-xl bg-slate-900 ring-1 ring-black/10 dark:ring-white/10">
@@ -816,7 +841,15 @@ function WaitingRoom({
         <BulldogWordmark />
         <ThemeToggle />
       </header>
-      <main className="mx-auto flex w-full max-w-md flex-1 flex-col items-center justify-center px-5 pb-16 text-center">
+      <main
+        className="mx-auto flex w-full max-w-md flex-1 flex-col items-center justify-center px-5 text-center"
+        // Same iOS-18 floating tab-bar compensation as the prejoin screen
+        // above. See: bulldog-ios MainTabBarController.viewDidLayoutSubviews.
+        style={{
+          paddingBottom:
+            "max(4rem, calc(env(safe-area-inset-bottom) + var(--bulldog-safe-bottom, 0px) + 1rem))",
+        }}
+      >
         <div className="w-full rounded-2xl border border-card-border bg-card p-7 shadow-sm">
           <div className="text-xs font-medium uppercase tracking-wide text-primary">{meetingTitle}</div>
 
