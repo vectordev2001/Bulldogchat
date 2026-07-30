@@ -37,7 +37,7 @@ export interface ApiProject {
   createdAt: string;
 }
 
-export type ChannelType = "text" | "voice";
+export type ChannelType = "text" | "voice" | "scorecard";
 export type ChannelScope = "global" | "entity" | "team" | "private" | "dm";
 
 // Phase 1.9.3 — contract metadata cached on a channel when one is
