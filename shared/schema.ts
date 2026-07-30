@@ -129,7 +129,11 @@ export const projectMembers = sqliteTable("project_members", {
 export type ProjectMember = typeof projectMembers.$inferSelect;
 
 /* ─────────────────── CHANNELS ─────────────────── */
-export const channelTypes = ["text", "voice"] as const;
+// "scorecard" (Phase 2.6) — a company-scoped read-only dashboard channel that
+// renders a recruiter fee/placement scorecard driven by channel_scorecard_configs
+// and channel_scorecard_actuals. Admin/super_admin edit the config and log
+// actuals; every project member can view. See ScorecardChannelView.tsx.
+export const channelTypes = ["text", "voice", "scorecard"] as const;
 export type ChannelType = typeof channelTypes[number];
 
 // scope semantics:
@@ -1156,3 +1160,71 @@ export const bogeyMessageInputSchema = z.object({
   conversationId: z.number().int().positive().optional().nullable(),
 });
 export type BogeyMessageInput = z.infer<typeof bogeyMessageInputSchema>;
+
+/* ─────────────────── SCORECARD (v37) ─────────────────── */
+// One config row per scorecard-type channel. `configJson` shape:
+// {
+//   averageFee: number,           // dollars, e.g. 10000
+//   profitTarget: number,         // 0.10 for 10% profit floor
+//   stretchMultiplier: number,    // 1.25 = 25% stretch above base
+//   thresholds: { green: number, yellow: number }, // 1.0 / 0.9 pace
+//   recruiters: Array<{
+//     key: string,                // stable slug used as actuals PK, e.g. "nick"
+//     name: string,               // display name, e.g. "Nick"
+//     monthlySalary: number       // dollars, hidden from non-admins server-side
+//   }>
+// }
+// Only admin/super_admin can PATCH; every project member can GET the
+// derived targets. Salary numbers are stripped in the non-admin projection.
+export const channelScorecardConfigs = sqliteTable("channel_scorecard_configs", {
+  channelId: integer("channel_id").primaryKey().references(() => channels.id),
+  configJson: text("config_json").notNull(),
+  updatedByUserId: integer("updated_by_user_id").notNull().references(() => users.id),
+  updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+});
+export type ChannelScorecardConfig = typeof channelScorecardConfigs.$inferSelect;
+
+// One row per (channel, recruiterKey, periodMonth). `periodMonth` is a
+// YYYY-MM string, e.g. "2026-07". Admin/super_admin can upsert; anyone
+// with read access to the channel sees the aggregated actuals.
+export const channelScorecardActuals = sqliteTable("channel_scorecard_actuals", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  channelId: integer("channel_id").notNull().references(() => channels.id),
+  recruiterKey: text("recruiter_key").notNull(),
+  periodMonth: text("period_month").notNull(), // "YYYY-MM"
+  placementsCount: integer("placements_count").notNull().default(0),
+  feeAmountCents: integer("fee_amount_cents").notNull().default(0),
+  notes: text("notes"),
+  updatedByUserId: integer("updated_by_user_id").notNull().references(() => users.id),
+  updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+});
+export type ChannelScorecardActual = typeof channelScorecardActuals.$inferSelect;
+
+// Zod schemas for API payloads. Salaries and rates are dollars (not cents)
+// in the config JSON — matches how humans think about them. Actuals store
+// cents to avoid rounding drift on the pace math.
+export const scorecardRecruiterSchema = z.object({
+  key: z.string().min(1).max(40).regex(/^[a-z0-9_-]+$/, "lowercase letters, digits, - or _"),
+  name: z.string().min(1).max(80),
+  monthlySalary: z.number().nonnegative().max(1_000_000),
+});
+export const scorecardConfigInputSchema = z.object({
+  averageFee: z.number().positive().max(1_000_000),
+  profitTarget: z.number().min(0).max(1),
+  stretchMultiplier: z.number().min(1).max(5),
+  thresholds: z.object({
+    green: z.number().min(0).max(2).default(1.0),
+    yellow: z.number().min(0).max(2).default(0.9),
+  }),
+  recruiters: z.array(scorecardRecruiterSchema).min(1).max(50),
+});
+export type ScorecardConfigInput = z.infer<typeof scorecardConfigInputSchema>;
+
+export const scorecardActualInputSchema = z.object({
+  recruiterKey: z.string().min(1).max(40),
+  periodMonth: z.string().regex(/^\d{4}-\d{2}$/, "YYYY-MM"),
+  placementsCount: z.number().int().nonnegative().max(1000),
+  feeAmountCents: z.number().int().nonnegative().max(1_000_000_000),
+  notes: z.string().max(500).optional().nullable(),
+});
+export type ScorecardActualInput = z.infer<typeof scorecardActualInputSchema>;

@@ -1,4 +1,4 @@
-import { Hash, ChevronDown, ChevronRight, Plus, Mic, MicOff, Headphones, Settings, Search, Shield, ShieldCheck, Globe, Building2, Users, Lock, ClipboardList, Briefcase, AlertTriangle, FileEdit, MapPin, UserCog, ArrowRightLeft, Trash2, Calendar, Check } from "lucide-react";
+import { Hash, ChevronDown, ChevronRight, Plus, Mic, MicOff, Headphones, Settings, Search, Shield, ShieldCheck, Globe, Building2, Users, Lock, ClipboardList, Briefcase, AlertTriangle, FileEdit, MapPin, UserCog, ArrowRightLeft, Trash2, Calendar, Check, DollarSign } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useLocation } from "wouter";
 import { useState, useMemo, useEffect } from "react";
@@ -783,9 +783,10 @@ function JobGroup({
 function ChannelRow({
   channel, active, onClick, onContextMenu, regionBadge,
 }: { channel: ApiChannel; active: boolean; onClick: () => void; onContextMenu?: (x: number, y: number) => void; regionBadge?: string }) {
-  // Phase 1.9: every channel renders with the # icon. The phone/video
-  // buttons live in the channel header (TextChannelView).
-  const Icon = Hash;
+  // Phase 1.9: text/voice channels render with the # icon (phone/video
+  // live in TextChannelView's header). Phase 2.6: scorecard channels get
+  // a $ glyph so they're visually distinct from message channels.
+  const Icon = channel.type === "scorecard" ? DollarSign : Hash;
   // Subtle indicator that surfaces scope without taking row real estate.
   // Hidden for the default 'global' scope to avoid clutter.
   const scope = channel.scope ?? "global";

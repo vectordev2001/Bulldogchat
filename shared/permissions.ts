@@ -30,6 +30,14 @@ export const can = {
     edit: (r: Role) => r !== "user",
     delete: (r: Role) => r === "admin" || r === "super_admin",
   },
+  scorecard: {
+    // Phase 2.6 — recruiter scorecard channel. Reads are open to any project
+    // member (RBAC enforced via channel visibility). Only admin/super_admin
+    // can edit the config (recruiters, salaries, fee, profit target) or log
+    // monthly actuals. Salaries are stripped from GET responses for anyone
+    // who fails this check.
+    edit: (r: Role) => r === "admin" || r === "super_admin",
+  },
 };
 
 export function isAdminish(r: Role): boolean {

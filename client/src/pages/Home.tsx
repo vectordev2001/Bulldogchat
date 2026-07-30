@@ -11,6 +11,7 @@ import { ProjectRail } from "@/components/ProjectRail";
 import { ChannelSidebar } from "@/components/ChannelSidebar";
 import { CreateChannelDialog } from "@/components/CreateChannelDialog";
 import { TextChannelView } from "@/components/TextChannelView";
+import { ScorecardChannelView } from "@/components/ScorecardChannelView";
 import { MemberList } from "@/components/MemberList";
 import { WorkObjectPanel } from "@/components/WorkObjectPanel";
 import { WorkObjectsListDialog } from "@/components/WorkObjectsListDialog";
@@ -720,6 +721,11 @@ export default function Home() {
           <div className="flex-1 flex items-center justify-center">
             <Loader2 className="w-5 h-5 animate-spin text-vs-blue" />
           </div>
+        ) : activeChannel.type === "scorecard" ? (
+          // Phase 2.6 — scorecard-type channels render a dashboard instead
+          // of a message stream. All data + edit affordances live in the
+          // view; Home.tsx just hands off the active channel row.
+          <ScorecardChannelView channel={activeChannel} />
         ) : (
           // Phase 1.9: unified channels. Every channel — text or legacy voice —
           // renders as TextChannelView, which already exposes Phone + Video

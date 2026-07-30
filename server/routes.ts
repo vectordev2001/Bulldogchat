@@ -5,6 +5,7 @@ import { storage, sanitize } from "./storage";
 import {
   signupSchema, loginSchema, acceptInviteSchema, sendMessageSchema, reactionSchema,
   insertProjectSchema, insertChannelSchema, insertInviteSchema, channelCreateSchema, linkedContractAttachSchema,
+  scorecardConfigInputSchema, scorecardActualInputSchema,
 } from "@shared/schema";
 import { hashPassword, verifyPassword, signJwt, requireAuth, requireRole, requireCap, setAuthCookie, clearAuthCookie, AuthedRequest, AUTH_COOKIE } from "./auth";
 import { can } from "@shared/permissions";
@@ -978,6 +979,128 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
       console.warn("[attach-contract] system message skipped:", (e as Error).message);
     }
     res.json(updated);
+  });
+
+  // ─────────────────── SCORECARD (Phase 2.6) ───────────────────
+  // GET returns the config + actuals for a scorecard-type channel plus the
+  // caller's edit capability. Any project member can read; salaries are
+  // scrubbed unless the caller is admin/super_admin.
+  app.get("/api/channels/:id/scorecard", requireAuth, (req, res) => {
+    const u = (req as AuthedRequest).user;
+    const channelId = Number(req.params.id);
+    if (!Number.isFinite(channelId)) return res.status(400).json({ message: "Invalid channel id" });
+    const ch = storage.getChannel(channelId);
+    if (!ch) return res.status(404).json({ message: "Channel not found" });
+    if (ch.type !== "scorecard") return res.status(400).json({ message: "Not a scorecard channel" });
+    const access = userCanAccessChannel(u.id, u.orgId, channelId, (req as AuthedRequest).access);
+    if (!access) return res.status(404).json({ message: "Channel not found" });
+    const row = rawDb
+      .prepare(`SELECT config_json AS configJson, updated_by_user_id AS updatedByUserId, updated_at AS updatedAt FROM channel_scorecard_configs WHERE channel_id = ?`)
+      .get(channelId) as { configJson: string; updatedByUserId: number; updatedAt: number } | undefined;
+    if (!row) return res.status(404).json({ message: "Scorecard not configured yet" });
+    let cfg: any;
+    try { cfg = JSON.parse(row.configJson); } catch { return res.status(500).json({ message: "Config parse error" }); }
+    const canEdit = can.scorecard.edit(u.role as any);
+    // Non-admins never see per-recruiter salaries; strip before serializing.
+    if (!canEdit && cfg && Array.isArray(cfg.recruiters)) {
+      cfg = {
+        ...cfg,
+        recruiters: cfg.recruiters.map((r: any) => ({ key: r.key, name: r.name })),
+      };
+    }
+    const actuals = rawDb
+      .prepare(`SELECT recruiter_key AS recruiterKey, period_month AS periodMonth, placements_count AS placementsCount, fee_amount_cents AS feeAmountCents, notes, updated_by_user_id AS updatedByUserId, updated_at AS updatedAt FROM channel_scorecard_actuals WHERE channel_id = ? ORDER BY period_month DESC, recruiter_key ASC`)
+      .all(channelId);
+    res.json({
+      channelId,
+      config: cfg,
+      actuals,
+      canEdit,
+      updatedByUserId: row.updatedByUserId,
+      updatedAt: row.updatedAt,
+    });
+  });
+
+  // PATCH replaces the full config. Admin/super_admin only.
+  app.patch("/api/channels/:id/scorecard/config", requireAuth, (req, res) => {
+    const u = (req as AuthedRequest).user;
+    if (!can.scorecard.edit(u.role as any)) return res.status(403).json({ message: "Not allowed" });
+    const channelId = Number(req.params.id);
+    if (!Number.isFinite(channelId)) return res.status(400).json({ message: "Invalid channel id" });
+    const ch = storage.getChannel(channelId);
+    if (!ch) return res.status(404).json({ message: "Channel not found" });
+    if (ch.type !== "scorecard") return res.status(400).json({ message: "Not a scorecard channel" });
+    const parsed = scorecardConfigInputSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.issues[0]?.message ?? "Invalid input" });
+    // Recruiter keys must be unique inside the config.
+    const keys = new Set<string>();
+    for (const r of parsed.data.recruiters) {
+      if (keys.has(r.key)) return res.status(400).json({ message: `Duplicate recruiter key: ${r.key}` });
+      keys.add(r.key);
+    }
+    const now = Math.floor(Date.now() / 1000);
+    rawDb
+      .prepare(
+        `INSERT INTO channel_scorecard_configs (channel_id, config_json, updated_by_user_id, updated_at)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT(channel_id) DO UPDATE SET
+           config_json = excluded.config_json,
+           updated_by_user_id = excluded.updated_by_user_id,
+           updated_at = excluded.updated_at`,
+      )
+      .run(channelId, JSON.stringify(parsed.data), u.id, now);
+    res.json({ ok: true, updatedAt: now, updatedByUserId: u.id });
+  });
+
+  // POST upserts one (recruiter, month) actual row. Admin/super_admin only.
+  app.post("/api/channels/:id/scorecard/actuals", requireAuth, (req, res) => {
+    const u = (req as AuthedRequest).user;
+    if (!can.scorecard.edit(u.role as any)) return res.status(403).json({ message: "Not allowed" });
+    const channelId = Number(req.params.id);
+    if (!Number.isFinite(channelId)) return res.status(400).json({ message: "Invalid channel id" });
+    const ch = storage.getChannel(channelId);
+    if (!ch) return res.status(404).json({ message: "Channel not found" });
+    if (ch.type !== "scorecard") return res.status(400).json({ message: "Not a scorecard channel" });
+    const parsed = scorecardActualInputSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.issues[0]?.message ?? "Invalid input" });
+    // Confirm the recruiterKey exists in the current config.
+    const cfgRow = rawDb
+      .prepare(`SELECT config_json AS configJson FROM channel_scorecard_configs WHERE channel_id = ?`)
+      .get(channelId) as { configJson: string } | undefined;
+    if (!cfgRow) return res.status(400).json({ message: "Scorecard not configured yet" });
+    let recruiterKeys: Set<string>;
+    try {
+      const cfg = JSON.parse(cfgRow.configJson);
+      recruiterKeys = new Set((cfg.recruiters ?? []).map((r: any) => r.key));
+    } catch {
+      return res.status(500).json({ message: "Config parse error" });
+    }
+    if (!recruiterKeys.has(parsed.data.recruiterKey)) {
+      return res.status(400).json({ message: `Unknown recruiter: ${parsed.data.recruiterKey}` });
+    }
+    const now = Math.floor(Date.now() / 1000);
+    rawDb
+      .prepare(
+        `INSERT INTO channel_scorecard_actuals (channel_id, recruiter_key, period_month, placements_count, fee_amount_cents, notes, updated_by_user_id, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(channel_id, recruiter_key, period_month) DO UPDATE SET
+           placements_count = excluded.placements_count,
+           fee_amount_cents = excluded.fee_amount_cents,
+           notes = excluded.notes,
+           updated_by_user_id = excluded.updated_by_user_id,
+           updated_at = excluded.updated_at`,
+      )
+      .run(
+        channelId,
+        parsed.data.recruiterKey,
+        parsed.data.periodMonth,
+        parsed.data.placementsCount,
+        parsed.data.feeAmountCents,
+        parsed.data.notes ?? null,
+        u.id,
+        now,
+      );
+    res.json({ ok: true, updatedAt: now, updatedByUserId: u.id });
   });
 
   // Phase 1.9.3 — proxy: list contracts from bulldog-contracts so the chat

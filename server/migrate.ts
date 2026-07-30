@@ -1475,4 +1475,113 @@ export function runMigrations() {
   } catch (e: any) {
     console.warn("[migrate v36] bogey tables skipped:", e?.message);
   }
+
+  // v37 (Recruiter Scorecard — Phase 2.6). Two tables backing scorecard-type
+  // channels: one JSON config per channel and one row per (recruiter, month)
+  // of actuals. Idempotent CREATE IF NOT EXISTS — safe to re-run.
+  try {
+    rawDb.exec(`
+      CREATE TABLE IF NOT EXISTS channel_scorecard_configs (
+        channel_id INTEGER PRIMARY KEY,
+        config_json TEXT NOT NULL,
+        updated_by_user_id INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS channel_scorecard_actuals (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        channel_id INTEGER NOT NULL,
+        recruiter_key TEXT NOT NULL,
+        period_month TEXT NOT NULL,
+        placements_count INTEGER NOT NULL DEFAULT 0,
+        fee_amount_cents INTEGER NOT NULL DEFAULT 0,
+        notes TEXT,
+        updated_by_user_id INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_scorecard_actuals_unique
+        ON channel_scorecard_actuals (channel_id, recruiter_key, period_month);
+      CREATE INDEX IF NOT EXISTS idx_scorecard_actuals_channel
+        ON channel_scorecard_actuals (channel_id, period_month);
+    `);
+    console.log("[migrate] v37 ensured channel_scorecard_* tables");
+  } catch (e: any) {
+    console.warn("[migrate v37] scorecard tables skipped:", e?.message);
+  }
+
+  // v37b — seed the VTS #vts-recruiter-scorecard channel and default config.
+  // Idempotent: only inserts when the VTS project exists in an org, the
+  // scorecard channel is not already present, and no prior config row is
+  // set. Numbers come from the Josh Bieler ops task (2026-07): 5 recruiters,
+  // $10k avg fee, 10% profit floor, 25% stretch multiplier. Editable in-app
+  // by admin/super_admin via PATCH /api/channels/:id/scorecard/config.
+  try {
+    const vtsProjects = rawDb
+      .prepare(`SELECT id, org_id AS orgId FROM projects WHERE slug = 'vts'`)
+      .all() as Array<{ id: number; orgId: number }>;
+    for (const p of vtsProjects) {
+      const existing = rawDb
+        .prepare(`SELECT id FROM channels WHERE project_id = ? AND name = 'vts-recruiter-scorecard'`)
+        .get(p.id) as { id: number } | undefined;
+      let channelId: number;
+      if (existing) {
+        channelId = existing.id;
+      } else {
+        // Determine sidebar position (append to end of the project's channels).
+        const posRow = rawDb
+          .prepare(`SELECT COALESCE(MAX(position), -1) + 1 AS pos FROM channels WHERE project_id = ?`)
+          .get(p.id) as { pos: number };
+        const now = Math.floor(Date.now() / 1000);
+        const info = rawDb
+          .prepare(
+            `INSERT INTO channels (project_id, name, type, topic, position, scope, created_at)
+             VALUES (?, 'vts-recruiter-scorecard', 'scorecard', ?, ?, 'global', ?)`,
+          )
+          .run(
+            p.id,
+            "Live 6\u2011month fee targets and placements \u2014 $10k avg fee, 10% profit floor.",
+            posRow.pos,
+            now,
+          );
+        channelId = Number(info.lastInsertRowid);
+        console.log(`[migrate] v37 seeded #vts-recruiter-scorecard channel id=${channelId} in project ${p.id}`);
+      }
+
+      const cfgExists = rawDb
+        .prepare(`SELECT channel_id FROM channel_scorecard_configs WHERE channel_id = ?`)
+        .get(channelId);
+      if (!cfgExists) {
+        // Pick the first super_admin (fallback: any admin) in this org as the
+        // audit-trail author. If none exist yet (fresh install), use user_id=0
+        // — the row is still valid; the first admin to PATCH will overwrite it.
+        const seedUser = rawDb
+          .prepare(
+            `SELECT id FROM users WHERE org_id = ? AND role IN ('super_admin', 'admin') ORDER BY (role = 'super_admin') DESC, id ASC LIMIT 1`,
+          )
+          .get(p.orgId) as { id: number } | undefined;
+        const uid = seedUser?.id ?? 0;
+        const cfg = {
+          averageFee: 10000,
+          profitTarget: 0.10,
+          stretchMultiplier: 1.25,
+          thresholds: { green: 1.0, yellow: 0.9 },
+          recruiters: [
+            { key: "nick", name: "Nick", monthlySalary: 7709 },
+            { key: "jammi", name: "Jammi", monthlySalary: 7721 },
+            { key: "jenny", name: "Jenny", monthlySalary: 6423 },
+            { key: "katie", name: "Katie", monthlySalary: 8073 },
+            { key: "donnalynn", name: "DonnaLynn", monthlySalary: 8811 },
+          ],
+        };
+        rawDb
+          .prepare(
+            `INSERT INTO channel_scorecard_configs (channel_id, config_json, updated_by_user_id, updated_at) VALUES (?, ?, ?, ?)`,
+          )
+          .run(channelId, JSON.stringify(cfg), uid, Math.floor(Date.now() / 1000));
+        console.log(`[migrate] v37 seeded scorecard config for channel ${channelId}`);
+      }
+    }
+  } catch (e: any) {
+    console.warn("[migrate v37] scorecard seed skipped:", e?.message);
+  }
 }
