@@ -259,22 +259,24 @@ export function ScorecardChannelView({ channel }: Props) {
                     className="rounded-2xl bg-white dark:bg-[hsl(var(--vs-surface-elevated))] border border-[hsl(var(--vs-border))] p-5 shadow-[0_1px_2px_rgba(0,0,0,0.04)] hover-elevate transition"
                     data-testid={`recruiter-card-${r.key}`}
                   >
+                    {/* Header: name + pace pill */}
                     <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <div className="font-display text-[15px] text-[hsl(var(--vs-text))] truncate">{r.name}</div>
-                        <div className="text-[11px] text-[hsl(var(--vs-text-muted))] mt-0.5">Monthly target</div>
-                      </div>
+                      <div className="font-display text-[15px] text-[hsl(var(--vs-text))] truncate">{r.name}</div>
                       <PacePill pace={pace} thresholds={config.thresholds} hasActuals={actual != null} />
                     </div>
-                    <div className="mt-2 text-[22px] font-display tabular-nums text-[hsl(var(--vs-text))]">
-                      {fmtUSD(r.monthly)}
+
+                    {/* Two hero numbers side-by-side: monthly and 6-month */}
+                    <div className="mt-3 grid grid-cols-2 gap-3">
+                      <HeroStat label="This Month" value={fmtUSD(r.monthly)} />
+                      <HeroStat label="6-Month" value={fmtUSD(r.sixMonth)} />
                     </div>
-                    <div className="mt-4 grid grid-cols-2 gap-3">
-                      <MiniStat label="6-mo target" value={fmtUSD(r.sixMonth)} />
-                      <MiniStat label="Floor placements" value={String(r.floorPlacements)} />
+
+                    {/* Supporting stats */}
+                    <div className="mt-4 grid grid-cols-3 gap-3">
+                      <MiniStat label="Floor" value={String(r.floorPlacements)} />
                       <MiniStat label="Stretch" value={fmtUSD(r.stretch)} accent />
                       <MiniStat
-                        label="This month"
+                        label="Actual MTD"
                         value={
                           actual
                             ? `${fmtUSD(actualFee)} · ${actual.placementsCount}`
@@ -323,6 +325,24 @@ function SummaryStat({ label, value, sub }: { label: string; value: string; sub?
       <div className="text-white/70 text-[11px] uppercase tracking-wider font-medium">{label}</div>
       <div className="mt-1 text-[22px] md:text-[26px] font-display tabular-nums text-white">{value}</div>
       {sub && <div className="text-white/60 text-[11px] mt-0.5">{sub}</div>}
+    </div>
+  );
+}
+
+/**
+ * Big number tile used for the two hero targets on each recruiter card
+ * (This Month + 6-Month). Kept visually distinct from MiniStat so the pair
+ * reads as "the two important numbers" at a glance.
+ */
+function HeroStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-xl bg-[hsl(var(--vs-surface))]/50 border border-[hsl(var(--vs-border))] px-3 py-2.5">
+      <div className="text-[10px] uppercase tracking-wider font-medium text-[hsl(var(--vs-text-muted))]">
+        {label}
+      </div>
+      <div className="mt-1 font-display text-[20px] leading-tight tabular-nums text-[hsl(var(--vs-text))]">
+        {value}
+      </div>
     </div>
   );
 }
