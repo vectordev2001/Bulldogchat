@@ -1208,6 +1208,18 @@ export const scorecardRecruiterSchema = z.object({
   name: z.string().min(1).max(80),
   monthlySalary: z.number().nonnegative().max(1_000_000),
 });
+// Phase 2.6.1 — display presets. Curated small set of "ways to look
+// at it" — admin picks one, everyone sees the same view. Kept small on
+// purpose: 3 knobs cover 90% of asks without becoming a settings kitchen
+// sink. All fields optional with sensible defaults so pre-2.6.1 configs
+// stay valid.
+export const scorecardDisplaySchema = z.object({
+  preset: z.enum(["compact", "comfortable", "spacious"]).default("comfortable"),
+  density: z.enum(["1-col", "2-col", "3-col"]).default("3-col"),
+  sortBy: z.enum(["name", "pace-desc", "pace-asc", "actual-mtd-desc"]).default("name"),
+});
+export type ScorecardDisplay = z.infer<typeof scorecardDisplaySchema>;
+
 export const scorecardConfigInputSchema = z.object({
   averageFee: z.number().positive().max(1_000_000),
   profitTarget: z.number().min(0).max(1),
@@ -1217,6 +1229,7 @@ export const scorecardConfigInputSchema = z.object({
     yellow: z.number().min(0).max(2).default(0.9),
   }),
   recruiters: z.array(scorecardRecruiterSchema).min(1).max(50),
+  display: scorecardDisplaySchema.optional(),
 });
 export type ScorecardConfigInput = z.infer<typeof scorecardConfigInputSchema>;
 
