@@ -23,7 +23,7 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { motion } from "framer-motion";
-import { DollarSign, Loader2, Pencil, Plus, TrendingUp, Users } from "lucide-react";
+import { DollarSign, Loader2, Pencil, Plus, TrendingUp, Trophy, Users } from "lucide-react";
 import type { ApiChannel } from "@/types/api";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -36,12 +36,23 @@ interface Recruiter {
   name: string;
   monthlySalary?: number; // present only when the caller is admin
 }
+// Phase 2.6.1 — admin-selected view knobs. Optional so a config saved
+// before display presets landed still round-trips through this type
+// without a migration.
+interface ScorecardDisplay {
+  preset?: "compact" | "comfortable" | "spacious";
+  density?: "1-col" | "2-col" | "3-col";
+  sortBy?: "name" | "pace-desc" | "pace-asc" | "actual-mtd-desc";
+  // Phase 2.6.2 — leaderboard metric (or "off" to hide the panel).
+  leaderboardMetric?: "off" | "mtd-fee" | "pace" | "rolling-3mo-fee";
+}
 interface ScorecardConfig {
   averageFee: number;
   profitTarget: number;
   stretchMultiplier: number;
   thresholds: { green: number; yellow: number };
   recruiters: Recruiter[];
+  display?: ScorecardDisplay;
 }
 interface Actual {
   recruiterKey: string;
@@ -161,6 +172,53 @@ export function ScorecardChannelView({ channel }: Props) {
     if (a.periodMonth === currentMonth) currentMonthByRecruiter.set(a.recruiterKey, a);
   }
 
+  // Phase 2.6.1 — display presets. Read admin-selected view knobs off the
+  // config, falling back to defaults so pre-2.6.1 configs render unchanged.
+  const display = {
+    preset: config.display?.preset ?? "comfortable",
+    density: config.display?.density ?? "3-col",
+    sortBy: config.display?.sortBy ?? "name",
+    leaderboardMetric: config.display?.leaderboardMetric ?? "off",
+  } as const;
+  const gridClass =
+    display.density === "1-col" ? "grid grid-cols-1 gap-3 md:gap-4"
+    : display.density === "2-col" ? "grid grid-cols-1 sm:grid-cols-2 gap-3 md:gap-4"
+    : "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 md:gap-4";
+  // Preset controls card padding and hero font size. Kept as concrete
+  // Tailwind strings rather than dynamic class-name math so JIT compiles them.
+  const cardPadClass =
+    display.preset === "compact" ? "p-3"
+    : display.preset === "spacious" ? "p-6"
+    : "p-5";
+  const heroSizeClass =
+    display.preset === "compact" ? "text-[16px]"
+    : display.preset === "spacious" ? "text-[24px]"
+    : "text-[20px]";
+  const nameSizeClass =
+    display.preset === "compact" ? "text-[13px]"
+    : display.preset === "spacious" ? "text-[17px]"
+    : "text-[15px]";
+
+  // Sort recruiter rows for display. Base list is targets.perRecruiter
+  // (which preserves config.recruiters order); each sort mode re-derives
+  // the current-month pace to rank against.
+  const sortedPerRecruiter = [...targets.perRecruiter];
+  if (display.sortBy !== "name") {
+    sortedPerRecruiter.sort((a, b) => {
+      const actualA = currentMonthByRecruiter.get(a.key);
+      const actualB = currentMonthByRecruiter.get(b.key);
+      const feeA = (actualA?.feeAmountCents ?? 0) / 100;
+      const feeB = (actualB?.feeAmountCents ?? 0) / 100;
+      if (display.sortBy === "actual-mtd-desc") return feeB - feeA;
+      // pace-desc / pace-asc — recruiters with no target sort last either way.
+      const paceA = a.monthly > 0 ? feeA / (a.monthly * monthElapsed || 1) : -1;
+      const paceB = b.monthly > 0 ? feeB / (b.monthly * monthElapsed || 1) : -1;
+      return display.sortBy === "pace-desc" ? paceB - paceA : paceA - paceB;
+    });
+  } else {
+    sortedPerRecruiter.sort((a, b) => a.name.localeCompare(b.name));
+  }
+
   return (
     <div className="flex-1 min-h-0 flex flex-col bg-[hsl(var(--vs-surface))]">
       {/* Header — matches TextChannelView's 14-row header size + hairline */}
@@ -236,14 +294,27 @@ export function ScorecardChannelView({ channel }: Props) {
             </div>
           </motion.div>
 
+          {/* Phase 2.6.2 — Leaderboard. Rendered only when the admin has
+              picked a metric (leaderboardMetric != "off"). Keeps to a single
+              scannable list: rank + name + primary metric. */}
+          {display.leaderboardMetric && display.leaderboardMetric !== "off" && (
+            <Leaderboard
+              metric={display.leaderboardMetric}
+              perRecruiter={targets.perRecruiter}
+              actuals={actuals}
+              currentMonth={currentMonth}
+              monthElapsed={monthElapsed}
+            />
+          )}
+
           {/* Per-recruiter cards */}
           <div>
             <div className="flex items-center gap-2 text-[11px] uppercase tracking-wider font-medium text-[hsl(var(--vs-text-muted))] mb-3 px-1">
               <Users className="w-3.5 h-3.5" />
               Recruiter targets
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 md:gap-4">
-              {targets.perRecruiter.map((r, i) => {
+            <div className={gridClass}>
+              {sortedPerRecruiter.map((r, i) => {
                 const actual = currentMonthByRecruiter.get(r.key);
                 const actualFee = (actual?.feeAmountCents ?? 0) / 100;
                 // Pace: what fraction of the pro-rated monthly target has been
@@ -256,19 +327,19 @@ export function ScorecardChannelView({ channel }: Props) {
                     initial={{ opacity: 0, y: 4 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ duration: 0.2, delay: 0.03 * i }}
-                    className="rounded-2xl bg-white dark:bg-[hsl(var(--vs-surface-elevated))] border border-[hsl(var(--vs-border))] p-5 shadow-[0_1px_2px_rgba(0,0,0,0.04)] hover-elevate transition"
+                    className={`rounded-2xl bg-white dark:bg-[hsl(var(--vs-surface-elevated))] border border-[hsl(var(--vs-border))] ${cardPadClass} shadow-[0_1px_2px_rgba(0,0,0,0.04)] hover-elevate transition`}
                     data-testid={`recruiter-card-${r.key}`}
                   >
                     {/* Header: name + pace pill */}
                     <div className="flex items-start justify-between gap-3">
-                      <div className="font-display text-[15px] text-[hsl(var(--vs-text))] truncate">{r.name}</div>
+                      <div className={`font-display ${nameSizeClass} text-[hsl(var(--vs-text))] truncate`}>{r.name}</div>
                       <PacePill pace={pace} thresholds={config.thresholds} hasActuals={actual != null} />
                     </div>
 
                     {/* Two hero numbers side-by-side: monthly and 6-month */}
                     <div className="mt-3 grid grid-cols-2 gap-3">
-                      <HeroStat label="This Month" value={fmtUSD(r.monthly)} />
-                      <HeroStat label="6-Month" value={fmtUSD(r.sixMonth)} />
+                      <HeroStat label="This Month" value={fmtUSD(r.monthly)} sizeClass={heroSizeClass} />
+                      <HeroStat label="6-Month" value={fmtUSD(r.sixMonth)} sizeClass={heroSizeClass} />
                     </div>
 
                     {/* Supporting stats */}
@@ -319,6 +390,98 @@ export function ScorecardChannelView({ channel }: Props) {
 
 /* ─────────────────── small pieces ─────────────────── */
 
+/**
+ * Phase 2.6.2 — Leaderboard panel.
+ *
+ * Deliberately minimal: rank + name + one number. Metric chosen by admin
+ * via the Display section. Non-admin viewers see the same panel because
+ * every underlying signal (actuals, monthly target, 3mo fee) is already
+ * present on the projected ScorecardResponse.
+ */
+function Leaderboard({
+  metric,
+  perRecruiter,
+  actuals,
+  currentMonth,
+  monthElapsed,
+}: {
+  metric: "mtd-fee" | "pace" | "rolling-3mo-fee";
+  perRecruiter: Array<{ key: string; name: string; monthly: number }>;
+  actuals: Actual[];
+  currentMonth: string;
+  monthElapsed: number;
+}) {
+  const rolling3 = new Set(recentMonths(3));
+  const byRecruiter = new Map<string, { mtdFee: number; rollingFee: number }>();
+  for (const a of actuals) {
+    const fee = (a.feeAmountCents ?? 0) / 100;
+    const entry = byRecruiter.get(a.recruiterKey) ?? { mtdFee: 0, rollingFee: 0 };
+    if (a.periodMonth === currentMonth) entry.mtdFee += fee;
+    if (rolling3.has(a.periodMonth)) entry.rollingFee += fee;
+    byRecruiter.set(a.recruiterKey, entry);
+  }
+
+  const rows = perRecruiter.map((r) => {
+    const b = byRecruiter.get(r.key) ?? { mtdFee: 0, rollingFee: 0 };
+    // Pace = MTD fee / pro-rated monthly target. Recruiters with no monthly
+    // target sort last (rank -Infinity).
+    const pace = r.monthly > 0 ? b.mtdFee / (r.monthly * Math.max(monthElapsed, 0.01)) : -Infinity;
+    let value = 0;
+    if (metric === "mtd-fee") value = b.mtdFee;
+    else if (metric === "rolling-3mo-fee") value = b.rollingFee;
+    else value = pace;
+    return { key: r.key, name: r.name, value };
+  });
+  rows.sort((a, b) => b.value - a.value);
+
+  const label =
+    metric === "mtd-fee" ? "MTD Fees"
+    : metric === "pace" ? "Pace vs. Target"
+    : "Rolling 3-Month Fees";
+
+  const fmt = (v: number) => {
+    if (!Number.isFinite(v)) return "—";
+    if (metric === "pace") return `${Math.round(v * 100)}%`;
+    return `$${Math.round(v).toLocaleString()}`;
+  };
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 4 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.2 }}
+      className="rounded-2xl bg-gradient-to-br from-[#0090F0]/[0.04] to-transparent border border-[hsl(var(--vs-border))] p-4 md:p-5 mb-4"
+    >
+      <div className="flex items-center gap-2 text-[11px] uppercase tracking-wider font-medium text-[hsl(var(--vs-text-muted))] mb-3">
+        <Trophy className="w-3.5 h-3.5 text-[#0090F0]" />
+        Leaderboard — {label}
+      </div>
+      <ol className="divide-y divide-[hsl(var(--vs-border))]">
+        {rows.map((row, i) => (
+          <li key={row.key} className="flex items-center gap-3 py-2">
+            <div
+              className={
+                "w-7 h-7 shrink-0 rounded-full flex items-center justify-center text-[12px] font-semibold tabular-nums " +
+                (i === 0
+                  ? "bg-[#0090F0] text-white"
+                  : i === 1
+                  ? "bg-[#0090F0]/25 text-[hsl(var(--vs-text))]"
+                  : i === 2
+                  ? "bg-[#0090F0]/15 text-[hsl(var(--vs-text))]"
+                  : "bg-[hsl(var(--vs-surface))] text-[hsl(var(--vs-text-muted))] border border-[hsl(var(--vs-border))]")
+              }
+            >
+              {i + 1}
+            </div>
+            <div className="flex-1 min-w-0 text-sm text-[hsl(var(--vs-text))] truncate">{row.name}</div>
+            <div className="text-sm font-display tabular-nums text-[hsl(var(--vs-text))]">{fmt(row.value)}</div>
+          </li>
+        ))}
+      </ol>
+    </motion.div>
+  );
+}
+
 function SummaryStat({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
     <div>
@@ -334,13 +497,13 @@ function SummaryStat({ label, value, sub }: { label: string; value: string; sub?
  * (This Month + 6-Month). Kept visually distinct from MiniStat so the pair
  * reads as "the two important numbers" at a glance.
  */
-function HeroStat({ label, value }: { label: string; value: string }) {
+function HeroStat({ label, value, sizeClass = "text-[20px]" }: { label: string; value: string; sizeClass?: string }) {
   return (
     <div className="rounded-xl bg-[hsl(var(--vs-surface))]/50 border border-[hsl(var(--vs-border))] px-3 py-2.5">
       <div className="text-[10px] uppercase tracking-wider font-medium text-[hsl(var(--vs-text-muted))]">
         {label}
       </div>
-      <div className="mt-1 font-display text-[20px] leading-tight tabular-nums text-[hsl(var(--vs-text))]">
+      <div className={`mt-1 font-display ${sizeClass} leading-tight tabular-nums text-[hsl(var(--vs-text))]`}>
         {value}
       </div>
     </div>
@@ -413,6 +576,20 @@ function EditConfigDialog({
   const [rows, setRows] = useState(
     config.recruiters.map((r) => ({ key: r.key, name: r.name, salary: r.monthlySalary != null ? String(r.monthlySalary) : "" })),
   );
+  // Phase 2.6.1 — display presets. Fall back to defaults so a config saved
+  // before this dialog knew about `display` doesn't lose values on save.
+  const [preset, setPreset] = useState<"compact" | "comfortable" | "spacious">(
+    config.display?.preset ?? "comfortable",
+  );
+  const [density, setDensity] = useState<"1-col" | "2-col" | "3-col">(
+    config.display?.density ?? "3-col",
+  );
+  const [sortBy, setSortBy] = useState<"name" | "pace-desc" | "pace-asc" | "actual-mtd-desc">(
+    config.display?.sortBy ?? "name",
+  );
+  const [leaderboardMetric, setLeaderboardMetric] = useState<
+    "off" | "mtd-fee" | "pace" | "rolling-3mo-fee"
+  >(config.display?.leaderboardMetric ?? "off");
 
   const save = useMutation({
     mutationFn: async () => {
@@ -426,6 +603,7 @@ function EditConfigDialog({
           name: r.name.trim(),
           monthlySalary: Number(r.salary || 0),
         })),
+        display: { preset, density, sortBy, leaderboardMetric },
       };
       return apiRequest("PATCH", `/api/channels/${channelId}/scorecard/config`, payload);
     },
@@ -441,7 +619,11 @@ function EditConfigDialog({
 
   return (
     <Dialog open onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="max-w-lg">
+      {/* Wider dialog (max-w-2xl) + capped height with scroll so the recruiter
+          rows never crowd the salary column or push the Save button off
+          screen on small viewports. Fixes the wrapping/clipping issue where
+          the 3-column recruiter row + × button overflowed max-w-lg. */}
+      <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Edit scorecard</DialogTitle>
           <DialogDescription>Recruiters, salaries, and targets. Salaries stay private — only admins see them.</DialogDescription>
@@ -456,7 +638,7 @@ function EditConfigDialog({
             Recruiters
           </div>
           {rows.map((r, idx) => (
-            <div key={idx} className="grid grid-cols-[1fr_1fr_120px_auto] gap-2 items-center">
+            <div key={idx} className="grid grid-cols-[120px_1fr_140px_36px] gap-2 items-center">
               <input
                 className="h-9 px-2 rounded-md bg-[hsl(var(--vs-surface))] border border-[hsl(var(--vs-border))] text-sm"
                 placeholder="key"
@@ -495,6 +677,63 @@ function EditConfigDialog({
             + Add recruiter
           </button>
         </div>
+        {/* Phase 2.6.1 — Display presets. Three curated knobs that change
+            how everyone sees the widget. Kept small on purpose so this stays
+            a couple of dropdowns, not a settings kitchen sink. */}
+        <div className="mt-4 pt-4 border-t border-[hsl(var(--vs-border))]">
+          <div className="text-[11px] uppercase tracking-wider font-medium text-[hsl(var(--vs-text-muted))] mb-2">
+            Display
+          </div>
+          <div className="grid grid-cols-3 gap-3">
+            <LabeledSelect
+              label="Preset"
+              value={preset}
+              onChange={(v) => setPreset(v as any)}
+              options={[
+                { value: "compact", label: "Compact" },
+                { value: "comfortable", label: "Comfortable" },
+                { value: "spacious", label: "Spacious" },
+              ]}
+            />
+            <LabeledSelect
+              label="Density"
+              value={density}
+              onChange={(v) => setDensity(v as any)}
+              options={[
+                { value: "1-col", label: "1 per row" },
+                { value: "2-col", label: "2 per row" },
+                { value: "3-col", label: "3 per row" },
+              ]}
+            />
+            <LabeledSelect
+              label="Sort by"
+              value={sortBy}
+              onChange={(v) => setSortBy(v as any)}
+              options={[
+                { value: "name", label: "Name" },
+                { value: "pace-desc", label: "Pace ↓" },
+                { value: "pace-asc", label: "Pace ↑" },
+                { value: "actual-mtd-desc", label: "MTD $ ↓" },
+              ]}
+            />
+          </div>
+          {/* Leaderboard sits on its own row so the label + explanation
+              have room and the dropdown can be full-width. Off by default. */}
+          <div className="mt-3">
+            <LabeledSelect
+              label="Leaderboard"
+              value={leaderboardMetric}
+              onChange={(v) => setLeaderboardMetric(v as any)}
+              options={[
+                { value: "off", label: "Off" },
+                { value: "mtd-fee", label: "MTD Fees ($ closed this month)" },
+                { value: "pace", label: "Pace vs. Target (% of month’s goal)" },
+                { value: "rolling-3mo-fee", label: "Rolling 3-Month Fees" },
+              ]}
+            />
+          </div>
+        </div>
+
         <div className="mt-4 flex items-center justify-end gap-2">
           <button
             type="button"
@@ -646,6 +885,38 @@ function LabeledInput({ label, value, onChange }: { label: string; value: string
         onChange={(e) => onChange(e.target.value)}
         inputMode="decimal"
       />
+    </div>
+  );
+}
+
+/**
+ * Native <select> styled to match LabeledInput. Used by the Display
+ * presets in EditConfigDialog. Kept minimal on purpose — shadcn's Select
+ * is overkill for a 3-option enum.
+ */
+function LabeledSelect({
+  label,
+  value,
+  onChange,
+  options,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  options: Array<{ value: string; label: string }>;
+}) {
+  return (
+    <div>
+      <div className="text-[11px] uppercase tracking-wider text-[hsl(var(--vs-text-muted))] mb-1">{label}</div>
+      <select
+        className="w-full h-9 px-2 rounded-md bg-[hsl(var(--vs-surface))] border border-[hsl(var(--vs-border))] text-sm"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+      >
+        {options.map((o) => (
+          <option key={o.value} value={o.value}>{o.label}</option>
+        ))}
+      </select>
     </div>
   );
 }
