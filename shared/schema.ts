@@ -1217,6 +1217,11 @@ export const scorecardDisplaySchema = z.object({
   preset: z.enum(["compact", "comfortable", "spacious"]).default("comfortable"),
   density: z.enum(["1-col", "2-col", "3-col"]).default("3-col"),
   sortBy: z.enum(["name", "pace-desc", "pace-asc", "actual-mtd-desc"]).default("name"),
+  // Phase 2.6.2 — leaderboard. Set to "off" to hide the panel entirely.
+  // The three real metrics rank recruiters by different competitive lenses.
+  leaderboardMetric: z
+    .enum(["off", "mtd-fee", "pace", "rolling-3mo-fee"])
+    .default("off"),
 });
 export type ScorecardDisplay = z.infer<typeof scorecardDisplaySchema>;
 
