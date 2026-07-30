@@ -1,13 +1,11 @@
-import { Plus, Settings, LogOut, Check, Circle, Star } from "lucide-react";
+import { Settings, LogOut, Check, Circle, Star } from "lucide-react";
 import { VectorLogo } from "./VectorLogo";
 import type { ApiProject, UserPresence } from "@/types/api";
 import { useAuth } from "@/lib/auth";
-import { useState } from "react";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem,
   DropdownMenuTrigger, DropdownMenuSeparator, DropdownMenuLabel,
 } from "@/components/ui/dropdown-menu";
-import { InviteDialog } from "./InviteDialog";
 import { usePresence } from "@/hooks/use-presence";
 import { PRESENCE_COLOR } from "./Avatar";
 
@@ -46,9 +44,7 @@ interface Props {
 export function ProjectRail({ projects, activeId, onSelect, unreadByProjectId, hasUnreadByProjectId, onMarkAllRead, sseStatus }: Props) {
   const { user, logout } = useAuth();
   const { presence, manualPresence, setManualPresence } = usePresence();
-  const [inviteOpen, setInviteOpen] = useState(false);
 
-  const isAdmin = user?.role === "admin";
 
   return (
     <aside
@@ -84,17 +80,9 @@ export function ProjectRail({ projects, activeId, onSelect, unreadByProjectId, h
 
       <div className="h-[2px] w-8 bg-[hsl(220_40%_25%)] rounded-full my-1" />
 
-      {isAdmin && (
-        <button
-          type="button"
-          onClick={() => setInviteOpen(true)}
-          className="w-12 h-12 rounded-2xl flex items-center justify-center bg-[hsl(220_45%_27%)] hover:rounded-xl hover:bg-vs-blue transition-all text-vs-blue hover:text-[hsl(220_60%_9%)]"
-          title="Invite a teammate"
-          data-testid="button-invite"
-        >
-          <Plus className="w-5 h-5" />
-        </button>
-      )}
+      {/* Invite/add-user UI removed in Phase 2.0 — all invites now happen
+          at https://auth.bulldogops.com. This chat app previously showed a
+          "+" button that opened an InviteDialog wired to a dead endpoint. */}
 
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
@@ -162,14 +150,6 @@ export function ProjectRail({ projects, activeId, onSelect, unreadByProjectId, h
         </DropdownMenuContent>
       </DropdownMenu>
 
-      {inviteOpen && (
-        <InviteDialog
-          open={inviteOpen}
-          onClose={() => setInviteOpen(false)}
-          projects={projects}
-          defaultProjectId={activeId ?? projects[0]?.id ?? null}
-        />
-      )}
     </aside>
   );
 }
