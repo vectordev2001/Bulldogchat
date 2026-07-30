@@ -239,8 +239,12 @@ function ProjectPill({
        */}
       {unread > 0 && !active && (
         <span
-          className="absolute -bottom-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full text-white text-[11px] font-bold leading-none flex items-center justify-center ring-2 ring-[hsl(220_60%_9%)] shadow-md tabular-nums"
-          style={{ backgroundColor: "#ff3b30" /* Apple system red */ }}
+          className="absolute -bottom-1.5 -right-1.5 min-w-[20px] h-[20px] px-1.5 rounded-full text-white text-[12px] font-bold leading-none flex items-center justify-center ring-2 ring-white shadow-md tabular-nums"
+          style={{
+            backgroundColor: "#FF453A" /* Apple system red (dark-mode variant) — brighter than #ff3b30 against the near-black rail */,
+            // Slight vertical nudge so the digits sit visually centered even at 12px
+            paddingBottom: "1px",
+          }}
           data-testid={`badge-unread-count-${project.id}`}
           title={`${unread} unread — right-click to mark all read`}
           aria-label={`${unread} unread`}
