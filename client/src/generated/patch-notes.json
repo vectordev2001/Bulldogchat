@@ -1,7 +1,17 @@
 {
-  "generated_at": "2026-08-04T18:48:16.961Z",
+  "generated_at": "2026-08-04T21:40:00.976Z",
   "repo": "vectordev2001/Bulldogchat",
   "notes": [
+    {
+      "number": 125,
+      "title": "Add What's New patch notes to Bulldog Chat",
+      "raw_title": "Add What's New patch notes to Bulldog Chat",
+      "summary": "Ports the What's New surface from bulldog-contracts.",
+      "merged_at": "2026-08-04T20:50:49Z",
+      "author": "vectordev2001",
+      "url": "https://github.com/vectordev2001/Bulldogchat/pull/125",
+      "category": "other"
+    },
     {
       "number": 124,
       "title": "Admin-picked display presets (preset / density / sort)",
@@ -53,6 +63,36 @@
       "category": "chore"
     },
     {
+      "number": 100,
+      "title": "Picture-in-picture call overlay",
+      "raw_title": "feat(chat): picture-in-picture call overlay",
+      "summary": "The LiveKit room stays connected throughout — isPiP only swaps the visual layer.",
+      "merged_at": "2026-07-29T19:31:28Z",
+      "author": "vectordev2001",
+      "url": "https://github.com/vectordev2001/Bulldogchat/pull/100",
+      "category": "feature"
+    },
+    {
+      "number": 92,
+      "title": "Bulldog Meet only for MVP; park Teams bridging behind flag",
+      "raw_title": "feat(scheduling): Bulldog Meet only for MVP; park Teams bridging behind flag",
+      "summary": "Ship the MVP as **Bulldog Meet only**. The \"Join via Teams\" affordance was misleading external attendees: signaling worked end-to-end but the bridge bot never actually appeared as a real participant in the Teams meeting (MediaWorker media-plane blocked, no observable logs). Rather than inviting people to a Teams meeting with no Bulldog user in it, we default to browser-based Bulldog Meet — one lin",
+      "merged_at": "2026-07-29T19:30:27Z",
+      "author": "vectordev2001",
+      "url": "https://github.com/vectordev2001/Bulldogchat/pull/92",
+      "category": "feature"
+    },
+    {
+      "number": 60,
+      "title": "Fix iOS Meet pre-join: Join button hidden under floating tab bar",
+      "raw_title": "Fix iOS Meet pre-join: Join button hidden under floating tab bar",
+      "summary": "On iOS, the Bulldog Meet pre-join screen renders the **Join meeting** button under the native floating Chat/Contracts/Ops tab pill, and #root { overflow: hidden } prevents scrolling past it. Reported by Josh — the join button is behind the pill on iPhone.",
+      "merged_at": "2026-07-29T19:18:39Z",
+      "author": "vectordev2001",
+      "url": "https://github.com/vectordev2001/Bulldogchat/pull/60",
+      "category": "other"
+    },
+    {
       "number": 119,
       "title": "Stage 4: chat pushes reach native iOS via auth /api/notify",
       "raw_title": "Stage 4: chat pushes reach native iOS via auth /api/notify",
@@ -61,46 +101,6 @@
       "author": "vectordev2001",
       "url": "https://github.com/vectordev2001/Bulldogchat/pull/119",
       "category": "other"
-    },
-    {
-      "number": 118,
-      "title": "Push-bridge: wait for __BULLDOG__ before conceding",
-      "raw_title": "push-bridge: wait for __BULLDOG__ before conceding",
-      "summary": "Wait for the native bridge to appear before conceding.",
-      "merged_at": "2026-07-23T15:56:38Z",
-      "author": "vectordev2001",
-      "url": "https://github.com/vectordev2001/Bulldogchat/pull/118",
-      "category": "other"
-    },
-    {
-      "number": 117,
-      "title": "Push-bridge: SPA-side diag pings for iOS notification debug",
-      "raw_title": "push-bridge: SPA-side diag pings for iOS notification debug",
-      "summary": "Adds SPA-side spa.* diag pings to /api/ios-diag at each branch of the JWT publish flow so we can pinpoint why native isn't receiving a JWT.",
-      "merged_at": "2026-07-23T04:04:54Z",
-      "author": "vectordev2001",
-      "url": "https://github.com/vectordev2001/Bulldogchat/pull/117",
-      "category": "other"
-    },
-    {
-      "number": 116,
-      "title": "IOS push: publish central Bulldog auth JWT to native (chat)",
-      "raw_title": "iOS push: publish central Bulldog auth JWT to native (chat)",
-      "summary": "Adds client/src/lib/push-bridge.ts and wires it into AuthProvider. Chat SPA now hands the central RS256 access JWT to __BULLDOG__.reportJwt('chat', jwt) so Swift can POST to auth.bulldogops.com/api/devices.",
-      "merged_at": "2026-07-22T04:27:52Z",
-      "author": "vectordev2001",
-      "url": "https://github.com/vectordev2001/Bulldogchat/pull/116",
-      "category": "other"
-    },
-    {
-      "number": 115,
-      "title": "Unstick company-rail star + count badges",
-      "raw_title": "fix(chat): unstick company-rail star + count badges",
-      "summary": "Fixes the stuck yellow star + red count badges on the company avatars in the far-left rail (VFD showing '4', VTS showing '1' \\u2014 numbers that never cleared even after reading everything).",
-      "merged_at": "2026-07-20T01:12:17Z",
-      "author": "vectordev2001",
-      "url": "https://github.com/vectordev2001/Bulldogchat/pull/115",
-      "category": "fix"
     }
   ]
 }
