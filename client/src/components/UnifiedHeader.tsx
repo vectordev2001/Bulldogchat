@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Menu, X, LogOut, User, Volume2, VolumeX } from "lucide-react";
 import { BulldogLogo } from "./BulldogLogo";
 import { NotificationsButton } from "./NotificationsButton";
+import { PatchNotesTrigger } from "./PatchNotesTrigger";
 import { AppSwitcher } from "@/lib/AppSwitcher";
 import { Avatar } from "./Avatar";
 import { useAuth } from "@/lib/auth";
@@ -89,6 +90,7 @@ export function UnifiedHeader({ navOpen, onToggleNav, onLogoClick }: Props) {
       {/* Right cluster: notifications • app switcher • avatar */}
       <div className="flex shrink-0 items-center gap-1">
         <NotificationsButton variant="header" />
+        <PatchNotesTrigger />
         <AppSwitcher currentApp="chat" placement="bottom-end" />
 
         <DropdownMenu>
