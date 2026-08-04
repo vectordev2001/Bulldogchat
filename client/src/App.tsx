@@ -14,6 +14,7 @@ import CallJoin from "@/pages/CallJoin";
 import MeetingJoin from "@/pages/meetings/Join";
 import MeetingRoom from "@/pages/meetings/Room";
 import MeetingEnd from "@/pages/meetings/End";
+import WhatsNewPage from "@/pages/whats-new";
 import { MeetingProvider } from "@/lib/meeting";
 import { AuthProvider, useAuth } from "@/lib/auth";
 import { PresenceProvider } from "@/hooks/use-presence";
@@ -74,6 +75,7 @@ function AppRouter() {
       <Route path="/signup" component={Signup} />
       <Route path="/accept-invite/:token" component={AcceptInvite} />
       <Route path="/admin">{() => <ProtectedRoute><AdminPanel /></ProtectedRoute>}</Route>
+      <Route path="/whats-new">{() => <ProtectedRoute><WhatsNewPage /></ProtectedRoute>}</Route>
       <Route path="/call-join/:token">{() => <ProtectedRoute><CallJoin /></ProtectedRoute>}</Route>
       {/* Deep-link catch-alls: /#/dms/<id>/m/<msgId> and /#/channels/<id>[/m/<msgId>]
           are emitted by SMS chat-mirror and push notifications. Home.tsx reads

@@ -11,7 +11,8 @@
     "test": "tsx --test --test-force-exit server/routes-attachments.test.ts server/dm-title.test.ts client/src/components/dm-label.test.ts",
     "smoke:scheduled-invites": "tsx scripts/smoke-scheduled-invites.ts",
     "smoke:teams-lobby-bypass": "tsx scripts/smoke-teams-lobby-bypass.ts",
-    "db:push": "drizzle-kit push"
+    "db:push": "drizzle-kit push",
+    "patch-notes:refresh": "tsx script/generate-patch-notes.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.100.1",

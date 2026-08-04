@@ -1,0 +1,124 @@
+# Regenerates client/src/generated/patch-notes.json on every push to main so
+# the in-app "What's new" surface stays fresh without any manual action.
+#
+# Flow:
+#   1. A PR gets merged to main (or a direct push happens).
+#   2. This workflow checks out main, runs `npm run patch-notes:refresh` with
+#      GITHUB_TOKEN so it can hit the private repo's PR list.
+#   3. If patch-notes.json actually changed, commit and push back to main with
+#      "[skip ci]" so this workflow does NOT retrigger itself.
+#
+# Why "[skip ci]"?
+#   GitHub honors "[skip ci]" (or "[skip actions]") in the head commit message
+#   by not firing any workflows for that push. Without it, the auto-commit
+#   would trigger this same workflow again, which would produce an identical
+#   JSON, no-op, and stop - but we'd still burn a minute of runner time and
+#   log noise on every PR. "[skip ci]" avoids that loop cleanly.
+#
+# Why the paths-ignore filter?
+#   Defense in depth. Even if someone accidentally strips "[skip ci]" from
+#   the commit message, we won't loop because the only file the workflow
+#   ever writes is patch-notes.json - and that path is excluded from the
+#   trigger.
+
+name: Refresh patch notes
+
+on:
+  push:
+    branches: [main]
+    # Don't re-run when the only change is the generated JSON. This is the
+    # second guard against an infinite loop (the first is "[skip ci]" on the
+    # auto-commit itself).
+    paths-ignore:
+      - "client/src/generated/patch-notes.json"
+  # Manual trigger for testing / on-demand refreshes. Run via:
+  #   gh workflow run refresh-patch-notes.yml --ref main
+  workflow_dispatch:
+
+# Only one refresh at a time. If two PRs merge back-to-back the second run
+# waits for the first to finish, then re-fetches so it sees BOTH new PRs.
+concurrency:
+  group: refresh-patch-notes
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    # Need write access on contents to push the commit back. actions:read is
+    # implicit but doesn't hurt to be explicit. pull-requests:read lets the
+    # generator hit /pulls on the private repo without a PAT.
+    permissions:
+      contents: write
+      pull-requests: read
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          # Use the default GITHUB_TOKEN for the checkout so the subsequent
+          # `git push` reuses the same auth without extra plumbing.
+          ref: main
+          # Fetch just enough history for git to do a fast-forward push.
+          fetch-depth: 1
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          # 22 LTS - avoids the Node 20 deprecation warning that GitHub now
+          # prints on every run.
+          node-version: "22"
+
+      # Install tsx OUTSIDE the repo so npm never sees this project's
+      # package.json (which references the private @vectordev2001/chat-widget
+      # on GitHub Packages, which the default GITHUB_TOKEN can't read).
+      # /tmp/tsx-runner is an isolated node_modules with just tsx in it.
+      - name: Install tsx (isolated)
+        run: |
+          mkdir -p /tmp/tsx-runner
+          cd /tmp/tsx-runner
+          # `npm init -y` + `npm install tsx` is the smallest install that
+          # gives us an npx-runnable tsx binary. No lockfile, no lockstep
+          # with the app's dependency tree.
+          npm init -y > /dev/null
+          npm install --no-audit --no-fund --no-save tsx@^4
+
+      - name: Regenerate patch-notes.json
+        env:
+          # Default token works because this repo is the one being read. It
+          # already has pull-requests:read granted above.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # Point node_modules at the isolated install so `npx tsx` finds it,
+        # but keep CWD in the repo so the script's relative paths resolve.
+        run: |
+          export PATH="/tmp/tsx-runner/node_modules/.bin:$PATH"
+          tsx script/generate-patch-notes.ts
+
+      - name: Commit and push if changed
+        env:
+          # Same token used for the push. Because "[skip ci]" is in the
+          # commit message, GitHub will not re-fire this workflow.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          # Bail out early if the generator didn't actually change anything -
+          # e.g. the last push was a docs-only PR and the top 10 list didn't
+          # move. No point creating an empty commit.
+          if git diff --quiet -- client/src/generated/patch-notes.json; then
+            echo "patch-notes.json unchanged; nothing to commit."
+            exit 0
+          fi
+
+          # Attribute the commit to the GitHub Actions bot so it's obvious in
+          # `git log` that this wasn't a human edit. The email is the standard
+          # GitHub-provided noreply for the actions bot.
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add client/src/generated/patch-notes.json
+          # "[skip ci]" prevents this push from re-triggering the workflow.
+          git commit -m "chore(patch-notes): refresh [skip ci]"
+
+          # Straight push to main. No branch protection on this repo (checked
+          # via API). If protection is added later, switch this to opening a
+          # PR via `gh pr create` instead.
+          git push origin main

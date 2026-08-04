@@ -1,0 +1,106 @@
+{
+  "generated_at": "2026-08-04T18:48:16.961Z",
+  "repo": "vectordev2001/Bulldogchat",
+  "notes": [
+    {
+      "number": 124,
+      "title": "Admin-picked display presets (preset / density / sort)",
+      "raw_title": "feat(scorecard): admin-picked display presets (preset / density / sort)",
+      "summary": "A small, curated set of \"ways to look at it\" for the VTS scorecard widget. Admin picks one, everyone sees the same view. Three knobs, no more:",
+      "merged_at": "2026-07-30T22:07:44Z",
+      "author": "vectordev2001",
+      "url": "https://github.com/vectordev2001/Bulldogchat/pull/124",
+      "category": "feature"
+    },
+    {
+      "number": 123,
+      "title": "Dual hero targets side-by-side on recruiter cards",
+      "raw_title": "feat(scorecard): dual hero targets side-by-side on recruiter cards",
+      "summary": "Small polish on the VTS scorecard: each recruiter card now leads with **two big $ numbers side-by-side** \\u2014 This Month on the left, 6-Month on the right. Supporting stats (floor placements, stretch, MTD actual) demoted to a 3-column mini-stat row below.",
+      "merged_at": "2026-07-30T21:38:02Z",
+      "author": "vectordev2001",
+      "url": "https://github.com/vectordev2001/Bulldogchat/pull/123",
+      "category": "feature"
+    },
+    {
+      "number": 122,
+      "title": "VTS recruiter scorecard channel (Phase 2.6)",
+      "raw_title": "feat(scorecard): VTS recruiter scorecard channel (Phase 2.6)",
+      "summary": "New scorecard channel type. Renders a Bulldog-branded fee/placement dashboard for the VTS recruiter team instead of a message stream.",
+      "merged_at": "2026-07-30T05:13:27Z",
+      "author": "vectordev2001",
+      "url": "https://github.com/vectordev2001/Bulldogchat/pull/122",
+      "category": "feature"
+    },
+    {
+      "number": 121,
+      "title": "Make workspace-rail unread badge legible on iOS + web",
+      "raw_title": "fix(chat): make workspace-rail unread badge legible on iOS + web",
+      "summary": "Numeric unread badge on the workspace-rail pills (VTS, TDIS, VS, VFD) was cramped and muddy on iOS. Josh flagged \"it is hard to read the numbers in the iOS app.\"",
+      "merged_at": "2026-07-30T03:35:28Z",
+      "author": "vectordev2001",
+      "url": "https://github.com/vectordev2001/Bulldogchat/pull/121",
+      "category": "fix"
+    },
+    {
+      "number": 120,
+      "title": "Remove dead invite UI from ProjectRail",
+      "raw_title": "chore(chat): remove dead invite UI from ProjectRail",
+      "summary": "Removes the workspace-rail \"+\" invite button and the InviteDialog component from bulldogchat.",
+      "merged_at": "2026-07-30T03:25:09Z",
+      "author": "vectordev2001",
+      "url": "https://github.com/vectordev2001/Bulldogchat/pull/120",
+      "category": "chore"
+    },
+    {
+      "number": 119,
+      "title": "Stage 4: chat pushes reach native iOS via auth /api/notify",
+      "raw_title": "Stage 4: chat pushes reach native iOS via auth /api/notify",
+      "summary": "Chat already computes rich title/body. Web push and Expo already fan out. This adds APNs fan-out via bulldog-auth's central /api/notify so the unified iOS shell receives them too. Uses the new email-based /api/notify (auth PR #19). Fire-and-forget \\u2014 never blocks message send.",
+      "merged_at": "2026-07-23T20:10:04Z",
+      "author": "vectordev2001",
+      "url": "https://github.com/vectordev2001/Bulldogchat/pull/119",
+      "category": "other"
+    },
+    {
+      "number": 118,
+      "title": "Push-bridge: wait for __BULLDOG__ before conceding",
+      "raw_title": "push-bridge: wait for __BULLDOG__ before conceding",
+      "summary": "Wait for the native bridge to appear before conceding.",
+      "merged_at": "2026-07-23T15:56:38Z",
+      "author": "vectordev2001",
+      "url": "https://github.com/vectordev2001/Bulldogchat/pull/118",
+      "category": "other"
+    },
+    {
+      "number": 117,
+      "title": "Push-bridge: SPA-side diag pings for iOS notification debug",
+      "raw_title": "push-bridge: SPA-side diag pings for iOS notification debug",
+      "summary": "Adds SPA-side spa.* diag pings to /api/ios-diag at each branch of the JWT publish flow so we can pinpoint why native isn't receiving a JWT.",
+      "merged_at": "2026-07-23T04:04:54Z",
+      "author": "vectordev2001",
+      "url": "https://github.com/vectordev2001/Bulldogchat/pull/117",
+      "category": "other"
+    },
+    {
+      "number": 116,
+      "title": "IOS push: publish central Bulldog auth JWT to native (chat)",
+      "raw_title": "iOS push: publish central Bulldog auth JWT to native (chat)",
+      "summary": "Adds client/src/lib/push-bridge.ts and wires it into AuthProvider. Chat SPA now hands the central RS256 access JWT to __BULLDOG__.reportJwt('chat', jwt) so Swift can POST to auth.bulldogops.com/api/devices.",
+      "merged_at": "2026-07-22T04:27:52Z",
+      "author": "vectordev2001",
+      "url": "https://github.com/vectordev2001/Bulldogchat/pull/116",
+      "category": "other"
+    },
+    {
+      "number": 115,
+      "title": "Unstick company-rail star + count badges",
+      "raw_title": "fix(chat): unstick company-rail star + count badges",
+      "summary": "Fixes the stuck yellow star + red count badges on the company avatars in the far-left rail (VFD showing '4', VTS showing '1' \\u2014 numbers that never cleared even after reading everything).",
+      "merged_at": "2026-07-20T01:12:17Z",
+      "author": "vectordev2001",
+      "url": "https://github.com/vectordev2001/Bulldogchat/pull/115",
+      "category": "fix"
+    }
+  ]
+}
