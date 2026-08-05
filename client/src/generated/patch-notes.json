@@ -1,7 +1,17 @@
 {
-  "generated_at": "2026-08-05T02:30:52.754Z",
+  "generated_at": "2026-08-05T15:45:27.519Z",
   "repo": "vectordev2001/Bulldogchat",
   "notes": [
+    {
+      "number": 130,
+      "title": "Fixed 5-month forward window + mobile header cleanup",
+      "raw_title": "fix(scorecard): fixed 5-month forward window + mobile header cleanup",
+      "summary": "Two related fixes to the VTS recruiter scorecard channel.",
+      "merged_at": "2026-08-05T15:45:11Z",
+      "author": "vectordev2001",
+      "url": "https://github.com/vectordev2001/Bulldogchat/pull/130",
+      "category": "fix"
+    },
     {
       "number": 129,
       "title": "Scorecard v3: 6-month team viz, recruiter heat map, tap-to-open placements",
@@ -91,16 +101,6 @@
       "author": "vectordev2001",
       "url": "https://github.com/vectordev2001/Bulldogchat/pull/121",
       "category": "fix"
-    },
-    {
-      "number": 120,
-      "title": "Remove dead invite UI from ProjectRail",
-      "raw_title": "chore(chat): remove dead invite UI from ProjectRail",
-      "summary": "Removes the workspace-rail \"+\" invite button and the InviteDialog component from bulldogchat.",
-      "merged_at": "2026-07-30T03:25:09Z",
-      "author": "vectordev2001",
-      "url": "https://github.com/vectordev2001/Bulldogchat/pull/120",
-      "category": "chore"
     }
   ]
 }
