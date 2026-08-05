@@ -770,3 +770,69 @@
   border-color: rgba(148, 163, 184, 0.5);
   opacity: 0.7;
 }
+
+/* -----------------------------------------------------------------
+ * Print styles — scorecard export
+ *
+ * When the user hits Print (or Save PDF via the print dialog) from
+ * a scorecard channel, we want the printed page to show ONLY the
+ * scorecard body — no sidebars, no channel list, no in-app chrome.
+ *
+ * The scorecard view root is tagged with [data-print-root="scorecard"].
+ * On @media print we:
+ *   • hide the entire body,
+ *   • un-hide only the print root and its descendants,
+ *   • lift the print root out of its flex column and give it a
+ *     document-flow position at the top of the page,
+ *   • drop the sticky header border (looks like a page-break glitch
+ *     when printed) and let the body scroll unroll.
+ *
+ * Any element the app doesn't want on paper (e.g. header buttons,
+ * hover popovers) can opt out with the `.no-print` utility.
+ * ----------------------------------------------------------------- */
+@media print {
+  /* Kill screen chrome. */
+  body * {
+    visibility: hidden !important;
+  }
+
+  /* Reveal the scorecard root (and everything inside it). */
+  [data-print-root="scorecard"],
+  [data-print-root="scorecard"] * {
+    visibility: visible !important;
+  }
+
+  /* Lift the print root out of the flex column and pin it to the top of
+     the printed page so overflow can unroll instead of being clipped
+     inside a 100vh flex parent. */
+  [data-print-root="scorecard"] {
+    position: absolute !important;
+    inset: 0 !important;
+    width: 100% !important;
+    height: auto !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+    background: white !important;
+  }
+
+  /* Nested scrollers become open flow so the whole scorecard flows
+     across pages instead of clipping at the viewport. */
+  [data-print-root="scorecard"] .overflow-y-auto,
+  [data-print-root="scorecard"] .overflow-auto {
+    overflow: visible !important;
+    height: auto !important;
+    max-height: none !important;
+  }
+
+  /* Header buttons, edit affordances, action rows — anything tagged
+     with .no-print or `data-no-print` disappears on paper. */
+  .no-print,
+  [data-no-print="true"] {
+    display: none !important;
+  }
+
+  /* Give the printed sheet reasonable margins. Chrome respects @page. */
+  @page {
+    margin: 0.5in;
+  }
+}

@@ -37,7 +37,7 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { motion } from "framer-motion";
-import { DollarSign, Loader2, Pencil, Plus, Trash2, TrendingUp, Trophy, Users, X } from "lucide-react";
+import { DollarSign, Loader2, Mail, Pencil, Plus, Printer, Trash2, TrendingUp, Trophy, Users, X } from "lucide-react";
 import type { ApiChannel } from "@/types/api";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -399,6 +399,11 @@ export function ScorecardChannelView({ channel }: Props) {
 
   const [editOpen, setEditOpen] = useState(false);
   const [logOpen, setLogOpen] = useState(false);
+  // Export affordances. Print piggybacks on the browser print dialog
+  // (users pick “Save as PDF” for a PDF); Email posts a rendered
+  // snapshot to the server which sends it via SendGrid with an HTML
+  // body and a plain-text fallback.
+  const [emailOpen, setEmailOpen] = useState(false);
 
   if (q.isLoading || !q.data) {
     return (
@@ -554,7 +559,14 @@ export function ScorecardChannelView({ channel }: Props) {
   }
 
   return (
-    <div className="flex-1 min-h-0 flex flex-col bg-[hsl(var(--vs-surface))]">
+    <div
+      className="flex-1 min-h-0 flex flex-col bg-[hsl(var(--vs-surface))]"
+      /* Marks this subtree as the print isolation root. The @media print
+         rules in index.css hide the rest of the app shell and unroll this
+         node into the document flow so the whole scorecard prints (or
+         saves to PDF via the browser dialog) without clipping. */
+      data-print-root="scorecard"
+    >
       {/* Header — matches TextChannelView's 14-row header on desktop and
           stacks cleanly on narrow viewports.
 
@@ -595,35 +607,58 @@ export function ScorecardChannelView({ channel }: Props) {
               )}
             </div>
           </div>
-          {/* Action row. On mobile this lives on its own line beneath the
-              title stack so “Log placements” never fights the subtitle for
-              horizontal space. On sm+ it snaps to the right of the header
-              via ml-auto. */}
-          {canEdit && (
-            <div
-              className="flex items-center gap-2 sm:ml-auto sm:shrink-0"
-              data-testid="scorecard-header-actions"
+          {/* Action row. Print + Email are visible to anyone who can
+             see the scorecard (they don't mutate data); Log placements
+             and Edit config remain admin-only via `canEdit`. On mobile
+             the row wraps to its own line beneath the title stack. The
+             whole row is `no-print` so the buttons don't show up in the
+             printed page or PDF export. */}
+          <div
+            className="flex items-center gap-2 sm:ml-auto sm:shrink-0 no-print"
+            data-testid="scorecard-header-actions"
+            data-no-print="true"
+          >
+            <button
+              type="button"
+              onClick={() => window.print()}
+              className="h-8 w-8 rounded-full flex items-center justify-center text-[hsl(var(--vs-text-muted))] hover:text-[#0090F0] hover-elevate transition shrink-0"
+              title="Print / Save as PDF"
+              data-testid="button-print-scorecard"
             >
-              <button
-                type="button"
-                onClick={() => setLogOpen(true)}
-                className="h-8 px-3 rounded-full text-[13px] font-medium bg-[#0090F0] text-white hover:bg-[#0080D8] active:scale-[0.98] transition shadow-[0_1px_2px_rgba(0,144,240,0.35)] whitespace-nowrap"
-                data-testid="button-log-actuals"
-              >
-                <Plus className="w-3.5 h-3.5 inline -ml-0.5 mr-1 -mt-0.5" />
-                Log placements
-              </button>
-              <button
-                type="button"
-                onClick={() => setEditOpen(true)}
-                className="h-8 w-8 rounded-full flex items-center justify-center text-[hsl(var(--vs-text-muted))] hover:text-[#0090F0] hover-elevate transition shrink-0"
-                title="Edit scorecard config"
-                data-testid="button-edit-config"
-              >
-                <Pencil className="w-4 h-4" />
-              </button>
-            </div>
-          )}
+              <Printer className="w-4 h-4" />
+            </button>
+            <button
+              type="button"
+              onClick={() => setEmailOpen(true)}
+              className="h-8 w-8 rounded-full flex items-center justify-center text-[hsl(var(--vs-text-muted))] hover:text-[#0090F0] hover-elevate transition shrink-0"
+              title="Email scorecard"
+              data-testid="button-email-scorecard"
+            >
+              <Mail className="w-4 h-4" />
+            </button>
+            {canEdit && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setLogOpen(true)}
+                  className="h-8 px-3 rounded-full text-[13px] font-medium bg-[#0090F0] text-white hover:bg-[#0080D8] active:scale-[0.98] transition shadow-[0_1px_2px_rgba(0,144,240,0.35)] whitespace-nowrap"
+                  data-testid="button-log-actuals"
+                >
+                  <Plus className="w-3.5 h-3.5 inline -ml-0.5 mr-1 -mt-0.5" />
+                  Log placements
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEditOpen(true)}
+                  className="h-8 w-8 rounded-full flex items-center justify-center text-[hsl(var(--vs-text-muted))] hover:text-[#0090F0] hover-elevate transition shrink-0"
+                  title="Edit scorecard config"
+                  data-testid="button-edit-config"
+                >
+                  <Pencil className="w-4 h-4" />
+                </button>
+              </>
+            )}
+          </div>
         </div>
       </div>
 
@@ -969,6 +1004,13 @@ export function ScorecardChannelView({ channel }: Props) {
           config={config}
           actuals={actuals}
           onClose={() => setLogOpen(false)}
+        />
+      )}
+      {emailOpen && (
+        <EmailScorecardDialog
+          channelId={channel.id}
+          channelName={channel.name}
+          onClose={() => setEmailOpen(false)}
         />
       )}
     </div>
@@ -1942,5 +1984,253 @@ function LabeledSelect({
         ))}
       </select>
     </div>
+  );
+}
+
+/**
+ * EmailScorecardDialog — collects recipients + optional subject/note and
+ * posts to the server, which renders a text+HTML snapshot of the current
+ * scorecard state and sends it via SendGrid. The client intentionally does
+ * NOT capture DOM to an image or bundle a PDF attachment; the server
+ * re-computes the same targets/actuals from the DB so the email stays in
+ * sync with what any recipient would see on refresh, and so the email is
+ * generated from the server's authoritative snapshot rather than whatever
+ * the sender happens to have on screen.
+ *
+ * UX contract:
+ *   • Recipients entered as chips (comma/enter/blur commits an email).
+ *     Invalid entries are shown inline and blocked at submit.
+ *   • Subject defaults to “{channelName} — scorecard update”; user can edit.
+ *   • Optional freeform note — prepended above the auto-rendered summary.
+ *   • On success, toast lists how many recipients were mailed; on any per-
+ *     recipient failure the server returns partial success and we surface
+ *     the failures without closing the dialog.
+ */
+function EmailScorecardDialog({
+  channelId,
+  channelName,
+  onClose,
+}: {
+  channelId: number;
+  channelName: string;
+  onClose: () => void;
+}) {
+  const { toast } = useToast();
+  const [chips, setChips] = useState<string[]>([]);
+  const [draft, setDraft] = useState("");
+  const [subject, setSubject] = useState(`${channelName} — scorecard update`);
+  const [note, setNote] = useState("");
+
+  // Minimal RFC-shaped email check. Server re-validates; this is only for
+  // preventing the user from mailing typos like "josh@" or trailing commas.
+  const isEmailLike = (s: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim());
+
+  const commitDraft = () => {
+    const parts = draft.split(/[,\s]+/).map((p) => p.trim()).filter(Boolean);
+    if (parts.length === 0) return;
+    setChips((prev) => {
+      const seen = new Set(prev.map((c) => c.toLowerCase()));
+      const next = [...prev];
+      for (const p of parts) {
+        const key = p.toLowerCase();
+        if (!seen.has(key)) {
+          seen.add(key);
+          next.push(p);
+        }
+      }
+      return next;
+    });
+    setDraft("");
+  };
+
+  const removeChip = (idx: number) => {
+    setChips((prev) => prev.filter((_, i) => i !== idx));
+  };
+
+  const invalidChips = chips.filter((c) => !isEmailLike(c));
+  const canSubmit = chips.length > 0 && invalidChips.length === 0 && subject.trim().length > 0;
+
+  const submit = useMutation({
+    mutationFn: async () => {
+      const payload = {
+        recipients: chips,
+        subject: subject.trim(),
+        note: note.trim() || null,
+      };
+      const res: any = await apiRequest("POST", `/api/channels/${channelId}/scorecard/email`, payload);
+      return res;
+    },
+    onSuccess: (res: any) => {
+      const sent: string[] = res?.sent ?? [];
+      const failed: Array<{ email: string; reason: string }> = res?.failed ?? [];
+      if (failed.length === 0) {
+        toast({
+          title: sent.length === 1 ? "Email sent" : `${sent.length} emails sent`,
+          description: sent.join(", "),
+        });
+        onClose();
+      } else {
+        toast({
+          title: sent.length > 0 ? `Partial send: ${sent.length} of ${sent.length + failed.length}` : "No emails sent",
+          description: failed.map((f) => `${f.email}: ${f.reason}`).join(" · ").slice(0, 300),
+          variant: "destructive",
+        });
+      }
+    },
+    onError: (e: any) => {
+      toast({
+        title: "Send failed",
+        description: e?.body?.message ?? e?.message ?? "Try again.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  return (
+    <Dialog open onOpenChange={(v) => !v && onClose()}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Email scorecard</DialogTitle>
+          <DialogDescription>
+            Sends the current scorecard snapshot — team totals, per-recruiter
+            performance, and pace — as an HTML email. The server renders it
+            fresh at send time, so recipients see the same numbers you do.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-4">
+          <div>
+            <div className="text-[11px] uppercase tracking-wider text-[hsl(var(--vs-text-muted))] mb-1">
+              Recipients
+            </div>
+            <div
+              className="min-h-[42px] w-full px-2 py-1.5 rounded-md bg-[hsl(var(--vs-surface))] border border-[hsl(var(--vs-border))] flex flex-wrap gap-1.5 items-center"
+              onClick={(e) => {
+                // Focus the input when the empty chip strip is clicked.
+                const el = (e.currentTarget.querySelector("input") as HTMLInputElement | null);
+                el?.focus();
+              }}
+            >
+              {chips.map((c, i) => {
+                const bad = !isEmailLike(c);
+                return (
+                  <span
+                    key={`${c}-${i}`}
+                    className={
+                      "inline-flex items-center gap-1 h-6 px-2 rounded-full text-[12px] " +
+                      (bad
+                        ? "bg-red-500/15 text-red-600 border border-red-500/40"
+                        : "bg-[#0090F0]/10 text-[#0090F0] border border-[#0090F0]/30")
+                    }
+                    title={bad ? "Not a valid email" : c}
+                    data-testid={bad ? "chip-email-invalid" : "chip-email"}
+                  >
+                    {c}
+                    <button
+                      type="button"
+                      onClick={(ev) => {
+                        ev.stopPropagation();
+                        removeChip(i);
+                      }}
+                      className="hover:opacity-70"
+                      aria-label={`Remove ${c}`}
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </span>
+                );
+              })}
+              <input
+                type="email"
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === "," || e.key === " " || e.key === "Tab") {
+                    if (draft.trim()) {
+                      e.preventDefault();
+                      commitDraft();
+                    }
+                  } else if (e.key === "Backspace" && draft === "" && chips.length > 0) {
+                    // Backspace on empty input peels the last chip so the
+                    // user can quickly correct a typo.
+                    removeChip(chips.length - 1);
+                  }
+                }}
+                onBlur={() => {
+                  if (draft.trim()) commitDraft();
+                }}
+                placeholder={chips.length === 0 ? "name@example.com" : ""}
+                className="flex-1 min-w-[8rem] h-6 bg-transparent outline-none text-sm placeholder:text-[hsl(var(--vs-text-muted))]"
+                data-testid="input-email-draft"
+              />
+            </div>
+            {invalidChips.length > 0 && (
+              <div className="mt-1 text-[11px] text-red-600">
+                Fix or remove the highlighted address{invalidChips.length === 1 ? "" : "es"} before sending.
+              </div>
+            )}
+          </div>
+
+          <div>
+            <div className="text-[11px] uppercase tracking-wider text-[hsl(var(--vs-text-muted))] mb-1">
+              Subject
+            </div>
+            <input
+              type="text"
+              value={subject}
+              onChange={(e) => setSubject(e.target.value)}
+              className="w-full h-9 px-2 rounded-md bg-[hsl(var(--vs-surface))] border border-[hsl(var(--vs-border))] text-sm"
+              data-testid="input-email-subject"
+            />
+          </div>
+
+          <div>
+            <div className="text-[11px] uppercase tracking-wider text-[hsl(var(--vs-text-muted))] mb-1">
+              Note (optional)
+            </div>
+            <textarea
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              rows={3}
+              placeholder="Anything you want to say above the scorecard summary."
+              className="w-full px-2 py-1.5 rounded-md bg-[hsl(var(--vs-surface))] border border-[hsl(var(--vs-border))] text-sm resize-y"
+              data-testid="input-email-note"
+            />
+          </div>
+
+          <div className="text-[11px] text-[hsl(var(--vs-text-muted))]">
+            Tip: for a PDF copy, use the Print button on the header — the
+            browser print dialog has a “Save as PDF” option.
+          </div>
+        </div>
+
+        <div className="mt-4 flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            className="h-9 px-4 rounded-md text-sm border border-[hsl(var(--vs-border))] hover:bg-[hsl(var(--vs-surface))]"
+            data-testid="button-email-cancel"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            disabled={!canSubmit || submit.isPending}
+            onClick={() => submit.mutate()}
+            className="h-9 px-4 rounded-md text-sm font-medium bg-[#0090F0] text-white disabled:opacity-50 disabled:cursor-not-allowed hover:bg-[#0080D8]"
+            data-testid="button-email-send"
+          >
+            {submit.isPending ? (
+              <>
+                <Loader2 className="w-3.5 h-3.5 inline -mt-0.5 mr-1 animate-spin" />
+                Sending…
+              </>
+            ) : (
+              <>Send to {chips.length || 0}</>
+            )}
+          </button>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
