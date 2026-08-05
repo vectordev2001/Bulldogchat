@@ -23,12 +23,12 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { motion } from "framer-motion";
-import { BarChart3, DollarSign, Loader2, Pencil, Plus, Trash2, TrendingUp, Trophy, Users, X } from "lucide-react";
+import { DollarSign, Loader2, Pencil, Plus, Trash2, TrendingUp, Trophy, Users, X } from "lucide-react";
 import type { ApiChannel } from "@/types/api";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
 
 /* ─────────────────── types ─────────────────── */
 
@@ -150,6 +150,25 @@ function fractionOfCurrentMonthElapsed(): number {
   return Math.min(1, Math.max(0, (Date.now() - start) / Math.max(1, end - start)));
 }
 
+/**
+ * Shared pace → color helper. Used by every colorized surface — top team
+ * progress bar, per-recruiter card left-border, hero tile edge. Keeping
+ * this in one place means the heat scale is consistent everywhere.
+ *
+ * Returns a hex string with a matching `label` for the a11y sr-text.
+ */
+function paceHeat(
+  pace: number,
+  hasActuals: boolean,
+  thresholds: { green: number; yellow: number },
+): { color: string; label: string } {
+  if (!hasActuals) return { color: "#94a3b8", label: "No data" }; // slate-400
+  if (pace >= thresholds.green) return { color: "#10b981", label: "On pace" }; // emerald-500
+  if (pace >= thresholds.yellow) return { color: "#f59e0b", label: "Behind pace" }; // amber-500
+  if (pace > 0) return { color: "#ef4444", label: "Off track" }; // red-500
+  return { color: "#94a3b8", label: "No data" };
+}
+
 /* ─────────────────── main view ─────────────────── */
 
 export function ScorecardChannelView({ channel }: Props) {
@@ -206,6 +225,24 @@ export function ScorecardChannelView({ channel }: Props) {
     entry.placements += a.placementsCount ?? 0;
     trailing6ByRecruiter.set(a.recruiterKey, entry);
   }
+
+  // Team-wide MTD totals — the top card shows these against the monthly
+  // team goal so the whole surface has an anchor "where are we RIGHT now"
+  // number before scanning individual recruiter cards.
+  let teamMTDFee = 0;
+  let teamMTDPlacements = 0;
+  let teamMTDHasAnyActuals = false;
+  for (const a of actuals) {
+    if (a.periodMonth !== currentMonth) continue;
+    teamMTDFee += (a.feeAmountCents ?? 0) / 100;
+    teamMTDPlacements += a.placementsCount ?? 0;
+    teamMTDHasAnyActuals = true;
+  }
+  const teamMonthlyGoal = targets.teamMonthlyRevenue;
+  const teamProgress = teamMonthlyGoal > 0 ? teamMTDFee / teamMonthlyGoal : 0;
+  const teamExpectedByNow = teamMonthlyGoal * monthElapsed;
+  const teamPace = teamExpectedByNow > 0 ? teamMTDFee / teamExpectedByNow : 0;
+  const teamHeat = paceHeat(teamPace, teamMTDHasAnyActuals, config.thresholds);
 
   // Phase 2.6.1 — display presets. Read admin-selected view knobs off the
   // config, falling back to defaults so pre-2.6.1 configs render unchanged.
@@ -294,38 +331,101 @@ export function ScorecardChannelView({ channel }: Props) {
       {/* Body */}
       <div className="flex-1 min-h-0 overflow-y-auto px-4 md:px-8 py-6 md:py-8">
         <div className="max-w-5xl mx-auto space-y-6">
-          {/* Team summary card */}
+          {/* Team summary card — the top hero. Leads with the current-month
+              TEAM progress bar (MTD actuals vs monthly team goal, heated by
+              pace) so the first thing anyone sees is "where is the team right
+              now?" The 6-month + monthly + floor + profit targets follow as
+              reference. */}
           <motion.div
             initial={{ opacity: 0, y: 4 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.2 }}
             className="rounded-2xl bg-gradient-to-br from-[#0090F0] to-[#0064B8] text-white p-6 md:p-7 shadow-[0_10px_30px_-12px_rgba(0,100,184,0.55)]"
           >
+            {/* Row 1: current team position */}
             <div className="flex items-center gap-2 text-white/80 text-[12px] uppercase tracking-wider font-medium">
               <TrendingUp className="w-3.5 h-3.5" />
-              6-month team target
+              Team — this month
             </div>
-            <div className="mt-3 grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-6">
-              <SummaryStat
-                label="Team revenue target"
-                value={fmtUSD(targets.teamSixMonthRevenue)}
-                sub="6 months"
+            <div className="mt-2 flex items-end justify-between gap-4 flex-wrap">
+              <div>
+                <div className="font-display text-[36px] md:text-[44px] leading-none tabular-nums">
+                  {teamMTDHasAnyActuals ? fmtUSD(teamMTDFee) : "—"}
+                </div>
+                <div className="mt-1 text-[12px] text-white/80">
+                  {teamMTDHasAnyActuals
+                    ? `${teamMTDPlacements} placement${teamMTDPlacements === 1 ? "" : "s"} · ${Math.round(teamProgress * 100)}% of ${fmtUSD(teamMonthlyGoal)} monthly goal`
+                    : `Awaiting first placement of the month · goal ${fmtUSD(teamMonthlyGoal)}`}
+                </div>
+              </div>
+              <div className="text-right">
+                <div
+                  className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold"
+                  style={{ background: teamHeat.color, color: "white" }}
+                >
+                  {teamHeat.label}
+                  {teamMTDHasAnyActuals && (
+                    <span className="opacity-80 font-normal">
+                      · pace {Math.round(teamPace * 100)}%
+                    </span>
+                  )}
+                </div>
+                <div className="mt-1 text-[11px] text-white/70 tabular-nums">
+                  Today ≡ {Math.round(monthElapsed * 100)}% of month
+                </div>
+              </div>
+            </div>
+            {/* Team progress bar. Container spans 0–130% so overachievement
+                is visible without exploding the row. Two markers: dashed =
+                today's expected pace, solid = 100% goal. */}
+            <div className="mt-3 relative h-3 rounded-full bg-white/15 overflow-hidden" aria-label="Team monthly progress">
+              <motion.div
+                initial={{ width: 0 }}
+                animate={{ width: `${Math.min(1.3, Math.max(0, teamProgress)) * 100 / 1.3}%` }}
+                transition={{ duration: 0.6, ease: "easeOut" }}
+                className="absolute inset-y-0 left-0 rounded-full"
+                style={{ background: teamHeat.color, opacity: teamMTDHasAnyActuals ? 0.95 : 0.4 }}
               />
-              <SummaryStat
-                label="Monthly team target"
-                value={fmtUSD(targets.teamMonthlyRevenue)}
-                sub="per month"
+              {/* Pace marker (today, pro-rated) */}
+              <div
+                className="absolute inset-y-0 border-l border-dashed border-white/70"
+                style={{ left: `${(monthElapsed * 100) / 1.3}%` }}
+                aria-hidden
               />
-              <SummaryStat
-                label="Floor placements"
-                value={String(targets.teamFloorPlacements)}
-                sub={`at ${fmtUSD(config.averageFee)} avg fee`}
+              {/* 100% goal marker */}
+              <div
+                className="absolute inset-y-0 border-l-2 border-white"
+                style={{ left: `${100 / 1.3}%` }}
+                aria-hidden
               />
-              <SummaryStat
-                label="Profit floor"
-                value={`${Math.round(config.profitTarget * 100)}%`}
-                sub={`${config.stretchMultiplier.toFixed(2)}× stretch`}
-              />
+            </div>
+            {/* Row 2: reference targets */}
+            <div className="mt-5 pt-4 border-t border-white/15">
+              <div className="flex items-center gap-2 text-white/70 text-[11px] uppercase tracking-wider font-medium mb-2">
+                6-month reference
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-6">
+                <SummaryStat
+                  label="Team revenue target"
+                  value={fmtUSD(targets.teamSixMonthRevenue)}
+                  sub="6 months"
+                />
+                <SummaryStat
+                  label="Monthly team target"
+                  value={fmtUSD(targets.teamMonthlyRevenue)}
+                  sub="per month"
+                />
+                <SummaryStat
+                  label="Floor placements"
+                  value={String(targets.teamFloorPlacements)}
+                  sub={`at ${fmtUSD(config.averageFee)} avg fee`}
+                />
+                <SummaryStat
+                  label="Profit floor"
+                  value={`${Math.round(config.profitTarget * 100)}%`}
+                  sub={`${config.stretchMultiplier.toFixed(2)}× stretch`}
+                />
+              </div>
             </div>
           </motion.div>
 
@@ -342,17 +442,10 @@ export function ScorecardChannelView({ channel }: Props) {
             />
           )}
 
-          {/* Team performance chart — per-recruiter progress bars toward
-              their MONTHLY goal, tinted by pace. Rendered above the
-              per-recruiter cards so the team picture reads first. */}
-          <TeamPerformanceChart
-            perRecruiter={targets.perRecruiter}
-            currentMonthByRecruiter={currentMonthByRecruiter}
-            monthElapsed={monthElapsed}
-            thresholds={config.thresholds}
-          />
-
-          {/* Per-recruiter cards */}
+          {/* Per-recruiter cards. The standalone TeamPerformanceChart was
+              removed — the team-level bar now lives in the top hero card,
+              and each per-recruiter card is itself colorized so the roster
+              reads like a heat map at a glance. */}
           <div>
             <div className="flex items-center gap-2 text-[11px] uppercase tracking-wider font-medium text-[hsl(var(--vs-text-muted))] mb-3 px-1">
               <Users className="w-3.5 h-3.5" />
@@ -370,15 +463,30 @@ export function ScorecardChannelView({ channel }: Props) {
                 // 6-month attainment vs goal — used for the secondary hero's
                 // subtle color and the reference row's % note.
                 const sixMonthAttainment = r.sixMonth > 0 ? trailing6.fee / r.sixMonth : 0;
+                // Colorize the card by pace. Left border reads at a glance;
+                // subtle background tint reinforces without shouting.
+                const heat = paceHeat(pace, actual != null, config.thresholds);
                 return (
                   <motion.div
                     key={r.key}
                     initial={{ opacity: 0, y: 4 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ duration: 0.2, delay: 0.03 * i }}
-                    className={`rounded-2xl bg-white dark:bg-[hsl(var(--vs-surface-elevated))] border border-[hsl(var(--vs-border))] ${cardPadClass} shadow-[0_1px_2px_rgba(0,0,0,0.04)] hover-elevate transition`}
+                    className={`relative overflow-hidden rounded-2xl bg-white dark:bg-[hsl(var(--vs-surface-elevated))] border border-[hsl(var(--vs-border))] ${cardPadClass} shadow-[0_1px_2px_rgba(0,0,0,0.04)] hover-elevate transition`}
+                    style={{
+                      // Subtle background tint at ~5% opacity of the pace
+                      // color so the card reads as “on pace” / “off track”
+                      // without overwhelming the content.
+                      backgroundImage: `linear-gradient(to right, ${heat.color}0D 0%, transparent 40%)`,
+                    }}
                     data-testid={`recruiter-card-${r.key}`}
                   >
+                    {/* Left-edge heat strip — 4px column of the pace color. */}
+                    <div
+                      className="absolute left-0 top-0 bottom-0 w-1"
+                      style={{ background: heat.color, opacity: actual != null ? 1 : 0.4 }}
+                      aria-hidden
+                    />
                     {/* Header: name + pace pill */}
                     <div className="flex items-start justify-between gap-3">
                       <div className={`font-display ${nameSizeClass} text-[hsl(var(--vs-text))] truncate`}>{r.name}</div>
@@ -653,161 +761,6 @@ function ActualHeroStat({
   );
 }
 
-/**
- * Team performance chart — one horizontal progress bar per recruiter
- * showing where they are toward their MONTHLY goal. Fill percent is
- * (actual MTD / monthly goal); tint is by pace (actual / expected-by-now)
- * so "green" reads consistently with the pace pill on each recruiter card.
- *
- * A subtle vertical marker at the pro-rated "expected pace" position
- * lets you read at a glance whether the bar is ahead of or behind pace
- * without needing to do the math in your head.
- */
-function TeamPerformanceChart({
-  perRecruiter,
-  currentMonthByRecruiter,
-  monthElapsed,
-  thresholds,
-}: {
-  perRecruiter: Array<{ key: string; name: string; monthly: number }>;
-  currentMonthByRecruiter: Map<string, Actual>;
-  monthElapsed: number;
-  thresholds: { green: number; yellow: number };
-}) {
-  const rows = perRecruiter.map((r) => {
-    const actual = currentMonthByRecruiter.get(r.key);
-    const actualFee = (actual?.feeAmountCents ?? 0) / 100;
-    // Progress toward monthly goal, 0..1+ (bar can exceed goal).
-    const progress = r.monthly > 0 ? actualFee / r.monthly : 0;
-    // Pace vs expected — uses the same thresholds as PacePill.
-    const expectedByNow = r.monthly * monthElapsed;
-    const pace = expectedByNow > 0 ? actualFee / expectedByNow : 0;
-    return {
-      key: r.key,
-      name: r.name,
-      actualFee,
-      monthly: r.monthly,
-      placements: actual?.placementsCount ?? 0,
-      progress,
-      pace,
-      hasActuals: actual != null,
-    };
-  });
-
-  // If nobody has any goals AND no actuals, there's nothing to draw.
-  const hasAnyData = rows.some((r) => r.monthly > 0 || r.actualFee > 0);
-  if (!hasAnyData) return null;
-
-  const colorFor = (pace: number, hasActuals: boolean) => {
-    if (!hasActuals) return "#94a3b8"; // slate-400 — no actuals yet
-    if (pace >= thresholds.green) return "#10b981"; // emerald-500
-    if (pace >= thresholds.yellow) return "#f59e0b"; // amber-500
-    if (pace > 0) return "#ef4444"; // red-500
-    return "#94a3b8";
-  };
-
-  // Cap the visible fill at 130% so a runaway month doesn't blow past the
-  // container. We still show the raw percent in the label.
-  const clampFill = (p: number) => Math.min(1.3, Math.max(0, p));
-  const pacePct = Math.round(monthElapsed * 100);
-
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 4 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.2 }}
-      className="rounded-2xl bg-white dark:bg-[hsl(var(--vs-surface-elevated))] border border-[hsl(var(--vs-border))] p-4 md:p-5 mb-4"
-      data-testid="team-performance-chart"
-    >
-      <div className="flex items-center justify-between gap-3 mb-3">
-        <div className="flex items-center gap-2 text-[11px] uppercase tracking-wider font-medium text-[hsl(var(--vs-text-muted))]">
-          <BarChart3 className="w-3.5 h-3.5 text-[#0090F0]" />
-          Team pace — progress toward monthly goal
-        </div>
-        <div className="hidden md:flex items-center gap-3 text-[11px] text-[hsl(var(--vs-text-muted))]">
-          <span className="inline-flex items-center gap-1.5">
-            <span className="inline-block w-2.5 h-2.5 rounded-sm bg-[#10b981]" /> On pace
-          </span>
-          <span className="inline-flex items-center gap-1.5">
-            <span className="inline-block w-2.5 h-2.5 rounded-sm bg-[#f59e0b]" /> Behind
-          </span>
-          <span className="inline-flex items-center gap-1.5">
-            <span className="inline-block w-2.5 h-2.5 rounded-sm bg-[#ef4444]" /> Off track
-          </span>
-          <span className="inline-flex items-center gap-1.5">
-            <span className="inline-block w-0.5 h-3 bg-[hsl(var(--vs-text-muted))]" /> Today ({pacePct}%)
-          </span>
-        </div>
-      </div>
-      <div className="space-y-2">
-        {rows.map((row, i) => {
-          const fillPct = clampFill(row.progress) * 100;
-          const color = colorFor(row.pace, row.hasActuals);
-          // Pro-rated pace marker: sits at monthElapsed% of the 100% mark.
-          // Because the bar container represents 0–130%, the marker's
-          // absolute left is (monthElapsed * 100) / 130.
-          const paceMarkerLeftPct = (monthElapsed * 100) / 1.3;
-          const goalMarkerLeftPct = 100 / 1.3;
-          return (
-            <motion.div
-              key={row.key}
-              initial={{ opacity: 0, x: -4 }}
-              animate={{ opacity: 1, x: 0 }}
-              transition={{ duration: 0.2, delay: 0.03 * i }}
-              className="grid grid-cols-[minmax(80px,120px)_1fr_120px] items-center gap-3"
-              data-testid={`chart-row-${row.key}`}
-            >
-              <div className="text-[12px] font-medium text-[hsl(var(--vs-text))] truncate">{row.name}</div>
-              <div className="relative h-6 rounded-full bg-[hsl(var(--vs-surface))] border border-[hsl(var(--vs-border))] overflow-hidden">
-                {/* Fill — tinted by pace */}
-                <motion.div
-                  initial={{ width: 0 }}
-                  animate={{ width: `${fillPct}%` }}
-                  transition={{ duration: 0.5, ease: "easeOut", delay: 0.05 * i }}
-                  className="absolute inset-y-0 left-0"
-                  style={{ background: color, opacity: row.hasActuals ? 0.85 : 0.35 }}
-                />
-                {/* Pace marker (today, pro-rated) */}
-                <div
-                  className="absolute inset-y-0 border-l border-dashed border-[hsl(var(--vs-text-muted))]/60"
-                  style={{ left: `${paceMarkerLeftPct}%` }}
-                  aria-hidden
-                />
-                {/* 100% goal marker */}
-                <div
-                  className="absolute inset-y-0 border-l-2 border-[hsl(var(--vs-text))]/40"
-                  style={{ left: `${goalMarkerLeftPct}%` }}
-                  aria-hidden
-                />
-                {/* Inline percent label — sits inside the bar when there's
-                    room, otherwise nudges to the right of the fill. */}
-                <div
-                  className="absolute inset-y-0 flex items-center text-[11px] font-semibold tabular-nums"
-                  style={{
-                    left: fillPct > 12 ? `${Math.min(fillPct - 2, 96)}%` : `${fillPct + 1}%`,
-                    transform: fillPct > 12 ? "translateX(-100%)" : "none",
-                    color: fillPct > 12 ? "white" : "hsl(var(--vs-text-muted))",
-                    textShadow: fillPct > 12 ? "0 1px 2px rgba(0,0,0,0.25)" : "none",
-                    paddingLeft: fillPct > 12 ? 0 : 4,
-                    paddingRight: fillPct > 12 ? 6 : 0,
-                  }}
-                >
-                  {row.hasActuals ? `${Math.round(row.progress * 100)}%` : "—"}
-                </div>
-              </div>
-              <div className="text-[11px] text-[hsl(var(--vs-text-muted))] tabular-nums text-right truncate">
-                {row.hasActuals ? fmtUSD(row.actualFee) : "No data"}
-                {row.monthly > 0 && (
-                  <span className="text-[hsl(var(--vs-text-muted))]/70"> / {fmtUSD(row.monthly)}</span>
-                )}
-              </div>
-            </motion.div>
-          );
-        })}
-      </div>
-    </motion.div>
-  );
-}
 
 /**
  * Popover that lists individual placements underlying a hero stat. Fires
@@ -880,9 +833,9 @@ function PlacementsPopover({
   const totalFee = placements.reduce((s, p) => s + p.feeAmountCents, 0) / 100;
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>{children}</PopoverTrigger>
-      <PopoverContent
+    <HoverCard open={open} onOpenChange={setOpen} openDelay={120} closeDelay={140}>
+      <HoverCardTrigger asChild>{children}</HoverCardTrigger>
+      <HoverCardContent
         align="start"
         sideOffset={6}
         className="w-[380px] max-w-[calc(100vw-32px)] p-0 bg-white dark:bg-[hsl(var(--vs-surface-elevated))] border-[hsl(var(--vs-border))]"
@@ -962,8 +915,8 @@ function PlacementsPopover({
             </ul>
           )}
         </div>
-      </PopoverContent>
-    </Popover>
+      </HoverCardContent>
+    </HoverCard>
   );
 }
 
