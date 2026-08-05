@@ -1245,6 +1245,19 @@ export const scorecardConfigInputSchema = z.object({
     .regex(/^\d{4}-\d{2}$/, "YYYY-MM")
     .default("2026-08"),
   programHorizonMonths: z.number().int().min(1).max(24).default(5),
+  // Funding horizon (months) that the recruiter salaries were originally
+  // underwritten against. This drives the TOTAL program revenue target
+  //   totalTarget = monthlySalary * fundingHorizonMonths / (1 - profit%)
+  // independently of programHorizonMonths, which only controls the
+  // in-window CADENCE (monthly target = totalTarget / programHorizonMonths).
+  //
+  // Why separate: VTS underwrote a 6-month salary/profit model, but the
+  // actual program runs Aug→Dec (5 months). The total dollar goal must
+  // stay the 6-month underwritten number — monthly targets scale up so
+  // the shorter window still delivers it. Defaults to 6 for VTS; can be
+  // set equal to programHorizonMonths to get the classic "pro-rata by
+  // program length" behavior.
+  fundingHorizonMonths: z.number().int().min(1).max(24).default(6),
 });
 export type ScorecardConfigInput = z.infer<typeof scorecardConfigInputSchema>;
 

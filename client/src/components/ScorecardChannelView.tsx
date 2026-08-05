@@ -7,16 +7,25 @@
  * Layout mirrors TextChannelView's outer shell (14-row header + flex-1 body)
  * so Home.tsx can drop this in without touching the surrounding chrome.
  *
- * Numbers (H = programHorizonMonths, defaults to 5 for VTS Aug→Dec 2026):
- *   program revenue target = H-month salary / (1 - profitTarget)
- *   monthly target         = program revenue target / H
+ * Numbers:
+ *   F = fundingHorizonMonths (defaults to 6 for VTS underwriting)
+ *   P = programHorizonMonths (defaults to 5 for VTS Aug→Dec 2026)
+ *
+ *   program revenue target = F-month salary / (1 - profitTarget)   ← fixed by funding
+ *   monthly target         = program revenue target / P              ← cadence within window
  *   floor placements       = round(program revenue target / averageFee)
- *   stretch                = base * stretchMultiplier
+ *   stretch                = monthly * stretchMultiplier
  *   pace                   = actuals in program window / expected pace to date
  *
+ * Two horizons on purpose: VTS underwrote a 6-month salary/profit model,
+ * but the actual program runs Aug→Dec (5 months). The total dollar goal
+ * stays the 6-month underwritten number — monthly targets scale UP so
+ * the shorter window still delivers it. Setting F == P recovers the
+ * classic "pro-rata by program length" behavior.
+ *
  * The program window is a FIXED forward calendar range (programStartMonth
- * through programStartMonth + H months) — not a rolling trailing window.
- * On Aug 4 2026 with an Aug 2026 start and H=5, the elapsed fraction is
+ * through programStartMonth + P months) — not a rolling trailing window.
+ * On Aug 4 2026 with an Aug 2026 start and P=5, the elapsed fraction is
  * ~0.024, not ~0.85.
  *
  * Salaries are never rendered in this view — only derived $ targets. The
@@ -63,6 +72,9 @@ interface ScorecardConfig {
   // these are optional on the wire so pre-existing configs stay valid.
   programStartMonth?: string; // "YYYY-MM"
   programHorizonMonths?: number;
+  // Funding horizon that sized the total revenue target. See
+  // scorecardConfigInputSchema for the full rationale.
+  fundingHorizonMonths?: number;
 }
 
 // Defaults for the fixed forward program window — mirror the shared
@@ -70,6 +82,10 @@ interface ScorecardConfig {
 // the intended VTS Aug→Dec 2026 horizon.
 const DEFAULT_PROGRAM_START_MONTH = "2026-08";
 const DEFAULT_PROGRAM_HORIZON_MONTHS = 5;
+// VTS salaries were underwritten against 6 months of cost, so that is
+// the horizon that sizes the whole-program revenue target. The program
+// itself only runs 5 months, so monthly cadence = total / 5.
+const DEFAULT_FUNDING_HORIZON_MONTHS = 6;
 interface Actual {
   recruiterKey: string;
   periodMonth: string; // "YYYY-MM"
@@ -110,26 +126,43 @@ const fmtUSD = (dollars: number) =>
   dollars.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
 
 /** Compute per-recruiter targets from the config. Pure — no side effects.
- *  The revenue targets are sized by programHorizonMonths, so a 5-month
- *  horizon yields 5× monthly salary (not a hard-coded 6). Field names keep
- *  the historical `sixMonth` label to avoid rippling into every consumer;
- *  the value is now “whole-program revenue target,” whatever the horizon
- *  says. */
+ *
+ *  Two horizons drive the numbers on purpose:
+ *    • fundingHorizonMonths (F) — how the salaries were underwritten.
+ *      This sizes the TOTAL revenue target, so shortening the program
+ *      window does NOT shrink the goal you promised to hit.
+ *    • programHorizonMonths (P) — how long the program actually runs.
+ *      This sizes MONTHLY cadence: monthly = total / P. When P < F,
+ *      monthly targets scale up so the same total lands in less time.
+ *
+ *  Concrete VTS example: monthlySalary=$100k, profit=30%, F=6, P=5
+ *    totalTarget  = 100k * 6 / 0.7  = $857k   (unchanged 6-month goal)
+ *    monthly      = 857k / 5        = $171k   (up ~20% vs 6-month cadence)
+ *    floor        = round(857k / averageFee)  (goal-anchored, not cadence)
+ *    stretch      = monthly * stretchMultiplier
+ *
+ *  Field names keep the historical `sixMonth` label to avoid rippling
+ *  into every consumer; the value is “whole-program revenue target,”
+ *  now sized by F rather than P. */
 function computeTargets(cfg: ScorecardConfig) {
-  const horizonMonths = cfg.programHorizonMonths ?? DEFAULT_PROGRAM_HORIZON_MONTHS;
+  const programHorizonMonths = cfg.programHorizonMonths ?? DEFAULT_PROGRAM_HORIZON_MONTHS;
+  const fundingHorizonMonths = cfg.fundingHorizonMonths ?? DEFAULT_FUNDING_HORIZON_MONTHS;
   const totalMonthlySalary = cfg.recruiters.reduce((s, r) => s + (r.monthlySalary ?? 0), 0);
-  const totalProgramSalary = totalMonthlySalary * horizonMonths;
-  // Team-level revenue target = program salary / (1 - profit%). Same shape
-  // per recruiter (only meaningful in the admin view where salaries are known).
+  // Total salary is sized by the FUNDING horizon — the underwritten cost
+  // base — not the program horizon. Shortening the program does not
+  // reduce what we promised to deliver against.
+  const totalFundingSalary = totalMonthlySalary * fundingHorizonMonths;
   const denom = Math.max(0.01, 1 - cfg.profitTarget);
-  const teamSixMonthRevenue = totalProgramSalary / denom;
-  const teamMonthlyRevenue = teamSixMonthRevenue / horizonMonths;
+  const teamSixMonthRevenue = totalFundingSalary / denom; // total program revenue target
+  // Monthly cadence uses the PROGRAM horizon so the same total lands in
+  // the actual window (5 months for VTS, hence ~20% higher monthly bars).
+  const teamMonthlyRevenue = teamSixMonthRevenue / programHorizonMonths;
   const teamFloorPlacements = Math.round(teamSixMonthRevenue / Math.max(1, cfg.averageFee));
 
   const perRecruiter = cfg.recruiters.map((r) => {
-    const salaryProgram = (r.monthlySalary ?? 0) * horizonMonths;
-    const sixMonthRevenue = salaryProgram / denom;
-    const monthly = sixMonthRevenue / horizonMonths;
+    const salaryFunding = (r.monthlySalary ?? 0) * fundingHorizonMonths;
+    const sixMonthRevenue = salaryFunding / denom;
+    const monthly = sixMonthRevenue / programHorizonMonths;
     const floorPlacements = Math.round(sixMonthRevenue / Math.max(1, cfg.averageFee));
     return {
       key: r.key,
@@ -148,8 +181,9 @@ function computeTargets(cfg: ScorecardConfig) {
   });
 
   return {
-    horizonMonths,
-    totalSixMonthSalary: totalProgramSalary,
+    horizonMonths: programHorizonMonths,
+    fundingHorizonMonths,
+    totalSixMonthSalary: totalFundingSalary,
     teamSixMonthRevenue,
     teamMonthlyRevenue,
     teamFloorPlacements,
@@ -721,7 +755,14 @@ export function ScorecardChannelView({ channel }: Props) {
               />
             </div>
 
-            {/* Row 2: reference targets */}
+            {/* Row 2: reference targets.
+
+                When funding ≠ program (VTS: 6-month underwriting delivered
+                in a 5-month window), the sub-copy makes both horizons
+                explicit so "Team revenue target" reads as a 6-month goal
+                and "Monthly team target" reads as its scaled-up cadence.
+                When funding == program, both labels collapse to the
+                classic single-horizon phrasing. */}
             <div className="mt-5 pt-4 border-t border-white/15">
               <div className="flex items-center gap-2 text-white/70 text-[11px] uppercase tracking-wider font-medium mb-2">
                 {horizonMonths}-month reference
@@ -730,12 +771,20 @@ export function ScorecardChannelView({ channel }: Props) {
                 <SummaryStat
                   label="Team revenue target"
                   value={fmtUSD(targets.teamSixMonthRevenue)}
-                  sub={`${horizonMonths} months`}
+                  sub={
+                    targets.fundingHorizonMonths !== horizonMonths
+                      ? `${targets.fundingHorizonMonths}-mo goal · delivered in ${horizonMonths} mo`
+                      : `${horizonMonths} months`
+                  }
                 />
                 <SummaryStat
                   label="Monthly team target"
                   value={fmtUSD(targets.teamMonthlyRevenue)}
-                  sub="per month"
+                  sub={
+                    targets.fundingHorizonMonths !== horizonMonths
+                      ? `per month (${horizonMonths}-mo cadence)`
+                      : "per month"
+                  }
                 />
                 <SummaryStat
                   label="Floor placements"
@@ -1357,6 +1406,9 @@ function EditConfigDialog({
   const [programHorizonMonths, setProgramHorizonMonths] = useState(
     String(config.programHorizonMonths ?? DEFAULT_PROGRAM_HORIZON_MONTHS),
   );
+  const [fundingHorizonMonths, setFundingHorizonMonths] = useState(
+    String(config.fundingHorizonMonths ?? DEFAULT_FUNDING_HORIZON_MONTHS),
+  );
   const [rows, setRows] = useState(
     config.recruiters.map((r) => ({ key: r.key, name: r.name, salary: r.monthlySalary != null ? String(r.monthlySalary) : "" })),
   );
@@ -1393,6 +1445,7 @@ function EditConfigDialog({
         // a code change. Zod re-applies defaults if either is missing.
         programStartMonth: programStartMonth.trim() || DEFAULT_PROGRAM_START_MONTH,
         programHorizonMonths: Number(programHorizonMonths) || DEFAULT_PROGRAM_HORIZON_MONTHS,
+        fundingHorizonMonths: Number(fundingHorizonMonths) || DEFAULT_FUNDING_HORIZON_MONTHS,
       };
       return apiRequest("PATCH", `/api/channels/${channelId}/scorecard/config`, payload);
     },
@@ -1422,10 +1475,16 @@ function EditConfigDialog({
           <LabeledInput label="Profit %" value={profitPct} onChange={setProfitPct} />
           <LabeledInput label="Stretch ×" value={stretchMul} onChange={setStretchMul} />
         </div>
-        {/* Fixed forward program window. Pace, attainment %, and the
-            heat-map coloring all key off THIS range — not a rolling
-            trailing 6-month view. Defaults to VTS Aug→Dec 2026. */}
-        <div className="mt-3 grid grid-cols-2 gap-3">
+        {/* Fixed forward program window + funding horizon.
+
+            Program horizon = how long the program actually runs (drives
+            monthly cadence). Funding horizon = how the salaries were
+            underwritten (drives the total revenue target). VTS: funding
+            6, program 5, so the 6-month goal must be delivered in 5
+            months — monthly targets scale up ~20% to compensate.
+
+            Set funding = program to get pro-rata behavior. */}
+        <div className="mt-3 grid grid-cols-3 gap-3">
           <LabeledInput
             label="Program start (YYYY-MM)"
             value={programStartMonth}
@@ -1436,6 +1495,15 @@ function EditConfigDialog({
             value={programHorizonMonths}
             onChange={setProgramHorizonMonths}
           />
+          <LabeledInput
+            label="Funding horizon (months)"
+            value={fundingHorizonMonths}
+            onChange={setFundingHorizonMonths}
+          />
+        </div>
+        <div className="mt-1 text-[11px] text-[hsl(var(--vs-text-muted))]">
+          Total revenue target = monthly salary × <b>funding</b> horizon / (1 − profit).
+          Monthly target = total ÷ <b>program</b> horizon.
         </div>
         <div className="mt-2 space-y-2">
           <div className="text-[11px] uppercase tracking-wider font-medium text-[hsl(var(--vs-text-muted))]">
