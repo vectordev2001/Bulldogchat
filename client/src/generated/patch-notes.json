@@ -1,7 +1,17 @@
 {
-  "generated_at": "2026-08-05T01:40:20.558Z",
+  "generated_at": "2026-08-05T01:58:30.893Z",
   "repo": "vectordev2001/Bulldogchat",
   "notes": [
+    {
+      "number": 127,
+      "title": "Notify users on every release (push + email)",
+      "raw_title": "feat(patch-notes): notify users on every release (push + email)",
+      "summary": "Ports the contracts patch-notes announcer to chat. On server startup (which coincides with every Render redeploy), compare bundled patch-notes.json against the highest PR number we've already announced (new system_state key-value table) and fan out one web/Expo/APNs push per user plus one email per user for any new entries.",
+      "merged_at": "2026-08-05T01:58:15Z",
+      "author": "vectordev2001",
+      "url": "https://github.com/vectordev2001/Bulldogchat/pull/127",
+      "category": "feature"
+    },
     {
       "number": 126,
       "title": "Actuals-first recruiter cards + team chart",
@@ -91,16 +101,6 @@
       "author": "vectordev2001",
       "url": "https://github.com/vectordev2001/Bulldogchat/pull/92",
       "category": "feature"
-    },
-    {
-      "number": 60,
-      "title": "Fix iOS Meet pre-join: Join button hidden under floating tab bar",
-      "raw_title": "Fix iOS Meet pre-join: Join button hidden under floating tab bar",
-      "summary": "On iOS, the Bulldog Meet pre-join screen renders the **Join meeting** button under the native floating Chat/Contracts/Ops tab pill, and #root { overflow: hidden } prevents scrolling past it. Reported by Josh — the join button is behind the pill on iPhone.",
-      "merged_at": "2026-07-29T19:18:39Z",
-      "author": "vectordev2001",
-      "url": "https://github.com/vectordev2001/Bulldogchat/pull/60",
-      "category": "other"
     }
   ]
 }
