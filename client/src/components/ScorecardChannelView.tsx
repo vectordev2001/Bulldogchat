@@ -20,25 +20,15 @@
  * keep the peer-visible surface clean (admins see them in the edit dialog).
  */
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { motion } from "framer-motion";
-import { BarChart3, DollarSign, Loader2, Pencil, Plus, TrendingUp, Trophy, Users } from "lucide-react";
-import {
-  Bar,
-  BarChart,
-  CartesianGrid,
-  Cell,
-  LabelList,
-  ResponsiveContainer,
-  Tooltip as RechartsTooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
+import { BarChart3, DollarSign, Loader2, Pencil, Plus, Trash2, TrendingUp, Trophy, Users, X } from "lucide-react";
 import type { ApiChannel } from "@/types/api";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 
 /* ─────────────────── types ─────────────────── */
 
@@ -78,6 +68,21 @@ interface ScorecardResponse {
   actuals: Actual[];
   canEdit: boolean;
   updatedAt: number;
+}
+// Phase 2.6.3 — per-placement rows. Aggregate `Actual` above is still
+// the read model on the dashboard; this is what the click-through
+// popovers show and what the new entry dialog writes.
+interface Placement {
+  id: number;
+  recruiterKey: string;
+  periodMonth: string; // "YYYY-MM"
+  placedAt: string; // "YYYY-MM-DD"
+  candidateName: string | null;
+  clientName: string | null;
+  feeAmountCents: number;
+  notes: string | null;
+  createdByUserId: number;
+  createdAt: number;
 }
 
 interface Props {
@@ -186,7 +191,13 @@ export function ScorecardChannelView({ channel }: Props) {
   // Trailing 6-month actuals per recruiter (fee $ + placements) so each card
   // can show "where they actually are" against the 6-month goal. Uses the
   // same recentMonths() window the leaderboard's rolling-3mo view is based on.
-  const trailing6MonthsSet = new Set(recentMonths(6));
+  const trailing6Months = recentMonths(6);
+  const trailing6MonthsSet = new Set(trailing6Months);
+  // Popover range — oldest→newest of the trailing 6-month window.
+  const sixMoRange = {
+    from: trailing6Months[trailing6Months.length - 1] ?? currentMonth,
+    to: trailing6Months[0] ?? currentMonth,
+  };
   const trailing6ByRecruiter = new Map<string, { fee: number; placements: number }>();
   for (const a of actuals) {
     if (!trailing6MonthsSet.has(a.periodMonth)) continue;
@@ -331,12 +342,13 @@ export function ScorecardChannelView({ channel }: Props) {
             />
           )}
 
-          {/* Team performance chart — shows how the whole team is tracking
-              at a glance. Rendered above the per-recruiter cards so the
-              overall picture reads first. */}
+          {/* Team performance chart — per-recruiter progress bars toward
+              their MONTHLY goal, tinted by pace. Rendered above the
+              per-recruiter cards so the team picture reads first. */}
           <TeamPerformanceChart
             perRecruiter={targets.perRecruiter}
-            trailing6ByRecruiter={trailing6ByRecruiter}
+            currentMonthByRecruiter={currentMonthByRecruiter}
+            monthElapsed={monthElapsed}
             thresholds={config.thresholds}
           />
 
@@ -374,26 +386,56 @@ export function ScorecardChannelView({ channel }: Props) {
                     </div>
 
                     {/* Hero: actual performance — big + bright. This is the
-                        primary answer to "where is this recruiter right now." */}
+                        primary answer to "where is this recruiter right now."
+                        Both tiles are click-through: they open a popover
+                        listing the underlying placements. */}
                     <div className="mt-3 grid grid-cols-2 gap-3">
-                      <ActualHeroStat
-                        label="Actual MTD"
-                        value={actual ? fmtUSD(actualFee) : "—"}
-                        sub={actual ? `${actual.placementsCount} placement${actual.placementsCount === 1 ? "" : "s"}` : "No data"}
-                        sizeClass={heroSizeClass}
-                        dim={!actual}
-                      />
-                      <ActualHeroStat
-                        label="Actual 6-mo"
-                        value={trailing6.fee > 0 ? fmtUSD(trailing6.fee) : "—"}
-                        sub={
-                          trailing6.fee > 0
-                            ? `${trailing6.placements} placement${trailing6.placements === 1 ? "" : "s"}${r.sixMonth > 0 ? ` · ${Math.round(sixMonthAttainment * 100)}% of goal` : ""}`
-                            : "No data"
-                        }
-                        sizeClass={heroSizeClass}
-                        dim={trailing6.fee <= 0}
-                      />
+                      <PlacementsPopover
+                        channelId={channel.id}
+                        recruiterKey={r.key}
+                        recruiterName={r.name}
+                        scope={{ kind: "month", periodMonth: currentMonth, label: `${currentMonth} placements` }}
+                        canEdit={canEdit}
+                      >
+                        <button
+                          type="button"
+                          className="text-left w-full rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0090F0]/60"
+                          data-testid={`hero-mtd-${r.key}`}
+                        >
+                          <ActualHeroStat
+                            label="Actual MTD"
+                            value={actual ? fmtUSD(actualFee) : "—"}
+                            sub={actual ? `${actual.placementsCount} placement${actual.placementsCount === 1 ? "" : "s"}` : "No data"}
+                            sizeClass={heroSizeClass}
+                            dim={!actual}
+                          />
+                        </button>
+                      </PlacementsPopover>
+                      <PlacementsPopover
+                        channelId={channel.id}
+                        recruiterKey={r.key}
+                        recruiterName={r.name}
+                        scope={{ kind: "range", fromMonth: sixMoRange.from, toMonth: sixMoRange.to, label: "Last 6 months" }}
+                        canEdit={canEdit}
+                      >
+                        <button
+                          type="button"
+                          className="text-left w-full rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0090F0]/60"
+                          data-testid={`hero-6mo-${r.key}`}
+                        >
+                          <ActualHeroStat
+                            label="Actual 6-mo"
+                            value={trailing6.fee > 0 ? fmtUSD(trailing6.fee) : "—"}
+                            sub={
+                              trailing6.fee > 0
+                                ? `${trailing6.placements} placement${trailing6.placements === 1 ? "" : "s"}${r.sixMonth > 0 ? ` · ${Math.round(sixMonthAttainment * 100)}% of goal` : ""}`
+                                : "No data"
+                            }
+                            sizeClass={heroSizeClass}
+                            dim={trailing6.fee <= 0}
+                          />
+                        </button>
+                      </PlacementsPopover>
                     </div>
 
                     {/* Reference row: the goals live here now — smaller,
@@ -612,48 +654,62 @@ function ActualHeroStat({
 }
 
 /**
- * Team performance chart — one grouped bar per recruiter showing 6-month
- * actual next to 6-month goal so the whole team's tracking is legible at a
- * glance. Actual bars are tinted by attainment (green / amber / red) using
- * the same thresholds as the pace pill so the color story stays consistent
- * across the dashboard.
+ * Team performance chart — one horizontal progress bar per recruiter
+ * showing where they are toward their MONTHLY goal. Fill percent is
+ * (actual MTD / monthly goal); tint is by pace (actual / expected-by-now)
+ * so "green" reads consistently with the pace pill on each recruiter card.
+ *
+ * A subtle vertical marker at the pro-rated "expected pace" position
+ * lets you read at a glance whether the bar is ahead of or behind pace
+ * without needing to do the math in your head.
  */
 function TeamPerformanceChart({
   perRecruiter,
-  trailing6ByRecruiter,
+  currentMonthByRecruiter,
+  monthElapsed,
   thresholds,
 }: {
-  perRecruiter: Array<{ key: string; name: string; sixMonth: number }>;
-  trailing6ByRecruiter: Map<string, { fee: number; placements: number }>;
+  perRecruiter: Array<{ key: string; name: string; monthly: number }>;
+  currentMonthByRecruiter: Map<string, Actual>;
+  monthElapsed: number;
   thresholds: { green: number; yellow: number };
 }) {
   const rows = perRecruiter.map((r) => {
-    const t6 = trailing6ByRecruiter.get(r.key) ?? { fee: 0, placements: 0 };
-    const attainment = r.sixMonth > 0 ? t6.fee / r.sixMonth : 0;
+    const actual = currentMonthByRecruiter.get(r.key);
+    const actualFee = (actual?.feeAmountCents ?? 0) / 100;
+    // Progress toward monthly goal, 0..1+ (bar can exceed goal).
+    const progress = r.monthly > 0 ? actualFee / r.monthly : 0;
+    // Pace vs expected — uses the same thresholds as PacePill.
+    const expectedByNow = r.monthly * monthElapsed;
+    const pace = expectedByNow > 0 ? actualFee / expectedByNow : 0;
     return {
       key: r.key,
       name: r.name,
-      actual: Math.round(t6.fee),
-      goal: Math.round(r.sixMonth),
-      attainment,
+      actualFee,
+      monthly: r.monthly,
+      placements: actual?.placementsCount ?? 0,
+      progress,
+      pace,
+      hasActuals: actual != null,
     };
   });
 
-  // If nobody has any actuals AND no goals, the chart carries no signal.
-  const hasAnyData = rows.some((r) => r.actual > 0 || r.goal > 0);
+  // If nobody has any goals AND no actuals, there's nothing to draw.
+  const hasAnyData = rows.some((r) => r.monthly > 0 || r.actualFee > 0);
   if (!hasAnyData) return null;
 
-  const colorFor = (attainment: number) => {
-    if (attainment >= thresholds.green) return "#10b981"; // emerald-500
-    if (attainment >= thresholds.yellow) return "#f59e0b"; // amber-500
-    if (attainment > 0) return "#ef4444"; // red-500
-    return "#94a3b8"; // slate-400 — no actuals yet
+  const colorFor = (pace: number, hasActuals: boolean) => {
+    if (!hasActuals) return "#94a3b8"; // slate-400 — no actuals yet
+    if (pace >= thresholds.green) return "#10b981"; // emerald-500
+    if (pace >= thresholds.yellow) return "#f59e0b"; // amber-500
+    if (pace > 0) return "#ef4444"; // red-500
+    return "#94a3b8";
   };
 
-  const fmtAxis = (v: number) => {
-    if (v >= 1000) return `$${Math.round(v / 1000)}k`;
-    return `$${v}`;
-  };
+  // Cap the visible fill at 130% so a runaway month doesn't blow past the
+  // container. We still show the raw percent in the label.
+  const clampFill = (p: number) => Math.min(1.3, Math.max(0, p));
+  const pacePct = Math.round(monthElapsed * 100);
 
   return (
     <motion.div
@@ -666,7 +722,7 @@ function TeamPerformanceChart({
       <div className="flex items-center justify-between gap-3 mb-3">
         <div className="flex items-center gap-2 text-[11px] uppercase tracking-wider font-medium text-[hsl(var(--vs-text-muted))]">
           <BarChart3 className="w-3.5 h-3.5 text-[#0090F0]" />
-          Team performance — 6-month actual vs goal
+          Team pace — progress toward monthly goal
         </div>
         <div className="hidden md:flex items-center gap-3 text-[11px] text-[hsl(var(--vs-text-muted))]">
           <span className="inline-flex items-center gap-1.5">
@@ -679,61 +735,235 @@ function TeamPerformanceChart({
             <span className="inline-block w-2.5 h-2.5 rounded-sm bg-[#ef4444]" /> Off track
           </span>
           <span className="inline-flex items-center gap-1.5">
-            <span className="inline-block w-2.5 h-2.5 rounded-sm border border-[hsl(var(--vs-border))] bg-transparent" /> Goal
+            <span className="inline-block w-0.5 h-3 bg-[hsl(var(--vs-text-muted))]" /> Today ({pacePct}%)
           </span>
         </div>
       </div>
-      <div style={{ width: "100%", height: 260 }}>
-        <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={rows} margin={{ top: 8, right: 8, bottom: 4, left: 4 }} barCategoryGap="20%">
-            <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--vs-border))" vertical={false} />
-            <XAxis
-              dataKey="name"
-              tick={{ fill: "hsl(var(--vs-text-muted))", fontSize: 11 }}
-              tickLine={false}
-              axisLine={{ stroke: "hsl(var(--vs-border))" }}
-              interval={0}
-            />
-            <YAxis
-              tick={{ fill: "hsl(var(--vs-text-muted))", fontSize: 11 }}
-              tickLine={false}
-              axisLine={{ stroke: "hsl(var(--vs-border))" }}
-              tickFormatter={fmtAxis}
-              width={56}
-            />
-            <RechartsTooltip
-              cursor={{ fill: "hsl(var(--vs-surface))", opacity: 0.5 }}
-              contentStyle={{
-                background: "hsl(var(--vs-surface-elevated))",
-                border: "1px solid hsl(var(--vs-border))",
-                borderRadius: 8,
-                fontSize: 12,
-              }}
-              formatter={(value: unknown, key: unknown) => {
-                const n = typeof value === "number" ? value : Number(value ?? 0);
-                const label = key === "actual" ? "Actual" : "Goal";
-                return [`$${n.toLocaleString()}`, label];
-              }}
-            />
-            <Bar dataKey="goal" name="Goal" fill="transparent" stroke="hsl(var(--vs-border))" strokeWidth={1.5} radius={[4, 4, 0, 0]} />
-            <Bar dataKey="actual" name="Actual" radius={[4, 4, 0, 0]}>
-              {rows.map((row) => (
-                <Cell key={row.key} fill={colorFor(row.attainment)} />
-              ))}
-              <LabelList
-                dataKey="attainment"
-                position="top"
-                formatter={(v: unknown) => {
-                  const n = typeof v === "number" ? v : Number(v ?? 0);
-                  return n > 0 ? `${Math.round(n * 100)}%` : "";
-                }}
-                style={{ fill: "hsl(var(--vs-text-muted))", fontSize: 10, fontWeight: 600 }}
-              />
-            </Bar>
-          </BarChart>
-        </ResponsiveContainer>
+      <div className="space-y-2">
+        {rows.map((row, i) => {
+          const fillPct = clampFill(row.progress) * 100;
+          const color = colorFor(row.pace, row.hasActuals);
+          // Pro-rated pace marker: sits at monthElapsed% of the 100% mark.
+          // Because the bar container represents 0–130%, the marker's
+          // absolute left is (monthElapsed * 100) / 130.
+          const paceMarkerLeftPct = (monthElapsed * 100) / 1.3;
+          const goalMarkerLeftPct = 100 / 1.3;
+          return (
+            <motion.div
+              key={row.key}
+              initial={{ opacity: 0, x: -4 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ duration: 0.2, delay: 0.03 * i }}
+              className="grid grid-cols-[minmax(80px,120px)_1fr_120px] items-center gap-3"
+              data-testid={`chart-row-${row.key}`}
+            >
+              <div className="text-[12px] font-medium text-[hsl(var(--vs-text))] truncate">{row.name}</div>
+              <div className="relative h-6 rounded-full bg-[hsl(var(--vs-surface))] border border-[hsl(var(--vs-border))] overflow-hidden">
+                {/* Fill — tinted by pace */}
+                <motion.div
+                  initial={{ width: 0 }}
+                  animate={{ width: `${fillPct}%` }}
+                  transition={{ duration: 0.5, ease: "easeOut", delay: 0.05 * i }}
+                  className="absolute inset-y-0 left-0"
+                  style={{ background: color, opacity: row.hasActuals ? 0.85 : 0.35 }}
+                />
+                {/* Pace marker (today, pro-rated) */}
+                <div
+                  className="absolute inset-y-0 border-l border-dashed border-[hsl(var(--vs-text-muted))]/60"
+                  style={{ left: `${paceMarkerLeftPct}%` }}
+                  aria-hidden
+                />
+                {/* 100% goal marker */}
+                <div
+                  className="absolute inset-y-0 border-l-2 border-[hsl(var(--vs-text))]/40"
+                  style={{ left: `${goalMarkerLeftPct}%` }}
+                  aria-hidden
+                />
+                {/* Inline percent label — sits inside the bar when there's
+                    room, otherwise nudges to the right of the fill. */}
+                <div
+                  className="absolute inset-y-0 flex items-center text-[11px] font-semibold tabular-nums"
+                  style={{
+                    left: fillPct > 12 ? `${Math.min(fillPct - 2, 96)}%` : `${fillPct + 1}%`,
+                    transform: fillPct > 12 ? "translateX(-100%)" : "none",
+                    color: fillPct > 12 ? "white" : "hsl(var(--vs-text-muted))",
+                    textShadow: fillPct > 12 ? "0 1px 2px rgba(0,0,0,0.25)" : "none",
+                    paddingLeft: fillPct > 12 ? 0 : 4,
+                    paddingRight: fillPct > 12 ? 6 : 0,
+                  }}
+                >
+                  {row.hasActuals ? `${Math.round(row.progress * 100)}%` : "—"}
+                </div>
+              </div>
+              <div className="text-[11px] text-[hsl(var(--vs-text-muted))] tabular-nums text-right truncate">
+                {row.hasActuals ? fmtUSD(row.actualFee) : "No data"}
+                {row.monthly > 0 && (
+                  <span className="text-[hsl(var(--vs-text-muted))]/70"> / {fmtUSD(row.monthly)}</span>
+                )}
+              </div>
+            </motion.div>
+          );
+        })}
       </div>
     </motion.div>
+  );
+}
+
+/**
+ * Popover that lists individual placements underlying a hero stat. Fires
+ * a fetch only when opened (React Query with `enabled: open`). Deletable
+ * rows if the caller has edit rights.
+ */
+function PlacementsPopover({
+  channelId,
+  recruiterKey,
+  recruiterName,
+  scope,
+  canEdit,
+  children,
+}: {
+  channelId: number;
+  recruiterKey: string;
+  recruiterName: string;
+  scope:
+    | { kind: "month"; periodMonth: string; label: string }
+    | { kind: "range"; fromMonth: string; toMonth: string; label: string };
+  canEdit: boolean;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  const { toast } = useToast();
+
+  const query = useQuery<{ placements: Placement[] }>({
+    queryKey: [
+      "/api/channels",
+      channelId,
+      "scorecard",
+      "placements",
+      recruiterKey,
+      scope.kind === "month" ? scope.periodMonth : `${scope.fromMonth}..${scope.toMonth}`,
+    ],
+    queryFn: async () => {
+      const params = new URLSearchParams({ recruiterKey });
+      if (scope.kind === "month") {
+        params.set("periodMonth", scope.periodMonth);
+      } else {
+        params.set("fromMonth", scope.fromMonth);
+        params.set("toMonth", scope.toMonth);
+      }
+      const res = await apiRequest("GET", `/api/channels/${channelId}/scorecard/placements?${params.toString()}`);
+      return res as { placements: Placement[] };
+    },
+    enabled: open,
+    staleTime: 10_000,
+  });
+
+  const del = useMutation({
+    mutationFn: async (placementId: number) => {
+      return apiRequest("DELETE", `/api/channels/${channelId}/scorecard/placements/${placementId}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/channels", channelId, "scorecard"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/channels", channelId, "scorecard", "placements"] });
+      toast({ title: "Placement deleted" });
+    },
+    onError: (e: any) => {
+      toast({
+        title: "Delete failed",
+        description: e?.body?.message ?? e?.message ?? "Try again.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const placements = query.data?.placements ?? [];
+  const totalFee = placements.reduce((s, p) => s + p.feeAmountCents, 0) / 100;
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>{children}</PopoverTrigger>
+      <PopoverContent
+        align="start"
+        sideOffset={6}
+        className="w-[380px] max-w-[calc(100vw-32px)] p-0 bg-white dark:bg-[hsl(var(--vs-surface-elevated))] border-[hsl(var(--vs-border))]"
+      >
+        <div className="px-3 py-2.5 border-b border-[hsl(var(--vs-border))] flex items-start justify-between gap-2">
+          <div>
+            <div className="text-[10px] uppercase tracking-wider font-medium text-[hsl(var(--vs-text-muted))]">
+              {recruiterName} · {scope.label}
+            </div>
+            <div className="font-display text-[16px] leading-tight text-[hsl(var(--vs-text))] tabular-nums mt-0.5">
+              {placements.length > 0 ? fmtUSD(totalFee) : "—"}
+              <span className="ml-2 text-[11px] font-normal text-[hsl(var(--vs-text-muted))]">
+                {placements.length} placement{placements.length === 1 ? "" : "s"}
+              </span>
+            </div>
+          </div>
+          <button
+            type="button"
+            className="h-6 w-6 rounded-full inline-flex items-center justify-center text-[hsl(var(--vs-text-muted))] hover-elevate"
+            onClick={() => setOpen(false)}
+            aria-label="Close"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+        <div className="max-h-[280px] overflow-y-auto">
+          {query.isLoading && (
+            <div className="px-3 py-6 text-center text-[12px] text-[hsl(var(--vs-text-muted))] inline-flex items-center justify-center gap-2 w-full">
+              <Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading placements…
+            </div>
+          )}
+          {!query.isLoading && placements.length === 0 && (
+            <div className="px-3 py-6 text-center text-[12px] text-[hsl(var(--vs-text-muted))]">
+              No detailed placements yet. Log placements individually to see them here.
+            </div>
+          )}
+          {!query.isLoading && placements.length > 0 && (
+            <ul className="divide-y divide-[hsl(var(--vs-border))]/60">
+              {placements.map((p) => (
+                <li key={p.id} className="px-3 py-2 flex items-start justify-between gap-2 text-[12px]">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="tabular-nums text-[hsl(var(--vs-text-muted))]">{p.placedAt}</span>
+                      <span className="font-medium tabular-nums text-[hsl(var(--vs-text))]">
+                        {fmtUSD(p.feeAmountCents / 100)}
+                      </span>
+                    </div>
+                    {(p.candidateName || p.clientName) && (
+                      <div className="mt-0.5 text-[11px] text-[hsl(var(--vs-text))] truncate">
+                        {p.candidateName ?? "—"}
+                        {p.clientName && (
+                          <span className="text-[hsl(var(--vs-text-muted))]"> · {p.clientName}</span>
+                        )}
+                      </div>
+                    )}
+                    {p.notes && (
+                      <div className="mt-0.5 text-[11px] text-[hsl(var(--vs-text-muted))] truncate">
+                        {p.notes}
+                      </div>
+                    )}
+                  </div>
+                  {canEdit && (
+                    <button
+                      type="button"
+                      className="h-6 w-6 rounded-full inline-flex items-center justify-center text-[hsl(var(--vs-text-muted))] hover:text-[#ef4444] hover-elevate disabled:opacity-40"
+                      onClick={() => {
+                        if (window.confirm("Delete this placement?")) del.mutate(p.id);
+                      }}
+                      disabled={del.isPending}
+                      aria-label="Delete placement"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </PopoverContent>
+    </Popover>
   );
 }
 
@@ -986,97 +1216,248 @@ function EditConfigDialog({
 
 /* ─────────────────── log-actuals dialog ─────────────────── */
 
+/**
+ * Per-placement entry dialog. Defaults to a single-row form so the common
+ * case (“I just made one placement”) is a fast 5-second entry, then a
+ * discreet “+ Add another” button expands into a multi-row batch.
+ *
+ * Each row is a full placement record (recruiter, date, candidate, client,
+ * fee, notes). Submission POSTs the batch to the placements endpoint; the
+ * server derives periodMonth from placedAt and reconciles the aggregate.
+ */
+type PlacementDraft = {
+  id: string; // client-side row key
+  recruiterKey: string;
+  placedAt: string; // "YYYY-MM-DD"
+  candidateName: string;
+  clientName: string;
+  feeAmount: string; // dollars, string for input state
+  notes: string;
+};
+
+function todayISO(): string {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function newDraft(defaultRecruiterKey: string): PlacementDraft {
+  return {
+    id: `d_${Math.random().toString(36).slice(2, 9)}`,
+    recruiterKey: defaultRecruiterKey,
+    placedAt: todayISO(),
+    candidateName: "",
+    clientName: "",
+    feeAmount: "",
+    notes: "",
+  };
+}
+
 function LogActualsDialog({
   channelId,
   config,
-  actuals,
   onClose,
 }: {
   channelId: number;
   config: ScorecardConfig;
-  actuals: Actual[];
+  actuals: Actual[]; // kept in the type for API compatibility; no longer used
   onClose: () => void;
 }) {
   const { toast } = useToast();
-  const currentMonth = useMemo(() => recentMonths(1)[0], []);
-  const [periodMonth, setPeriodMonth] = useState(currentMonth);
-  const [recruiterKey, setRecruiterKey] = useState(config.recruiters[0]?.key ?? "");
-  const existing = actuals.find((a) => a.recruiterKey === recruiterKey && a.periodMonth === periodMonth);
-  const [placementsCount, setPlacementsCount] = useState(String(existing?.placementsCount ?? 0));
-  const [feeAmount, setFeeAmount] = useState(existing ? String(existing.feeAmountCents / 100) : "0");
-  const [notes, setNotes] = useState(existing?.notes ?? "");
+  const defaultRecruiterKey = config.recruiters[0]?.key ?? "";
+  const [drafts, setDrafts] = useState<PlacementDraft[]>(() => [newDraft(defaultRecruiterKey)]);
+
+  const totalFee = drafts.reduce((s, d) => s + (Number(d.feeAmount) || 0), 0);
+
+  const updateDraft = (id: string, patch: Partial<PlacementDraft>) => {
+    setDrafts((prev) => prev.map((d) => (d.id === id ? { ...d, ...patch } : d)));
+  };
+  const removeDraft = (id: string) => {
+    setDrafts((prev) => (prev.length <= 1 ? prev : prev.filter((d) => d.id !== id)));
+  };
+  const addDraft = () => {
+    // Inherit the most recently used recruiter + date so batch entry feels
+    // like a natural continuation of the previous row.
+    const last = drafts[drafts.length - 1];
+    setDrafts((prev) => [
+      ...prev,
+      {
+        ...newDraft(last?.recruiterKey ?? defaultRecruiterKey),
+        placedAt: last?.placedAt ?? todayISO(),
+      },
+    ]);
+  };
 
   const submit = useMutation({
     mutationFn: async () => {
-      return apiRequest("POST", `/api/channels/${channelId}/scorecard/actuals`, {
-        recruiterKey,
-        periodMonth,
-        placementsCount: Math.max(0, Math.floor(Number(placementsCount))),
-        feeAmountCents: Math.max(0, Math.round(Number(feeAmount) * 100)),
-        notes: notes.trim() || null,
-      });
+      const placements = drafts.map((d) => ({
+        recruiterKey: d.recruiterKey,
+        placedAt: d.placedAt,
+        candidateName: d.candidateName.trim() || null,
+        clientName: d.clientName.trim() || null,
+        feeAmountCents: Math.max(0, Math.round((Number(d.feeAmount) || 0) * 100)),
+        notes: d.notes.trim() || null,
+      }));
+      return apiRequest("POST", `/api/channels/${channelId}/scorecard/placements`, { placements });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/channels", channelId, "scorecard"] });
-      toast({ title: "Actuals saved" });
+      queryClient.invalidateQueries({ queryKey: ["/api/channels", channelId, "scorecard", "placements"] });
+      toast({
+        title: drafts.length === 1 ? "Placement logged" : `${drafts.length} placements logged`,
+        description: totalFee > 0 ? `Total: ${fmtUSD(totalFee)}` : undefined,
+      });
       onClose();
     },
     onError: (e: any) => {
-      toast({ title: "Save failed", description: e?.body?.message ?? e?.message ?? "Try again.", variant: "destructive" });
+      toast({
+        title: "Save failed",
+        description: e?.body?.message ?? e?.message ?? "Try again.",
+        variant: "destructive",
+      });
     },
   });
 
+  // Block submit if any row is missing a fee or date. Recruiter defaults to
+  // the first configured recruiter, so an empty recruiter key means the
+  // config has no recruiters yet — also block.
+  const canSubmit =
+    drafts.length > 0 &&
+    drafts.every((d) => d.recruiterKey && d.placedAt && (Number(d.feeAmount) || 0) >= 0) &&
+    drafts.some((d) => (Number(d.feeAmount) || 0) > 0 || d.candidateName.trim() || d.clientName.trim());
+
   return (
     <Dialog open onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="max-w-md">
+      <DialogContent className="max-w-2xl">
         <DialogHeader>
-          <DialogTitle>Log placements</DialogTitle>
-          <DialogDescription>Enter placements and realized fees for the month. Overwrites any prior entry for the same recruiter and month.</DialogDescription>
+          <DialogTitle>Log placement{drafts.length === 1 ? "" : "s"}</DialogTitle>
+          <DialogDescription>
+            One row per placement. Add another row to log multiple placements in a single save.
+          </DialogDescription>
         </DialogHeader>
-        <div className="space-y-3">
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <div className="text-[11px] uppercase tracking-wider text-[hsl(var(--vs-text-muted))] mb-1">Recruiter</div>
-              <select
-                className="w-full h-9 px-2 rounded-md bg-[hsl(var(--vs-surface))] border border-[hsl(var(--vs-border))] text-sm"
-                value={recruiterKey}
-                onChange={(e) => setRecruiterKey(e.target.value)}
-              >
-                {config.recruiters.map((r) => (
-                  <option key={r.key} value={r.key}>
-                    {r.name}
-                  </option>
-                ))}
-              </select>
+        <div className="space-y-2.5 max-h-[60vh] overflow-y-auto pr-1">
+          {drafts.map((d, idx) => (
+            <div
+              key={d.id}
+              className="rounded-xl border border-[hsl(var(--vs-border))] bg-[hsl(var(--vs-surface))]/40 p-3"
+              data-testid={`placement-row-${idx}`}
+            >
+              <div className="flex items-center justify-between mb-2">
+                <div className="text-[10px] uppercase tracking-wider font-semibold text-[hsl(var(--vs-text-muted))]">
+                  Placement {idx + 1}
+                </div>
+                {drafts.length > 1 && (
+                  <button
+                    type="button"
+                    className="h-6 w-6 rounded-full inline-flex items-center justify-center text-[hsl(var(--vs-text-muted))] hover:text-[#ef4444] hover-elevate"
+                    onClick={() => removeDraft(d.id)}
+                    aria-label="Remove placement"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                <div>
+                  <div className="text-[11px] uppercase tracking-wider text-[hsl(var(--vs-text-muted))] mb-1">
+                    Recruiter
+                  </div>
+                  <select
+                    className="w-full h-9 px-2 rounded-md bg-[hsl(var(--vs-surface))] border border-[hsl(var(--vs-border))] text-sm"
+                    value={d.recruiterKey}
+                    onChange={(e) => updateDraft(d.id, { recruiterKey: e.target.value })}
+                  >
+                    {config.recruiters.map((r) => (
+                      <option key={r.key} value={r.key}>
+                        {r.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <div className="text-[11px] uppercase tracking-wider text-[hsl(var(--vs-text-muted))] mb-1">
+                    Date
+                  </div>
+                  <input
+                    type="date"
+                    className="w-full h-9 px-2 rounded-md bg-[hsl(var(--vs-surface))] border border-[hsl(var(--vs-border))] text-sm tabular-nums"
+                    value={d.placedAt}
+                    onChange={(e) => updateDraft(d.id, { placedAt: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <div className="text-[11px] uppercase tracking-wider text-[hsl(var(--vs-text-muted))] mb-1">
+                    Candidate
+                  </div>
+                  <input
+                    type="text"
+                    className="w-full h-9 px-2 rounded-md bg-[hsl(var(--vs-surface))] border border-[hsl(var(--vs-border))] text-sm"
+                    value={d.candidateName}
+                    placeholder="Name"
+                    onChange={(e) => updateDraft(d.id, { candidateName: e.target.value })}
+                    maxLength={120}
+                  />
+                </div>
+                <div>
+                  <div className="text-[11px] uppercase tracking-wider text-[hsl(var(--vs-text-muted))] mb-1">
+                    Client
+                  </div>
+                  <input
+                    type="text"
+                    className="w-full h-9 px-2 rounded-md bg-[hsl(var(--vs-surface))] border border-[hsl(var(--vs-border))] text-sm"
+                    value={d.clientName}
+                    placeholder="Company"
+                    onChange={(e) => updateDraft(d.id, { clientName: e.target.value })}
+                    maxLength={120}
+                  />
+                </div>
+                <div className="sm:col-span-2">
+                  <div className="text-[11px] uppercase tracking-wider text-[hsl(var(--vs-text-muted))] mb-1">
+                    Fee ($)
+                  </div>
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    step="0.01"
+                    min="0"
+                    className="w-full h-9 px-2 rounded-md bg-[hsl(var(--vs-surface))] border border-[hsl(var(--vs-border))] text-sm tabular-nums"
+                    value={d.feeAmount}
+                    placeholder="0.00"
+                    onChange={(e) => updateDraft(d.id, { feeAmount: e.target.value })}
+                  />
+                </div>
+                <div className="sm:col-span-2">
+                  <div className="text-[11px] uppercase tracking-wider text-[hsl(var(--vs-text-muted))] mb-1">
+                    Notes (optional)
+                  </div>
+                  <input
+                    type="text"
+                    className="w-full h-9 px-2 rounded-md bg-[hsl(var(--vs-surface))] border border-[hsl(var(--vs-border))] text-sm"
+                    value={d.notes}
+                    placeholder="e.g. contract-to-hire, referral"
+                    onChange={(e) => updateDraft(d.id, { notes: e.target.value })}
+                    maxLength={500}
+                  />
+                </div>
+              </div>
             </div>
-            <div>
-              <div className="text-[11px] uppercase tracking-wider text-[hsl(var(--vs-text-muted))] mb-1">Month</div>
-              <select
-                className="w-full h-9 px-2 rounded-md bg-[hsl(var(--vs-surface))] border border-[hsl(var(--vs-border))] text-sm tabular-nums"
-                value={periodMonth}
-                onChange={(e) => setPeriodMonth(e.target.value)}
-              >
-                {recentMonths(12).map((m) => (
-                  <option key={m} value={m}>
-                    {m}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <LabeledInput label="Placements" value={placementsCount} onChange={setPlacementsCount} />
-            <LabeledInput label="Realized fees ($)" value={feeAmount} onChange={setFeeAmount} />
-          </div>
-          <div>
-            <div className="text-[11px] uppercase tracking-wider text-[hsl(var(--vs-text-muted))] mb-1">Notes (optional)</div>
-            <textarea
-              className="w-full min-h-[64px] px-2 py-1.5 rounded-md bg-[hsl(var(--vs-surface))] border border-[hsl(var(--vs-border))] text-sm"
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              placeholder="e.g. 2 placements at Ziply, 1 at Quanta El Paso"
-              maxLength={500}
-            />
+          ))}
+        </div>
+        <div className="mt-3 flex items-center justify-between gap-2">
+          <button
+            type="button"
+            onClick={addDraft}
+            disabled={submit.isPending || drafts.length >= 50}
+            className="h-9 px-3 rounded-full text-[13px] font-medium text-[#0090F0] hover:bg-[#0090F0]/10 inline-flex items-center gap-1.5 disabled:opacity-40"
+            data-testid="add-another-placement"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            Add another
+          </button>
+          <div className="text-[11px] tabular-nums text-[hsl(var(--vs-text-muted))]">
+            {drafts.length} row{drafts.length === 1 ? "" : "s"} · Total {fmtUSD(totalFee)}
           </div>
         </div>
         <div className="mt-4 flex items-center justify-end gap-2">
@@ -1091,10 +1472,11 @@ function LogActualsDialog({
           <button
             type="button"
             onClick={() => submit.mutate()}
-            disabled={submit.isPending}
+            disabled={!canSubmit || submit.isPending}
             className="h-9 px-5 rounded-full text-[13px] font-medium bg-[#0090F0] text-white hover:bg-[#0080D8] active:scale-[0.98] transition disabled:opacity-60"
+            data-testid="save-placements"
           >
-            {submit.isPending ? "Saving…" : "Save"}
+            {submit.isPending ? "Saving…" : `Save ${drafts.length === 1 ? "placement" : `${drafts.length} placements`}`}
           </button>
         </div>
       </DialogContent>

@@ -5,7 +5,7 @@ import { storage, sanitize } from "./storage";
 import {
   signupSchema, loginSchema, acceptInviteSchema, sendMessageSchema, reactionSchema,
   insertProjectSchema, insertChannelSchema, insertInviteSchema, channelCreateSchema, linkedContractAttachSchema,
-  scorecardConfigInputSchema, scorecardActualInputSchema,
+  scorecardConfigInputSchema, scorecardActualInputSchema, scorecardPlacementBatchSchema,
 } from "@shared/schema";
 import { hashPassword, verifyPassword, signJwt, requireAuth, requireRole, requireCap, setAuthCookie, clearAuthCookie, AuthedRequest, AUTH_COOKIE } from "./auth";
 import { can } from "@shared/permissions";
@@ -1101,6 +1101,204 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
         now,
       );
     res.json({ ok: true, updatedAt: now, updatedByUserId: u.id });
+  });
+
+  // Phase 2.6.3 — batch insert per-placement rows. The client submits
+  // 1..N placements; we write them in a transaction and reconcile the
+  // aggregate channel_scorecard_actuals row for every (recruiter, month)
+  // pair touched. Reconciliation reads the sum of matching placement rows
+  // (source of truth) so the aggregate never drifts.
+  app.post("/api/channels/:id/scorecard/placements", requireAuth, (req, res) => {
+    const u = (req as AuthedRequest).user;
+    if (!can.scorecard.edit(u.role as any)) return res.status(403).json({ message: "Not allowed" });
+    const channelId = Number(req.params.id);
+    if (!Number.isFinite(channelId)) return res.status(400).json({ message: "Invalid channel id" });
+    const ch = storage.getChannel(channelId);
+    if (!ch) return res.status(404).json({ message: "Channel not found" });
+    if (ch.type !== "scorecard") return res.status(400).json({ message: "Not a scorecard channel" });
+    const parsed = scorecardPlacementBatchSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.issues[0]?.message ?? "Invalid input" });
+    // Confirm every recruiterKey exists in the current config.
+    const cfgRow = rawDb
+      .prepare(`SELECT config_json AS configJson FROM channel_scorecard_configs WHERE channel_id = ?`)
+      .get(channelId) as { configJson: string } | undefined;
+    if (!cfgRow) return res.status(400).json({ message: "Scorecard not configured yet" });
+    let recruiterKeys: Set<string>;
+    try {
+      const cfg = JSON.parse(cfgRow.configJson);
+      recruiterKeys = new Set((cfg.recruiters ?? []).map((r: any) => r.key));
+    } catch {
+      return res.status(500).json({ message: "Config parse error" });
+    }
+    for (const p of parsed.data.placements) {
+      if (!recruiterKeys.has(p.recruiterKey)) {
+        return res.status(400).json({ message: `Unknown recruiter: ${p.recruiterKey}` });
+      }
+    }
+    const now = Math.floor(Date.now() / 1000);
+    const insert = rawDb.prepare(
+      `INSERT INTO channel_scorecard_placements
+         (channel_id, recruiter_key, period_month, placed_at, candidate_name, client_name, fee_amount_cents, notes, created_by_user_id, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    // (recruiterKey, periodMonth) tuples to reconcile after the batch.
+    const touched = new Map<string, { recruiterKey: string; periodMonth: string }>();
+    const insertedIds: number[] = [];
+    const txn = rawDb.transaction((rows: typeof parsed.data.placements) => {
+      for (const p of rows) {
+        const periodMonth = p.placedAt.slice(0, 7); // "YYYY-MM"
+        const info = insert.run(
+          channelId,
+          p.recruiterKey,
+          periodMonth,
+          p.placedAt,
+          p.candidateName ?? null,
+          p.clientName ?? null,
+          p.feeAmountCents,
+          p.notes ?? null,
+          u.id,
+          now,
+        );
+        insertedIds.push(Number(info.lastInsertRowid));
+        touched.set(`${p.recruiterKey}\u0001${periodMonth}`, { recruiterKey: p.recruiterKey, periodMonth });
+      }
+      // Reconcile aggregate rows from the placements table (source of truth).
+      const aggQuery = rawDb.prepare(
+        `SELECT COUNT(*) AS c, COALESCE(SUM(fee_amount_cents), 0) AS f
+         FROM channel_scorecard_placements
+         WHERE channel_id = ? AND recruiter_key = ? AND period_month = ?`,
+      );
+      const upsertAgg = rawDb.prepare(
+        `INSERT INTO channel_scorecard_actuals (channel_id, recruiter_key, period_month, placements_count, fee_amount_cents, notes, updated_by_user_id, updated_at)
+         VALUES (?, ?, ?, ?, ?, NULL, ?, ?)
+         ON CONFLICT(channel_id, recruiter_key, period_month) DO UPDATE SET
+           placements_count = excluded.placements_count,
+           fee_amount_cents = excluded.fee_amount_cents,
+           updated_by_user_id = excluded.updated_by_user_id,
+           updated_at = excluded.updated_at`,
+      );
+      const touchedList = Array.from(touched.values());
+      for (const { recruiterKey, periodMonth } of touchedList) {
+        const agg = aggQuery.get(channelId, recruiterKey, periodMonth) as { c: number; f: number };
+        upsertAgg.run(channelId, recruiterKey, periodMonth, agg.c, agg.f, u.id, now);
+      }
+    });
+    try {
+      txn(parsed.data.placements);
+    } catch (e: any) {
+      return res.status(500).json({ message: e?.message ?? "Insert failed" });
+    }
+    res.json({ ok: true, insertedIds, createdAt: now });
+  });
+
+  // List individual placements for a (recruiter, period) or a broader
+  // (recruiter, period range) window. Powers the click-through popovers
+  // on the recruiter dashboard — MTD tile queries a single month,
+  // 6-month tile queries a 6-month range.
+  app.get("/api/channels/:id/scorecard/placements", requireAuth, (req, res) => {
+    const channelId = Number(req.params.id);
+    if (!Number.isFinite(channelId)) return res.status(400).json({ message: "Invalid channel id" });
+    const ch = storage.getChannel(channelId);
+    if (!ch) return res.status(404).json({ message: "Channel not found" });
+    if (ch.type !== "scorecard") return res.status(400).json({ message: "Not a scorecard channel" });
+    const recruiterKey = String(req.query.recruiterKey ?? "").slice(0, 40);
+    const periodMonth = String(req.query.periodMonth ?? "").slice(0, 7);
+    const fromMonth = String(req.query.fromMonth ?? "").slice(0, 7);
+    const toMonth = String(req.query.toMonth ?? "").slice(0, 7);
+    if (!recruiterKey) return res.status(400).json({ message: "recruiterKey required" });
+    let rows: any[];
+    if (periodMonth) {
+      rows = rawDb
+        .prepare(
+          `SELECT id, recruiter_key AS recruiterKey, period_month AS periodMonth, placed_at AS placedAt,
+                  candidate_name AS candidateName, client_name AS clientName,
+                  fee_amount_cents AS feeAmountCents, notes, created_by_user_id AS createdByUserId, created_at AS createdAt
+           FROM channel_scorecard_placements
+           WHERE channel_id = ? AND recruiter_key = ? AND period_month = ?
+           ORDER BY placed_at DESC, id DESC`,
+        )
+        .all(channelId, recruiterKey, periodMonth);
+    } else if (fromMonth && toMonth) {
+      rows = rawDb
+        .prepare(
+          `SELECT id, recruiter_key AS recruiterKey, period_month AS periodMonth, placed_at AS placedAt,
+                  candidate_name AS candidateName, client_name AS clientName,
+                  fee_amount_cents AS feeAmountCents, notes, created_by_user_id AS createdByUserId, created_at AS createdAt
+           FROM channel_scorecard_placements
+           WHERE channel_id = ? AND recruiter_key = ? AND period_month >= ? AND period_month <= ?
+           ORDER BY placed_at DESC, id DESC`,
+        )
+        .all(channelId, recruiterKey, fromMonth, toMonth);
+    } else {
+      return res.status(400).json({ message: "periodMonth or (fromMonth,toMonth) required" });
+    }
+    res.json({ placements: rows });
+  });
+
+  // Delete a single placement. Reconciles the aggregate row for the
+  // (recruiter, month) it belonged to.
+  app.delete("/api/channels/:id/scorecard/placements/:placementId", requireAuth, (req, res) => {
+    const u = (req as AuthedRequest).user;
+    if (!can.scorecard.edit(u.role as any)) return res.status(403).json({ message: "Not allowed" });
+    const channelId = Number(req.params.id);
+    const placementId = Number(req.params.placementId);
+    if (!Number.isFinite(channelId) || !Number.isFinite(placementId)) {
+      return res.status(400).json({ message: "Invalid id" });
+    }
+    const row = rawDb
+      .prepare(
+        `SELECT recruiter_key AS recruiterKey, period_month AS periodMonth
+         FROM channel_scorecard_placements WHERE id = ? AND channel_id = ?`,
+      )
+      .get(placementId, channelId) as { recruiterKey: string; periodMonth: string } | undefined;
+    if (!row) return res.status(404).json({ message: "Placement not found" });
+    const now = Math.floor(Date.now() / 1000);
+    const txn = rawDb.transaction(() => {
+      rawDb
+        .prepare(`DELETE FROM channel_scorecard_placements WHERE id = ? AND channel_id = ?`)
+        .run(placementId, channelId);
+      const agg = rawDb
+        .prepare(
+          `SELECT COUNT(*) AS c, COALESCE(SUM(fee_amount_cents), 0) AS f
+           FROM channel_scorecard_placements
+           WHERE channel_id = ? AND recruiter_key = ? AND period_month = ?`,
+        )
+        .get(channelId, row.recruiterKey, row.periodMonth) as { c: number; f: number };
+      if (agg.c === 0) {
+        // No more placements for this month — clear the aggregate row so
+        // it doesn't linger with stale (non-zero) legacy data. Legacy
+        // aggregate rows without placement provenance are preserved:
+        // we only clear when there was at least one placement, but the
+        // last one just got deleted (agg.c === 0 after a delete). To
+        // avoid clobbering a legacy row that never had placements, we
+        // scope the DELETE by "aggregate touched by our system" —
+        // proxy: notes IS NULL (placement-reconciled rows have notes NULL).
+        rawDb
+          .prepare(
+            `DELETE FROM channel_scorecard_actuals
+             WHERE channel_id = ? AND recruiter_key = ? AND period_month = ? AND notes IS NULL`,
+          )
+          .run(channelId, row.recruiterKey, row.periodMonth);
+      } else {
+        rawDb
+          .prepare(
+            `INSERT INTO channel_scorecard_actuals (channel_id, recruiter_key, period_month, placements_count, fee_amount_cents, notes, updated_by_user_id, updated_at)
+             VALUES (?, ?, ?, ?, ?, NULL, ?, ?)
+             ON CONFLICT(channel_id, recruiter_key, period_month) DO UPDATE SET
+               placements_count = excluded.placements_count,
+               fee_amount_cents = excluded.fee_amount_cents,
+               updated_by_user_id = excluded.updated_by_user_id,
+               updated_at = excluded.updated_at`,
+          )
+          .run(channelId, row.recruiterKey, row.periodMonth, agg.c, agg.f, u.id, now);
+      }
+    });
+    try {
+      txn();
+    } catch (e: any) {
+      return res.status(500).json({ message: e?.message ?? "Delete failed" });
+    }
+    res.json({ ok: true });
   });
 
   // Phase 1.9.3 — proxy: list contracts from bulldog-contracts so the chat

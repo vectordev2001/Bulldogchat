@@ -1246,3 +1246,46 @@ export const scorecardActualInputSchema = z.object({
   notes: z.string().max(500).optional().nullable(),
 });
 export type ScorecardActualInput = z.infer<typeof scorecardActualInputSchema>;
+
+// Phase 2.6.3 — per-placement detail rows. Aggregate
+// channel_scorecard_actuals stays as a fast summary read; new writes go
+// through this table so recruiters can see the individual placements
+// behind each aggregated number (click-through popover on the dashboard).
+export const channelScorecardPlacements = sqliteTable(
+  "channel_scorecard_placements",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    channelId: integer("channel_id").notNull().references(() => channels.id),
+    recruiterKey: text("recruiter_key").notNull(),
+    periodMonth: text("period_month").notNull(), // "YYYY-MM", derived from placedAt
+    placedAt: text("placed_at").notNull(), // "YYYY-MM-DD"
+    candidateName: text("candidate_name"),
+    clientName: text("client_name"),
+    feeAmountCents: integer("fee_amount_cents").notNull().default(0),
+    notes: text("notes"),
+    createdByUserId: integer("created_by_user_id").notNull().references(() => users.id),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  },
+);
+export type ChannelScorecardPlacement = typeof channelScorecardPlacements.$inferSelect;
+
+// One row entered by the recruiter (or admin) representing a single
+// placement. `placedAt` is a YYYY-MM-DD date string; the server derives
+// `periodMonth` from it so the client can't disagree with itself.
+export const scorecardPlacementSchema = z.object({
+  recruiterKey: z.string().min(1).max(40),
+  placedAt: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "YYYY-MM-DD"),
+  candidateName: z.string().max(120).optional().nullable(),
+  clientName: z.string().max(120).optional().nullable(),
+  feeAmountCents: z.number().int().nonnegative().max(1_000_000_000),
+  notes: z.string().max(500).optional().nullable(),
+});
+export type ScorecardPlacementInput = z.infer<typeof scorecardPlacementSchema>;
+
+// Batch insert. The client can submit 1..N placements; the server writes
+// them in a single transaction and reconciles the aggregate row per
+// (recruiterKey, periodMonth) touched.
+export const scorecardPlacementBatchSchema = z.object({
+  placements: z.array(scorecardPlacementSchema).min(1).max(50),
+});
+export type ScorecardPlacementBatchInput = z.infer<typeof scorecardPlacementBatchSchema>;
