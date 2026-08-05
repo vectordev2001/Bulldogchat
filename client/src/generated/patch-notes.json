@@ -1,7 +1,17 @@
 {
-  "generated_at": "2026-08-05T01:58:30.893Z",
+  "generated_at": "2026-08-05T02:17:09.712Z",
   "repo": "vectordev2001/Bulldogchat",
   "notes": [
+    {
+      "number": 128,
+      "title": "Scorecard v2: per-placement entry + progress-to-goal chart + click-through popovers",
+      "raw_title": "Scorecard v2: per-placement entry + progress-to-goal chart + click-through popovers",
+      "summary": "Round-2 review of the recruiter scorecard. Three shifts:",
+      "merged_at": "2026-08-05T02:16:56Z",
+      "author": "vectordev2001",
+      "url": "https://github.com/vectordev2001/Bulldogchat/pull/128",
+      "category": "other"
+    },
     {
       "number": 127,
       "title": "Notify users on every release (push + email)",
@@ -90,16 +100,6 @@
       "merged_at": "2026-07-29T19:31:28Z",
       "author": "vectordev2001",
       "url": "https://github.com/vectordev2001/Bulldogchat/pull/100",
-      "category": "feature"
-    },
-    {
-      "number": 92,
-      "title": "Bulldog Meet only for MVP; park Teams bridging behind flag",
-      "raw_title": "feat(scheduling): Bulldog Meet only for MVP; park Teams bridging behind flag",
-      "summary": "Ship the MVP as **Bulldog Meet only**. The \"Join via Teams\" affordance was misleading external attendees: signaling worked end-to-end but the bridge bot never actually appeared as a real participant in the Teams meeting (MediaWorker media-plane blocked, no observable logs). Rather than inviting people to a Teams meeting with no Bulldog user in it, we default to browser-based Bulldog Meet — one lin",
-      "merged_at": "2026-07-29T19:30:27Z",
-      "author": "vectordev2001",
-      "url": "https://github.com/vectordev2001/Bulldogchat/pull/92",
       "category": "feature"
     }
   ]
