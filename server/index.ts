@@ -6,6 +6,7 @@ import { serveStatic } from "./static";
 import { syncDeactivatedFromAuth } from "./users-sync";
 import { createServer } from "node:http";
 import { recordBogeyDiagnostic } from "./bogey-storage";
+import { announcePatchNotesIfChanged } from "./patch-notes-announcer";
 
 const app = express();
 // Behind Render's TLS-terminating reverse proxy. Honor X-Forwarded-* so
@@ -167,6 +168,12 @@ app.use((req, res, next) => {
     },
     () => {
       log(`serving on port ${port}`);
+      // Fire-and-forget patch-notes announcement. Runs once per process boot;
+      // internally dedupes by max PR number so a redeploy without new notes
+      // sends nothing. Never throws — all errors are swallowed with a log.
+      announcePatchNotesIfChanged().catch((err) => {
+        console.warn("[patch-notes] announcer failed:", err);
+      });
     },
   );
 
