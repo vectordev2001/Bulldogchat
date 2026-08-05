@@ -23,7 +23,18 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { motion } from "framer-motion";
-import { DollarSign, Loader2, Pencil, Plus, TrendingUp, Trophy, Users } from "lucide-react";
+import { BarChart3, DollarSign, Loader2, Pencil, Plus, TrendingUp, Trophy, Users } from "lucide-react";
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  LabelList,
+  ResponsiveContainer,
+  Tooltip as RechartsTooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 import type { ApiChannel } from "@/types/api";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -172,6 +183,19 @@ export function ScorecardChannelView({ channel }: Props) {
     if (a.periodMonth === currentMonth) currentMonthByRecruiter.set(a.recruiterKey, a);
   }
 
+  // Trailing 6-month actuals per recruiter (fee $ + placements) so each card
+  // can show "where they actually are" against the 6-month goal. Uses the
+  // same recentMonths() window the leaderboard's rolling-3mo view is based on.
+  const trailing6MonthsSet = new Set(recentMonths(6));
+  const trailing6ByRecruiter = new Map<string, { fee: number; placements: number }>();
+  for (const a of actuals) {
+    if (!trailing6MonthsSet.has(a.periodMonth)) continue;
+    const entry = trailing6ByRecruiter.get(a.recruiterKey) ?? { fee: 0, placements: 0 };
+    entry.fee += (a.feeAmountCents ?? 0) / 100;
+    entry.placements += a.placementsCount ?? 0;
+    trailing6ByRecruiter.set(a.recruiterKey, entry);
+  }
+
   // Phase 2.6.1 — display presets. Read admin-selected view knobs off the
   // config, falling back to defaults so pre-2.6.1 configs render unchanged.
   const display = {
@@ -307,6 +331,15 @@ export function ScorecardChannelView({ channel }: Props) {
             />
           )}
 
+          {/* Team performance chart — shows how the whole team is tracking
+              at a glance. Rendered above the per-recruiter cards so the
+              overall picture reads first. */}
+          <TeamPerformanceChart
+            perRecruiter={targets.perRecruiter}
+            trailing6ByRecruiter={trailing6ByRecruiter}
+            thresholds={config.thresholds}
+          />
+
           {/* Per-recruiter cards */}
           <div>
             <div className="flex items-center gap-2 text-[11px] uppercase tracking-wider font-medium text-[hsl(var(--vs-text-muted))] mb-3 px-1">
@@ -317,10 +350,14 @@ export function ScorecardChannelView({ channel }: Props) {
               {sortedPerRecruiter.map((r, i) => {
                 const actual = currentMonthByRecruiter.get(r.key);
                 const actualFee = (actual?.feeAmountCents ?? 0) / 100;
+                const trailing6 = trailing6ByRecruiter.get(r.key) ?? { fee: 0, placements: 0 };
                 // Pace: what fraction of the pro-rated monthly target has been
                 // realized so far this month. 100% = on pace; <90% = red.
                 const expectedByNow = r.monthly * monthElapsed;
                 const pace = expectedByNow > 0 ? actualFee / expectedByNow : 0;
+                // 6-month attainment vs goal — used for the secondary hero's
+                // subtle color and the reference row's % note.
+                const sixMonthAttainment = r.sixMonth > 0 ? trailing6.fee / r.sixMonth : 0;
                 return (
                   <motion.div
                     key={r.key}
@@ -336,24 +373,36 @@ export function ScorecardChannelView({ channel }: Props) {
                       <PacePill pace={pace} thresholds={config.thresholds} hasActuals={actual != null} />
                     </div>
 
-                    {/* Two hero numbers side-by-side: monthly and 6-month */}
+                    {/* Hero: actual performance — big + bright. This is the
+                        primary answer to "where is this recruiter right now." */}
                     <div className="mt-3 grid grid-cols-2 gap-3">
-                      <HeroStat label="This Month" value={fmtUSD(r.monthly)} sizeClass={heroSizeClass} />
-                      <HeroStat label="6-Month" value={fmtUSD(r.sixMonth)} sizeClass={heroSizeClass} />
+                      <ActualHeroStat
+                        label="Actual MTD"
+                        value={actual ? fmtUSD(actualFee) : "—"}
+                        sub={actual ? `${actual.placementsCount} placement${actual.placementsCount === 1 ? "" : "s"}` : "No data"}
+                        sizeClass={heroSizeClass}
+                        dim={!actual}
+                      />
+                      <ActualHeroStat
+                        label="Actual 6-mo"
+                        value={trailing6.fee > 0 ? fmtUSD(trailing6.fee) : "—"}
+                        sub={
+                          trailing6.fee > 0
+                            ? `${trailing6.placements} placement${trailing6.placements === 1 ? "" : "s"}${r.sixMonth > 0 ? ` · ${Math.round(sixMonthAttainment * 100)}% of goal` : ""}`
+                            : "No data"
+                        }
+                        sizeClass={heroSizeClass}
+                        dim={trailing6.fee <= 0}
+                      />
                     </div>
 
-                    {/* Supporting stats */}
-                    <div className="mt-4 grid grid-cols-3 gap-3">
-                      <MiniStat label="Floor" value={String(r.floorPlacements)} />
-                      <MiniStat label="Stretch" value={fmtUSD(r.stretch)} accent />
-                      <MiniStat
-                        label="Actual MTD"
-                        value={
-                          actual
-                            ? `${fmtUSD(actualFee)} · ${actual.placementsCount}`
-                            : "—"
-                        }
-                      />
+                    {/* Reference row: the goals live here now — smaller,
+                        muted, clearly labelled as targets so eyes go to the
+                        actuals above first. */}
+                    <div className="mt-4 pt-3 border-t border-dashed border-[hsl(var(--vs-border))] grid grid-cols-3 gap-3">
+                      <MiniStat label="Monthly goal" value={fmtUSD(r.monthly)} />
+                      <MiniStat label="6-mo goal" value={fmtUSD(r.sixMonth)} />
+                      <MiniStat label="Stretch" value={fmtUSD(r.stretch)} />
                     </div>
                   </motion.div>
                 );
@@ -507,6 +556,184 @@ function HeroStat({ label, value, sizeClass = "text-[20px]" }: { label: string; 
         {value}
       </div>
     </div>
+  );
+}
+
+/**
+ * The bigger, brighter hero used for actuals (MTD + trailing 6mo). Wrapped in
+ * a filled blue chip so the eye lands here first — goals live in the muted
+ * reference row below the card body.
+ *
+ * When `dim=true` the chip renders in a neutral tone ("No data yet") so an
+ * empty recruiter doesn't shout an accidental $0 in bright brand blue.
+ */
+function ActualHeroStat({
+  label,
+  value,
+  sub,
+  sizeClass = "text-[20px]",
+  dim = false,
+}: {
+  label: string;
+  value: string;
+  sub?: string;
+  sizeClass?: string;
+  dim?: boolean;
+}) {
+  return (
+    <div
+      className={
+        dim
+          ? "rounded-xl bg-[hsl(var(--vs-surface))]/70 border border-[hsl(var(--vs-border))] px-3 py-3"
+          : "rounded-xl bg-gradient-to-br from-[#0090F0] to-[#0064B8] text-white px-3 py-3 shadow-[0_4px_14px_-6px_rgba(0,100,184,0.55)]"
+      }
+    >
+      <div
+        className={
+          dim
+            ? "text-[10px] uppercase tracking-wider font-medium text-[hsl(var(--vs-text-muted))]"
+            : "text-[10px] uppercase tracking-wider font-semibold text-white/85"
+        }
+      >
+        {label}
+      </div>
+      <div
+        className={`mt-1 font-display ${sizeClass} leading-tight tabular-nums ${dim ? "text-[hsl(var(--vs-text-muted))]" : "text-white"}`}
+      >
+        {value}
+      </div>
+      {sub && (
+        <div className={`mt-1 text-[11px] tabular-nums ${dim ? "text-[hsl(var(--vs-text-muted))]" : "text-white/80"}`}>
+          {sub}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Team performance chart — one grouped bar per recruiter showing 6-month
+ * actual next to 6-month goal so the whole team's tracking is legible at a
+ * glance. Actual bars are tinted by attainment (green / amber / red) using
+ * the same thresholds as the pace pill so the color story stays consistent
+ * across the dashboard.
+ */
+function TeamPerformanceChart({
+  perRecruiter,
+  trailing6ByRecruiter,
+  thresholds,
+}: {
+  perRecruiter: Array<{ key: string; name: string; sixMonth: number }>;
+  trailing6ByRecruiter: Map<string, { fee: number; placements: number }>;
+  thresholds: { green: number; yellow: number };
+}) {
+  const rows = perRecruiter.map((r) => {
+    const t6 = trailing6ByRecruiter.get(r.key) ?? { fee: 0, placements: 0 };
+    const attainment = r.sixMonth > 0 ? t6.fee / r.sixMonth : 0;
+    return {
+      key: r.key,
+      name: r.name,
+      actual: Math.round(t6.fee),
+      goal: Math.round(r.sixMonth),
+      attainment,
+    };
+  });
+
+  // If nobody has any actuals AND no goals, the chart carries no signal.
+  const hasAnyData = rows.some((r) => r.actual > 0 || r.goal > 0);
+  if (!hasAnyData) return null;
+
+  const colorFor = (attainment: number) => {
+    if (attainment >= thresholds.green) return "#10b981"; // emerald-500
+    if (attainment >= thresholds.yellow) return "#f59e0b"; // amber-500
+    if (attainment > 0) return "#ef4444"; // red-500
+    return "#94a3b8"; // slate-400 — no actuals yet
+  };
+
+  const fmtAxis = (v: number) => {
+    if (v >= 1000) return `$${Math.round(v / 1000)}k`;
+    return `$${v}`;
+  };
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 4 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.2 }}
+      className="rounded-2xl bg-white dark:bg-[hsl(var(--vs-surface-elevated))] border border-[hsl(var(--vs-border))] p-4 md:p-5 mb-4"
+      data-testid="team-performance-chart"
+    >
+      <div className="flex items-center justify-between gap-3 mb-3">
+        <div className="flex items-center gap-2 text-[11px] uppercase tracking-wider font-medium text-[hsl(var(--vs-text-muted))]">
+          <BarChart3 className="w-3.5 h-3.5 text-[#0090F0]" />
+          Team performance — 6-month actual vs goal
+        </div>
+        <div className="hidden md:flex items-center gap-3 text-[11px] text-[hsl(var(--vs-text-muted))]">
+          <span className="inline-flex items-center gap-1.5">
+            <span className="inline-block w-2.5 h-2.5 rounded-sm bg-[#10b981]" /> On pace
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            <span className="inline-block w-2.5 h-2.5 rounded-sm bg-[#f59e0b]" /> Behind
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            <span className="inline-block w-2.5 h-2.5 rounded-sm bg-[#ef4444]" /> Off track
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            <span className="inline-block w-2.5 h-2.5 rounded-sm border border-[hsl(var(--vs-border))] bg-transparent" /> Goal
+          </span>
+        </div>
+      </div>
+      <div style={{ width: "100%", height: 260 }}>
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart data={rows} margin={{ top: 8, right: 8, bottom: 4, left: 4 }} barCategoryGap="20%">
+            <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--vs-border))" vertical={false} />
+            <XAxis
+              dataKey="name"
+              tick={{ fill: "hsl(var(--vs-text-muted))", fontSize: 11 }}
+              tickLine={false}
+              axisLine={{ stroke: "hsl(var(--vs-border))" }}
+              interval={0}
+            />
+            <YAxis
+              tick={{ fill: "hsl(var(--vs-text-muted))", fontSize: 11 }}
+              tickLine={false}
+              axisLine={{ stroke: "hsl(var(--vs-border))" }}
+              tickFormatter={fmtAxis}
+              width={56}
+            />
+            <RechartsTooltip
+              cursor={{ fill: "hsl(var(--vs-surface))", opacity: 0.5 }}
+              contentStyle={{
+                background: "hsl(var(--vs-surface-elevated))",
+                border: "1px solid hsl(var(--vs-border))",
+                borderRadius: 8,
+                fontSize: 12,
+              }}
+              formatter={(value: unknown, key: unknown) => {
+                const n = typeof value === "number" ? value : Number(value ?? 0);
+                const label = key === "actual" ? "Actual" : "Goal";
+                return [`$${n.toLocaleString()}`, label];
+              }}
+            />
+            <Bar dataKey="goal" name="Goal" fill="transparent" stroke="hsl(var(--vs-border))" strokeWidth={1.5} radius={[4, 4, 0, 0]} />
+            <Bar dataKey="actual" name="Actual" radius={[4, 4, 0, 0]}>
+              {rows.map((row) => (
+                <Cell key={row.key} fill={colorFor(row.attainment)} />
+              ))}
+              <LabelList
+                dataKey="attainment"
+                position="top"
+                formatter={(v: unknown) => {
+                  const n = typeof v === "number" ? v : Number(v ?? 0);
+                  return n > 0 ? `${Math.round(n * 100)}%` : "";
+                }}
+                style={{ fill: "hsl(var(--vs-text-muted))", fontSize: 10, fontWeight: 600 }}
+              />
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+    </motion.div>
   );
 }
 
