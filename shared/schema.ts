@@ -1235,6 +1235,16 @@ export const scorecardConfigInputSchema = z.object({
   }),
   recruiters: z.array(scorecardRecruiterSchema).min(1).max(50),
   display: scorecardDisplaySchema.optional(),
+  // Fixed forward program window — Aug 2026 → Dec 2026 for VTS. The
+  // scorecard is a 5-month forward horizon (not a rolling 6-month
+  // window), so pace = elapsed fraction of THIS window, not of a
+  // shifting 6-month trail. Defaults preserve VTS behavior for any
+  // configs saved before this field was introduced.
+  programStartMonth: z
+    .string()
+    .regex(/^\d{4}-\d{2}$/, "YYYY-MM")
+    .default("2026-08"),
+  programHorizonMonths: z.number().int().min(1).max(24).default(5),
 });
 export type ScorecardConfigInput = z.infer<typeof scorecardConfigInputSchema>;
 
