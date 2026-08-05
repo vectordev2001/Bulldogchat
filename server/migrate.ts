@@ -1503,6 +1503,29 @@ export function runMigrations() {
         ON channel_scorecard_actuals (channel_id, recruiter_key, period_month);
       CREATE INDEX IF NOT EXISTS idx_scorecard_actuals_channel
         ON channel_scorecard_actuals (channel_id, period_month);
+
+      -- Phase 2.6.3 — per-placement detail rows. Aggregate
+      -- channel_scorecard_actuals stays in place as a fast summary read;
+      -- new writes go through this table so recruiters can see the
+      -- individual placements behind each aggregated number (click-through
+      -- popover on the dashboard).
+      CREATE TABLE IF NOT EXISTS channel_scorecard_placements (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        channel_id INTEGER NOT NULL,
+        recruiter_key TEXT NOT NULL,
+        period_month TEXT NOT NULL,           -- "YYYY-MM", derived from placed_at
+        placed_at TEXT NOT NULL,              -- "YYYY-MM-DD", user-entered
+        candidate_name TEXT,
+        client_name TEXT,
+        fee_amount_cents INTEGER NOT NULL DEFAULT 0,
+        notes TEXT,
+        created_by_user_id INTEGER NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_scorecard_placements_lookup
+        ON channel_scorecard_placements (channel_id, recruiter_key, period_month);
+      CREATE INDEX IF NOT EXISTS idx_scorecard_placements_channel_month
+        ON channel_scorecard_placements (channel_id, period_month);
     `);
     console.log("[migrate] v37 ensured channel_scorecard_* tables");
   } catch (e: any) {
