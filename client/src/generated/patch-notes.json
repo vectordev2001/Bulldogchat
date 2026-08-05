@@ -1,7 +1,17 @@
 {
-  "generated_at": "2026-08-04T21:40:00.976Z",
+  "generated_at": "2026-08-05T01:40:20.558Z",
   "repo": "vectordev2001/Bulldogchat",
   "notes": [
+    {
+      "number": 126,
+      "title": "Actuals-first recruiter cards + team chart",
+      "raw_title": "feat(scorecard): actuals-first recruiter cards + team chart",
+      "summary": "Screenshot-driven rework of the VTS recruiter scorecard. Josh's ask:",
+      "merged_at": "2026-08-05T01:40:06Z",
+      "author": "vectordev2001",
+      "url": "https://github.com/vectordev2001/Bulldogchat/pull/126",
+      "category": "feature"
+    },
     {
       "number": 125,
       "title": "Add What's New patch notes to Bulldog Chat",
@@ -90,16 +100,6 @@
       "merged_at": "2026-07-29T19:18:39Z",
       "author": "vectordev2001",
       "url": "https://github.com/vectordev2001/Bulldogchat/pull/60",
-      "category": "other"
-    },
-    {
-      "number": 119,
-      "title": "Stage 4: chat pushes reach native iOS via auth /api/notify",
-      "raw_title": "Stage 4: chat pushes reach native iOS via auth /api/notify",
-      "summary": "Chat already computes rich title/body. Web push and Expo already fan out. This adds APNs fan-out via bulldog-auth's central /api/notify so the unified iOS shell receives them too. Uses the new email-based /api/notify (auth PR #19). Fire-and-forget \\u2014 never blocks message send.",
-      "merged_at": "2026-07-23T20:10:04Z",
-      "author": "vectordev2001",
-      "url": "https://github.com/vectordev2001/Bulldogchat/pull/119",
       "category": "other"
     }
   ]
