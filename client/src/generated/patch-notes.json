@@ -1,7 +1,17 @@
 {
-  "generated_at": "2026-08-05T02:17:09.712Z",
+  "generated_at": "2026-08-05T02:30:52.754Z",
   "repo": "vectordev2001/Bulldogchat",
   "notes": [
+    {
+      "number": 129,
+      "title": "Scorecard v3: 6-month team viz, recruiter heat map, tap-to-open placements",
+      "raw_title": "Scorecard v3: 6-month team viz, recruiter heat map, tap-to-open placements",
+      "summary": "Overachievers grow ~2.7× the min tile. Tapping a tile smooth-scrolls to that recruiter's detail card. Legend included on wide screens.",
+      "merged_at": "2026-08-05T02:30:30Z",
+      "author": "vectordev2001",
+      "url": "https://github.com/vectordev2001/Bulldogchat/pull/129",
+      "category": "other"
+    },
     {
       "number": 128,
       "title": "Scorecard v2: per-placement entry + progress-to-goal chart + click-through popovers",
@@ -91,16 +101,6 @@
       "author": "vectordev2001",
       "url": "https://github.com/vectordev2001/Bulldogchat/pull/120",
       "category": "chore"
-    },
-    {
-      "number": 100,
-      "title": "Picture-in-picture call overlay",
-      "raw_title": "feat(chat): picture-in-picture call overlay",
-      "summary": "The LiveKit room stays connected throughout — isPiP only swaps the visual layer.",
-      "merged_at": "2026-07-29T19:31:28Z",
-      "author": "vectordev2001",
-      "url": "https://github.com/vectordev2001/Bulldogchat/pull/100",
-      "category": "feature"
     }
   ]
 }
