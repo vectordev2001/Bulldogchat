@@ -28,7 +28,7 @@ import type { ApiChannel } from "@/types/api";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
-import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 
 /* ─────────────────── types ─────────────────── */
 
@@ -169,6 +169,134 @@ function paceHeat(
   return { color: "#94a3b8", label: "No data" };
 }
 
+/**
+ * Recruiter heat-map: each recruiter rendered as a variable-size tile,
+ * colored by pace vs 6-month goal, sized by attainment fraction of that
+ * goal so that outperformers grow and underperformers shrink. This is the
+ * "at a glance" visual that lives between the team stats and the detailed
+ * recruiter cards.
+ *
+ * Sizing model: base tile row is a CSS grid of equal cells; each tile's
+ * `flex-grow` is set from a normalized attainment ratio so bigger =
+ * further ahead. A floor of 0.55 keeps zero/low attainers visible and
+ * legible. Clicking a tile scrolls the matching recruiter card into view.
+ */
+function RecruiterHeatmap({
+  perRecruiter,
+  currentMonthByRecruiter,
+  trailing6ByRecruiter,
+  monthElapsed,
+  thresholds,
+}: {
+  perRecruiter: Array<{ key: string; name: string; monthly: number; sixMonth: number }>;
+  currentMonthByRecruiter: Map<string, { feeAmountCents: number; placementsCount: number }>;
+  trailing6ByRecruiter: Map<string, { fee: number; placements: number }>;
+  monthElapsed: number;
+  thresholds: { green: number; yellow: number };
+}) {
+  if (perRecruiter.length === 0) return null;
+
+  // 6-month elapsed fraction — same math as the top card.
+  const sixMoFractionElapsed = Math.min(1, Math.max(0, (5 + monthElapsed) / 6));
+
+  // Pre-compute per-recruiter attainment + pace + heat, then normalize the
+  // "size score" across the row so we don't have to pick absolute pixel
+  // widths. Size score = 6-month attainment fraction, floored at 0.55 so
+  // no-data / off-track tiles are still readable.
+  const tiles = perRecruiter.map((r) => {
+    const mtd = currentMonthByRecruiter.get(r.key);
+    const mtdFee = (mtd?.feeAmountCents ?? 0) / 100;
+    const trailing6 = trailing6ByRecruiter.get(r.key) ?? { fee: 0, placements: 0 };
+    const monthlyExpected = r.monthly * monthElapsed;
+    const monthlyPace = monthlyExpected > 0 ? mtdFee / monthlyExpected : 0;
+    const sixMoExpected = r.sixMonth * sixMoFractionElapsed;
+    const sixMoPace = sixMoExpected > 0 ? trailing6.fee / sixMoExpected : 0;
+    const sixMoAttain = r.sixMonth > 0 ? trailing6.fee / r.sixMonth : 0;
+    // Prefer 6-month pace for the tile color when we have any 6-mo data;
+    // fall back to monthly for brand-new recruiters.
+    const usingSixMo = trailing6.fee > 0;
+    const paceForHeat = usingSixMo ? sixMoPace : monthlyPace;
+    const hasActuals = trailing6.fee > 0 || mtdFee > 0;
+    const heat = paceHeat(paceForHeat, hasActuals, thresholds);
+    // Size score: clamp attainment to [0.55, 1.5] so overachievers grow
+    // ~2.7× the min tile without any single tile eating the row.
+    const sizeScore = Math.min(1.5, Math.max(0.55, sixMoAttain));
+    return { r, mtdFee, trailing6, monthlyPace, sixMoPace, sixMoAttain, heat, sizeScore, hasActuals, usingSixMo };
+  });
+
+  return (
+    <div className="rounded-2xl bg-white dark:bg-[hsl(var(--vs-surface-elevated))] border border-[hsl(var(--vs-border))] p-4 md:p-5 shadow-[0_1px_2px_rgba(0,0,0,0.04)]">
+      <div className="flex items-center justify-between gap-3 mb-3">
+        <div className="flex items-center gap-2 text-[11px] uppercase tracking-wider font-medium text-[hsl(var(--vs-text-muted))]">
+          <TrendingUp className="w-3.5 h-3.5" />
+          Recruiter heat map · 6‑month
+        </div>
+        <div className="hidden sm:flex items-center gap-3 text-[10px] text-[hsl(var(--vs-text-muted))]">
+          <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-full" style={{ background: "#10b981" }} /> On pace</span>
+          <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-full" style={{ background: "#f59e0b" }} /> Behind</span>
+          <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-full" style={{ background: "#ef4444" }} /> Off track</span>
+          <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-full" style={{ background: "#94a3b8" }} /> No data</span>
+        </div>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        {tiles.map((t, i) => (
+          <motion.button
+            key={t.r.key}
+            type="button"
+            initial={{ opacity: 0, scale: 0.96 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ duration: 0.2, delay: 0.02 * i }}
+            onClick={() => {
+              const el = document.querySelector<HTMLElement>(`[data-testid="recruiter-card-${t.r.key}"]`);
+              el?.scrollIntoView({ behavior: "smooth", block: "center" });
+            }}
+            className="relative overflow-hidden rounded-xl px-3 py-3 text-left border transition hover:brightness-105 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#0090F0]"
+            style={{
+              // Tile fill: pace color at low opacity so text stays legible.
+              background: `linear-gradient(135deg, ${t.heat.color}26 0%, ${t.heat.color}14 100%)`,
+              borderColor: `${t.heat.color}66`,
+              flexGrow: t.sizeScore,
+              // Min basis keeps tiles readable at small sizes; max keeps
+              // one overachiever from eating the whole row.
+              flexBasis: "140px",
+              minWidth: "140px",
+              maxWidth: "320px",
+            }}
+            aria-label={`${t.r.name}: ${t.heat.label}${t.usingSixMo ? `, ${Math.round(t.sixMoAttain * 100)}% of 6-month goal` : ""}`}
+            data-testid={`recruiter-heatmap-${t.r.key}`}
+          >
+            <div
+              className="absolute top-0 left-0 right-0 h-1"
+              style={{ background: t.heat.color, opacity: t.hasActuals ? 1 : 0.4 }}
+              aria-hidden
+            />
+            <div className="flex items-baseline justify-between gap-2">
+              <div className="font-semibold text-[13px] text-[hsl(var(--vs-text))] truncate">{t.r.name}</div>
+              <div
+                className="text-[10px] font-semibold uppercase tracking-wider tabular-nums whitespace-nowrap"
+                style={{ color: t.heat.color }}
+              >
+                {t.hasActuals ? `${Math.round(t.sixMoAttain * 100)}%` : "—"}
+              </div>
+            </div>
+            <div className="mt-1 text-[11px] text-[hsl(var(--vs-text-muted))] tabular-nums">
+              {t.hasActuals
+                ? `${fmtUSD(t.trailing6.fee)} of ${fmtUSD(t.r.sixMonth)}`
+                : `Goal ${fmtUSD(t.r.sixMonth)}`}
+            </div>
+            <div className="mt-2 text-[10px] font-medium" style={{ color: t.heat.color }}>
+              {t.heat.label}
+            </div>
+          </motion.button>
+        ))}
+      </div>
+      <div className="mt-3 text-[10px] text-[hsl(var(--vs-text-muted))]">
+        Tile size grows with 6‑month attainment; color reflects pace. Tap a tile to jump to that recruiter.
+      </div>
+    </div>
+  );
+}
+
 /* ─────────────────── main view ─────────────────── */
 
 export function ScorecardChannelView({ channel }: Props) {
@@ -243,6 +371,27 @@ export function ScorecardChannelView({ channel }: Props) {
   const teamExpectedByNow = teamMonthlyGoal * monthElapsed;
   const teamPace = teamExpectedByNow > 0 ? teamMTDFee / teamExpectedByNow : 0;
   const teamHeat = paceHeat(teamPace, teamMTDHasAnyActuals, config.thresholds);
+
+  // Team-wide trailing 6-month totals — the top card also shows this
+  // against the 6-month team goal so the reader sees BOTH "where the team
+  // is this month" and "where the team is on the 6-month horizon."
+  let team6MoFee = 0;
+  let team6MoPlacements = 0;
+  trailing6ByRecruiter.forEach((v) => {
+    team6MoFee += v.fee;
+    team6MoPlacements += v.placements;
+  });
+  const team6MoHasAnyActuals = team6MoFee > 0;
+  const team6MoGoal = targets.teamSixMonthRevenue;
+  const team6MoProgress = team6MoGoal > 0 ? team6MoFee / team6MoGoal : 0;
+  // 6-month pace: how much of the goal should be attained by TODAY,
+  // given that today sits somewhere inside the current month of the
+  // 6-month window. Expected fraction = (5 full prior months + fraction
+  // of the current month) / 6.
+  const sixMoFractionElapsed = Math.min(1, Math.max(0, (5 + monthElapsed) / 6));
+  const team6MoExpectedByNow = team6MoGoal * sixMoFractionElapsed;
+  const team6MoPace = team6MoExpectedByNow > 0 ? team6MoFee / team6MoExpectedByNow : 0;
+  const team6MoHeat = paceHeat(team6MoPace, team6MoHasAnyActuals, config.thresholds);
 
   // Phase 2.6.1 — display presets. Read admin-selected view knobs off the
   // config, falling back to defaults so pre-2.6.1 configs render unchanged.
@@ -375,9 +524,10 @@ export function ScorecardChannelView({ channel }: Props) {
                 </div>
               </div>
             </div>
-            {/* Team progress bar. Container spans 0–130% so overachievement
-                is visible without exploding the row. Two markers: dashed =
-                today's expected pace, solid = 100% goal. */}
+            {/* Team monthly progress bar. Container spans 0–130% so
+                overachievement is visible without exploding the row.
+                Two markers: dashed = today's expected pace, solid =
+                100% goal. */}
             <div className="mt-3 relative h-3 rounded-full bg-white/15 overflow-hidden" aria-label="Team monthly progress">
               <motion.div
                 initial={{ width: 0 }}
@@ -399,6 +549,62 @@ export function ScorecardChannelView({ channel }: Props) {
                 aria-hidden
               />
             </div>
+
+            {/* 6-month team progress — second, longer-horizon read.
+                Shows trailing 6-month fee vs the team 6-month goal, with
+                the dashed marker at the 6-month elapsed fraction. */}
+            <div className="mt-4 flex items-center gap-2 text-white/80 text-[12px] uppercase tracking-wider font-medium">
+              <TrendingUp className="w-3.5 h-3.5" />
+              Team — 6-month horizon
+            </div>
+            <div className="mt-2 flex items-end justify-between gap-4 flex-wrap">
+              <div>
+                <div className="font-display text-[28px] md:text-[34px] leading-none tabular-nums">
+                  {team6MoHasAnyActuals ? fmtUSD(team6MoFee) : "—"}
+                </div>
+                <div className="mt-1 text-[12px] text-white/80">
+                  {team6MoHasAnyActuals
+                    ? `${team6MoPlacements} placement${team6MoPlacements === 1 ? "" : "s"} · ${Math.round(team6MoProgress * 100)}% of ${fmtUSD(team6MoGoal)} 6-mo goal`
+                    : `No placements in the last 6 months · goal ${fmtUSD(team6MoGoal)}`}
+                </div>
+              </div>
+              <div className="text-right">
+                <div
+                  className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold"
+                  style={{ background: team6MoHeat.color, color: "white" }}
+                >
+                  {team6MoHeat.label}
+                  {team6MoHasAnyActuals && (
+                    <span className="opacity-80 font-normal">
+                      · pace {Math.round(team6MoPace * 100)}%
+                    </span>
+                  )}
+                </div>
+                <div className="mt-1 text-[11px] text-white/70 tabular-nums">
+                  Today ≡ {Math.round(sixMoFractionElapsed * 100)}% of 6‑mo
+                </div>
+              </div>
+            </div>
+            <div className="mt-3 relative h-3 rounded-full bg-white/15 overflow-hidden" aria-label="Team 6-month progress">
+              <motion.div
+                initial={{ width: 0 }}
+                animate={{ width: `${Math.min(1.3, Math.max(0, team6MoProgress)) * 100 / 1.3}%` }}
+                transition={{ duration: 0.6, ease: "easeOut", delay: 0.1 }}
+                className="absolute inset-y-0 left-0 rounded-full"
+                style={{ background: team6MoHeat.color, opacity: team6MoHasAnyActuals ? 0.95 : 0.4 }}
+              />
+              <div
+                className="absolute inset-y-0 border-l border-dashed border-white/70"
+                style={{ left: `${(sixMoFractionElapsed * 100) / 1.3}%` }}
+                aria-hidden
+              />
+              <div
+                className="absolute inset-y-0 border-l-2 border-white"
+                style={{ left: `${100 / 1.3}%` }}
+                aria-hidden
+              />
+            </div>
+
             {/* Row 2: reference targets */}
             <div className="mt-5 pt-4 border-t border-white/15">
               <div className="flex items-center gap-2 text-white/70 text-[11px] uppercase tracking-wider font-medium mb-2">
@@ -442,10 +648,21 @@ export function ScorecardChannelView({ channel }: Props) {
             />
           )}
 
-          {/* Per-recruiter cards. The standalone TeamPerformanceChart was
-              removed — the team-level bar now lives in the top hero card,
-              and each per-recruiter card is itself colorized so the roster
-              reads like a heat map at a glance. */}
+          {/* Recruiter heat map — the "at a glance" visual sitting
+              between the team card and the detailed recruiter cards.
+              Each recruiter is a tile: color = pace vs 6-month goal,
+              size = attainment fraction of that goal. */}
+          <RecruiterHeatmap
+            perRecruiter={targets.perRecruiter}
+            currentMonthByRecruiter={currentMonthByRecruiter}
+            trailing6ByRecruiter={trailing6ByRecruiter}
+            monthElapsed={monthElapsed}
+            thresholds={config.thresholds}
+          />
+
+          {/* Per-recruiter cards. Each card is itself colorized so the
+              roster reads as a heat map at a glance; the tile chart above
+              provides the sized/color-mapped overview. */}
           <div>
             <div className="flex items-center gap-2 text-[11px] uppercase tracking-wider font-medium text-[hsl(var(--vs-text-muted))] mb-3 px-1">
               <Users className="w-3.5 h-3.5" />
@@ -832,12 +1049,39 @@ function PlacementsPopover({
   const placements = query.data?.placements ?? [];
   const totalFee = placements.reduce((s, p) => s + p.feeAmountCents, 0) / 100;
 
+  // Combined interaction model: click/tap opens (works on all devices,
+  // required for the touch UX the user asked for), plus hover-to-open
+  // and hover-out-to-close on pointer devices so desktop keeps the
+  // "just move your mouse over the number" affordance. We manage `open`
+  // ourselves so both paths write to the same state.
+  const hoverTimer = useMemo(() => ({ current: null as ReturnType<typeof setTimeout> | null }), []);
+  const openOnHover = () => {
+    if (hoverTimer.current) clearTimeout(hoverTimer.current);
+    hoverTimer.current = setTimeout(() => setOpen(true), 120);
+  };
+  const closeOnHover = () => {
+    if (hoverTimer.current) clearTimeout(hoverTimer.current);
+    hoverTimer.current = setTimeout(() => setOpen(false), 160);
+  };
+
   return (
-    <HoverCard open={open} onOpenChange={setOpen} openDelay={120} closeDelay={140}>
-      <HoverCardTrigger asChild>{children}</HoverCardTrigger>
-      <HoverCardContent
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          onMouseEnter={openOnHover}
+          onMouseLeave={closeOnHover}
+          className="block text-left w-full cursor-pointer rounded-xl focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-[#0090F0]"
+          aria-label={`Show ${scope.label.toLowerCase()} placements for ${recruiterName}`}
+        >
+          {children}
+        </button>
+      </PopoverTrigger>
+      <PopoverContent
         align="start"
         sideOffset={6}
+        onMouseEnter={openOnHover}
+        onMouseLeave={closeOnHover}
         className="w-[380px] max-w-[calc(100vw-32px)] p-0 bg-white dark:bg-[hsl(var(--vs-surface-elevated))] border-[hsl(var(--vs-border))]"
       >
         <div className="px-3 py-2.5 border-b border-[hsl(var(--vs-border))] flex items-start justify-between gap-2">
@@ -915,8 +1159,8 @@ function PlacementsPopover({
             </ul>
           )}
         </div>
-      </HoverCardContent>
-    </HoverCard>
+      </PopoverContent>
+    </Popover>
   );
 }
 
