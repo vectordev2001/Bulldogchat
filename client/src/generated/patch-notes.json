@@ -1,7 +1,17 @@
 {
-  "generated_at": "2026-08-05T15:45:27.519Z",
+  "generated_at": "2026-08-05T16:30:12.764Z",
   "repo": "vectordev2001/Bulldogchat",
   "notes": [
+    {
+      "number": 131,
+      "title": "Keep 6-month total goal, scale monthly cadence to 5 months",
+      "raw_title": "fix(scorecard): keep 6-month total goal, scale monthly cadence to 5 months",
+      "summary": "Follow-up to #130. When the program horizon shrank from 6 to 5 months, the total revenue target shrank with it — but that target is the number VTS was underwritten to deliver, not a pro-rata of program length. The right behavior is: **total stays**, **monthly cadence scales up** so the shorter window still lands the full 6-month goal.",
+      "merged_at": "2026-08-05T16:30:02Z",
+      "author": "vectordev2001",
+      "url": "https://github.com/vectordev2001/Bulldogchat/pull/131",
+      "category": "fix"
+    },
     {
       "number": 130,
       "title": "Fixed 5-month forward window + mobile header cleanup",
@@ -91,16 +101,6 @@
       "author": "vectordev2001",
       "url": "https://github.com/vectordev2001/Bulldogchat/pull/122",
       "category": "feature"
-    },
-    {
-      "number": 121,
-      "title": "Make workspace-rail unread badge legible on iOS + web",
-      "raw_title": "fix(chat): make workspace-rail unread badge legible on iOS + web",
-      "summary": "Numeric unread badge on the workspace-rail pills (VTS, TDIS, VS, VFD) was cramped and muddy on iOS. Josh flagged \"it is hard to read the numbers in the iOS app.\"",
-      "merged_at": "2026-07-30T03:35:28Z",
-      "author": "vectordev2001",
-      "url": "https://github.com/vectordev2001/Bulldogchat/pull/121",
-      "category": "fix"
     }
   ]
 }
