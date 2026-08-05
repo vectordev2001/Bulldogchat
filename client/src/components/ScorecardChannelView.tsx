@@ -7,12 +7,17 @@
  * Layout mirrors TextChannelView's outer shell (14-row header + flex-1 body)
  * so Home.tsx can drop this in without touching the surrounding chrome.
  *
- * Numbers:
- *   6-month revenue target = 6-month salary / (1 - profitTarget)
- *   monthly target         = 6-month revenue target / 6
- *   floor placements       = round(6-month revenue target / averageFee)
+ * Numbers (H = programHorizonMonths, defaults to 5 for VTS Aug→Dec 2026):
+ *   program revenue target = H-month salary / (1 - profitTarget)
+ *   monthly target         = program revenue target / H
+ *   floor placements       = round(program revenue target / averageFee)
  *   stretch                = base * stretchMultiplier
- *   pace                   = actuals sum this period / expected pace to date
+ *   pace                   = actuals in program window / expected pace to date
+ *
+ * The program window is a FIXED forward calendar range (programStartMonth
+ * through programStartMonth + H months) — not a rolling trailing window.
+ * On Aug 4 2026 with an Aug 2026 start and H=5, the elapsed fraction is
+ * ~0.024, not ~0.85.
  *
  * Salaries are never rendered in this view — only derived $ targets. The
  * server strips salaries from the non-admin projection as a defense in
@@ -54,7 +59,17 @@ interface ScorecardConfig {
   thresholds: { green: number; yellow: number };
   recruiters: Recruiter[];
   display?: ScorecardDisplay;
+  // Fixed forward program window — defaults live in the shared schema;
+  // these are optional on the wire so pre-existing configs stay valid.
+  programStartMonth?: string; // "YYYY-MM"
+  programHorizonMonths?: number;
 }
+
+// Defaults for the fixed forward program window — mirror the shared
+// schema defaults so a config that predates these fields still renders
+// the intended VTS Aug→Dec 2026 horizon.
+const DEFAULT_PROGRAM_START_MONTH = "2026-08";
+const DEFAULT_PROGRAM_HORIZON_MONTHS = 5;
 interface Actual {
   recruiterKey: string;
   periodMonth: string; // "YYYY-MM"
@@ -94,21 +109,27 @@ interface Props {
 const fmtUSD = (dollars: number) =>
   dollars.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
 
-/** Compute per-recruiter targets from the config. Pure — no side effects. */
+/** Compute per-recruiter targets from the config. Pure — no side effects.
+ *  The revenue targets are sized by programHorizonMonths, so a 5-month
+ *  horizon yields 5× monthly salary (not a hard-coded 6). Field names keep
+ *  the historical `sixMonth` label to avoid rippling into every consumer;
+ *  the value is now “whole-program revenue target,” whatever the horizon
+ *  says. */
 function computeTargets(cfg: ScorecardConfig) {
+  const horizonMonths = cfg.programHorizonMonths ?? DEFAULT_PROGRAM_HORIZON_MONTHS;
   const totalMonthlySalary = cfg.recruiters.reduce((s, r) => s + (r.monthlySalary ?? 0), 0);
-  const totalSixMonthSalary = totalMonthlySalary * 6;
-  // Team-level revenue target = 6mo salary / (1 - profit%). Same shape per
-  // recruiter (only meaningful in the admin view where salaries are known).
+  const totalProgramSalary = totalMonthlySalary * horizonMonths;
+  // Team-level revenue target = program salary / (1 - profit%). Same shape
+  // per recruiter (only meaningful in the admin view where salaries are known).
   const denom = Math.max(0.01, 1 - cfg.profitTarget);
-  const teamSixMonthRevenue = totalSixMonthSalary / denom;
-  const teamMonthlyRevenue = teamSixMonthRevenue / 6;
+  const teamSixMonthRevenue = totalProgramSalary / denom;
+  const teamMonthlyRevenue = teamSixMonthRevenue / horizonMonths;
   const teamFloorPlacements = Math.round(teamSixMonthRevenue / Math.max(1, cfg.averageFee));
 
   const perRecruiter = cfg.recruiters.map((r) => {
-    const salary6mo = (r.monthlySalary ?? 0) * 6;
-    const sixMonthRevenue = salary6mo / denom;
-    const monthly = sixMonthRevenue / 6;
+    const salaryProgram = (r.monthlySalary ?? 0) * horizonMonths;
+    const sixMonthRevenue = salaryProgram / denom;
+    const monthly = sixMonthRevenue / horizonMonths;
     const floorPlacements = Math.round(sixMonthRevenue / Math.max(1, cfg.averageFee));
     return {
       key: r.key,
@@ -126,7 +147,14 @@ function computeTargets(cfg: ScorecardConfig) {
     };
   });
 
-  return { totalSixMonthSalary, teamSixMonthRevenue, teamMonthlyRevenue, teamFloorPlacements, perRecruiter };
+  return {
+    horizonMonths,
+    totalSixMonthSalary: totalProgramSalary,
+    teamSixMonthRevenue,
+    teamMonthlyRevenue,
+    teamFloorPlacements,
+    perRecruiter,
+  };
 }
 
 /** YYYY-MM keys for the last N months, most recent first. */
@@ -151,6 +179,38 @@ function fractionOfCurrentMonthElapsed(): number {
 }
 
 /**
+ * How far through the fixed forward program window we are, as a fraction
+ * clamped to [0, 1].
+ *
+ *   (monthsSinceStart + fractionOfCurrentMonth) / horizonMonths
+ *
+ * `startMonth` is "YYYY-MM". If today is before the program start, this
+ * returns 0; after the horizon it saturates at 1. On Aug 4 2026 with a
+ * start of "2026-08" and horizon = 5, this returns ~0.024 (the current
+ * month is 0/5 complete plus ~12% of month 1 → ~2.4% of program).
+ *
+ * This is the single source of truth for “where in the program are we?”
+ * used by the team card, the recruiter heat map, and the per-recruiter
+ * card colorization. The previous math — `(5 + monthElapsed) / 6` —
+ * modelled a rolling trailing 6-month window and is intentionally removed:
+ * a fixed forward window must not saturate near 1 on day 1.
+ */
+function fractionOfProgramElapsed(
+  startMonth: string,
+  horizonMonths: number,
+): number {
+  const m = /^(\d{4})-(\d{2})$/.exec(startMonth);
+  if (!m || horizonMonths <= 0) return 0;
+  const startY = Number(m[1]);
+  const startMo = Number(m[2]) - 1; // 0-indexed month
+  const now = new Date();
+  const monthsSinceStart =
+    (now.getFullYear() - startY) * 12 + (now.getMonth() - startMo);
+  const raw = (monthsSinceStart + fractionOfCurrentMonthElapsed()) / horizonMonths;
+  return Math.min(1, Math.max(0, raw));
+}
+
+/**
  * Shared pace → color helper. Used by every colorized surface — top team
  * progress bar, per-recruiter card left-border, hero tile edge. Keeping
  * this in one place means the heat scale is consistent everywhere.
@@ -171,57 +231,54 @@ function paceHeat(
 
 /**
  * Recruiter heat-map: each recruiter rendered as a variable-size tile,
- * colored by pace vs 6-month goal, sized by attainment fraction of that
- * goal so that outperformers grow and underperformers shrink. This is the
- * "at a glance" visual that lives between the team stats and the detailed
+ * colored by pace vs the FIXED forward program window (default: Aug→Dec
+ * 2026, 5 months), sized by attainment fraction of that program goal so
+ * outperformers grow and underperformers shrink. This is the "at a
+ * glance" visual that lives between the team stats and the detailed
  * recruiter cards.
  *
  * Sizing model: base tile row is a CSS grid of equal cells; each tile's
  * `flex-grow` is set from a normalized attainment ratio so bigger =
  * further ahead. A floor of 0.55 keeps zero/low attainers visible and
  * legible. Clicking a tile scrolls the matching recruiter card into view.
+ *
+ * Coloring signal is window-pace-only: attained-in-program-so-far divided
+ * by expected-by-now given the fraction of the program elapsed. There is
+ * no monthly fallback — on day 1 of a 5-month program, every recruiter
+ * with zero placements is legitimately at 0% pace, not “no data.”
  */
 function RecruiterHeatmap({
   perRecruiter,
-  currentMonthByRecruiter,
-  trailing6ByRecruiter,
-  monthElapsed,
+  programFeeByRecruiter,
+  programFractionElapsed,
+  horizonMonths,
   thresholds,
 }: {
   perRecruiter: Array<{ key: string; name: string; monthly: number; sixMonth: number }>;
-  currentMonthByRecruiter: Map<string, { feeAmountCents: number; placementsCount: number }>;
-  trailing6ByRecruiter: Map<string, { fee: number; placements: number }>;
-  monthElapsed: number;
+  programFeeByRecruiter: Map<string, { fee: number; placements: number }>;
+  programFractionElapsed: number;
+  horizonMonths: number;
   thresholds: { green: number; yellow: number };
 }) {
   if (perRecruiter.length === 0) return null;
 
-  // 6-month elapsed fraction — same math as the top card.
-  const sixMoFractionElapsed = Math.min(1, Math.max(0, (5 + monthElapsed) / 6));
-
   // Pre-compute per-recruiter attainment + pace + heat, then normalize the
   // "size score" across the row so we don't have to pick absolute pixel
-  // widths. Size score = 6-month attainment fraction, floored at 0.55 so
-  // no-data / off-track tiles are still readable.
+  // widths. Size score = program-window attainment fraction, floored at
+  // 0.55 so no-data / off-track tiles are still readable.
   const tiles = perRecruiter.map((r) => {
-    const mtd = currentMonthByRecruiter.get(r.key);
-    const mtdFee = (mtd?.feeAmountCents ?? 0) / 100;
-    const trailing6 = trailing6ByRecruiter.get(r.key) ?? { fee: 0, placements: 0 };
-    const monthlyExpected = r.monthly * monthElapsed;
-    const monthlyPace = monthlyExpected > 0 ? mtdFee / monthlyExpected : 0;
-    const sixMoExpected = r.sixMonth * sixMoFractionElapsed;
-    const sixMoPace = sixMoExpected > 0 ? trailing6.fee / sixMoExpected : 0;
-    const sixMoAttain = r.sixMonth > 0 ? trailing6.fee / r.sixMonth : 0;
-    // Prefer 6-month pace for the tile color when we have any 6-mo data;
-    // fall back to monthly for brand-new recruiters.
-    const usingSixMo = trailing6.fee > 0;
-    const paceForHeat = usingSixMo ? sixMoPace : monthlyPace;
-    const hasActuals = trailing6.fee > 0 || mtdFee > 0;
-    const heat = paceHeat(paceForHeat, hasActuals, thresholds);
+    const programActual = programFeeByRecruiter.get(r.key) ?? { fee: 0, placements: 0 };
+    // Window pace — attained vs expected-by-now for THIS program window.
+    // The only coloring signal; no monthly fallback.
+    const expectedByNow = r.sixMonth * programFractionElapsed;
+    const windowPace = expectedByNow > 0 ? programActual.fee / expectedByNow : 0;
+    const windowAttain = r.sixMonth > 0 ? programActual.fee / r.sixMonth : 0;
+    const hasActuals = programActual.fee > 0;
+    const heat = paceHeat(windowPace, hasActuals, thresholds);
     // Size score: clamp attainment to [0.55, 1.5] so overachievers grow
     // ~2.7× the min tile without any single tile eating the row.
-    const sizeScore = Math.min(1.5, Math.max(0.55, sixMoAttain));
-    return { r, mtdFee, trailing6, monthlyPace, sixMoPace, sixMoAttain, heat, sizeScore, hasActuals, usingSixMo };
+    const sizeScore = Math.min(1.5, Math.max(0.55, windowAttain));
+    return { r, programActual, windowPace, windowAttain, heat, sizeScore, hasActuals };
   });
 
   return (
@@ -229,7 +286,7 @@ function RecruiterHeatmap({
       <div className="flex items-center justify-between gap-3 mb-3">
         <div className="flex items-center gap-2 text-[11px] uppercase tracking-wider font-medium text-[hsl(var(--vs-text-muted))]">
           <TrendingUp className="w-3.5 h-3.5" />
-          Recruiter heat map · 6‑month
+          Recruiter heat map · {horizonMonths}‑month program
         </div>
         <div className="hidden sm:flex items-center gap-3 text-[10px] text-[hsl(var(--vs-text-muted))]">
           <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-full" style={{ background: "#10b981" }} /> On pace</span>
@@ -262,7 +319,7 @@ function RecruiterHeatmap({
               minWidth: "140px",
               maxWidth: "320px",
             }}
-            aria-label={`${t.r.name}: ${t.heat.label}${t.usingSixMo ? `, ${Math.round(t.sixMoAttain * 100)}% of 6-month goal` : ""}`}
+            aria-label={`${t.r.name}: ${t.heat.label}${t.hasActuals ? `, ${Math.round(t.windowAttain * 100)}% of ${horizonMonths}-month goal` : ""}`}
             data-testid={`recruiter-heatmap-${t.r.key}`}
           >
             <div
@@ -276,12 +333,12 @@ function RecruiterHeatmap({
                 className="text-[10px] font-semibold uppercase tracking-wider tabular-nums whitespace-nowrap"
                 style={{ color: t.heat.color }}
               >
-                {t.hasActuals ? `${Math.round(t.sixMoAttain * 100)}%` : "—"}
+                {t.hasActuals ? `${Math.round(t.windowAttain * 100)}%` : "—"}
               </div>
             </div>
             <div className="mt-1 text-[11px] text-[hsl(var(--vs-text-muted))] tabular-nums">
               {t.hasActuals
-                ? `${fmtUSD(t.trailing6.fee)} of ${fmtUSD(t.r.sixMonth)}`
+                ? `${fmtUSD(t.programActual.fee)} of ${fmtUSD(t.r.sixMonth)}`
                 : `Goal ${fmtUSD(t.r.sixMonth)}`}
             </div>
             <div className="mt-2 text-[10px] font-medium" style={{ color: t.heat.color }}>
@@ -291,7 +348,7 @@ function RecruiterHeatmap({
         ))}
       </div>
       <div className="mt-3 text-[10px] text-[hsl(var(--vs-text-muted))]">
-        Tile size grows with 6‑month attainment; color reflects pace. Tap a tile to jump to that recruiter.
+        Tile size grows with {horizonMonths}‑month attainment; color reflects window pace. Tap a tile to jump to that recruiter.
       </div>
     </div>
   );
@@ -329,25 +386,49 @@ export function ScorecardChannelView({ channel }: Props) {
   const currentMonth = recentMonths(1)[0];
   const monthElapsed = fractionOfCurrentMonthElapsed();
 
-  // Roll up current-month actuals per recruiter for the pace pill.
+  // Fixed forward program window. Defaults preserve VTS Aug→Dec 2026 for
+  // configs saved before these fields existed.
+  const programStartMonth = config.programStartMonth ?? DEFAULT_PROGRAM_START_MONTH;
+  const horizonMonths = targets.horizonMonths;
+  // The single source of truth for pace across the top card, the heat
+  // map, and each recruiter card. On day 1 of the program this is ~0, not
+  // ~0.85 like the old rolling-window math produced.
+  const programFractionElapsed = fractionOfProgramElapsed(programStartMonth, horizonMonths);
+
+  // Roll up current-month actuals per recruiter for the MTD hero tiles.
   const currentMonthByRecruiter = new Map<string, Actual>();
   for (const a of actuals) {
     if (a.periodMonth === currentMonth) currentMonthByRecruiter.set(a.recruiterKey, a);
   }
 
-  // Trailing 6-month actuals per recruiter (fee $ + placements) so each card
-  // can show "where they actually are" against the 6-month goal. Uses the
-  // same recentMonths() window the leaderboard's rolling-3mo view is based on.
-  const trailing6Months = recentMonths(6);
-  const trailing6MonthsSet = new Set(trailing6Months);
-  // Popover range — oldest→newest of the trailing 6-month window.
+  // Build the set of YYYY-MM keys inside the program window so we can
+  // filter actuals down to “in-program placements only.” The window is
+  // ALWAYS the fixed forward calendar range — not a trailing rolling
+  // window — so placements outside programStartMonth..+horizon don't
+  // count toward attainment or pace.
+  const programMonths: string[] = [];
+  {
+    const m = /^(\d{4})-(\d{2})$/.exec(programStartMonth);
+    if (m) {
+      const startY = Number(m[1]);
+      const startMo = Number(m[2]) - 1;
+      for (let i = 0; i < horizonMonths; i++) {
+        const d = new Date(startY, startMo + i, 1);
+        const y = d.getFullYear();
+        const mm = String(d.getMonth() + 1).padStart(2, "0");
+        programMonths.push(`${y}-${mm}`);
+      }
+    }
+  }
+  const programMonthsSet = new Set(programMonths);
+  // Popover range — first→last month of the program window.
   const sixMoRange = {
-    from: trailing6Months[trailing6Months.length - 1] ?? currentMonth,
-    to: trailing6Months[0] ?? currentMonth,
+    from: programMonths[0] ?? currentMonth,
+    to: programMonths[programMonths.length - 1] ?? currentMonth,
   };
   const trailing6ByRecruiter = new Map<string, { fee: number; placements: number }>();
   for (const a of actuals) {
-    if (!trailing6MonthsSet.has(a.periodMonth)) continue;
+    if (!programMonthsSet.has(a.periodMonth)) continue;
     const entry = trailing6ByRecruiter.get(a.recruiterKey) ?? { fee: 0, placements: 0 };
     entry.fee += (a.feeAmountCents ?? 0) / 100;
     entry.placements += a.placementsCount ?? 0;
@@ -372,9 +453,12 @@ export function ScorecardChannelView({ channel }: Props) {
   const teamPace = teamExpectedByNow > 0 ? teamMTDFee / teamExpectedByNow : 0;
   const teamHeat = paceHeat(teamPace, teamMTDHasAnyActuals, config.thresholds);
 
-  // Team-wide trailing 6-month totals — the top card also shows this
-  // against the 6-month team goal so the reader sees BOTH "where the team
-  // is this month" and "where the team is on the 6-month horizon."
+  // Team-wide program-window totals — the top card also shows this
+  // against the whole-program team goal so the reader sees BOTH "where
+  // the team is this month" and "where the team is on the {H}-month
+  // program." The window is FIXED (Aug→Dec 2026 by default), so pace
+  // uses fractionOfProgramElapsed — the old rolling `(5 + monthElapsed)
+  // / 6` math is intentionally gone.
   let team6MoFee = 0;
   let team6MoPlacements = 0;
   trailing6ByRecruiter.forEach((v) => {
@@ -384,12 +468,7 @@ export function ScorecardChannelView({ channel }: Props) {
   const team6MoHasAnyActuals = team6MoFee > 0;
   const team6MoGoal = targets.teamSixMonthRevenue;
   const team6MoProgress = team6MoGoal > 0 ? team6MoFee / team6MoGoal : 0;
-  // 6-month pace: how much of the goal should be attained by TODAY,
-  // given that today sits somewhere inside the current month of the
-  // 6-month window. Expected fraction = (5 full prior months + fraction
-  // of the current month) / 6.
-  const sixMoFractionElapsed = Math.min(1, Math.max(0, (5 + monthElapsed) / 6));
-  const team6MoExpectedByNow = team6MoGoal * sixMoFractionElapsed;
+  const team6MoExpectedByNow = team6MoGoal * programFractionElapsed;
   const team6MoPace = team6MoExpectedByNow > 0 ? team6MoFee / team6MoExpectedByNow : 0;
   const team6MoHeat = paceHeat(team6MoPace, team6MoHasAnyActuals, config.thresholds);
 
@@ -442,39 +521,76 @@ export function ScorecardChannelView({ channel }: Props) {
 
   return (
     <div className="flex-1 min-h-0 flex flex-col bg-[hsl(var(--vs-surface))]">
-      {/* Header — matches TextChannelView's 14-row header size + hairline */}
-      <div className="h-14 border-b border-[hsl(var(--vs-border))] px-4 md:px-6 flex items-center gap-3 shrink-0">
-        <div className="w-8 h-8 rounded-full flex items-center justify-center bg-gradient-to-br from-[#0090F0] to-[#0064B8] shadow-sm">
-          <DollarSign className="w-4 h-4 text-white" strokeWidth={2.5} />
-        </div>
-        <div className="min-w-0">
-          <div className="font-display text-[hsl(var(--vs-text))] text-base truncate">{channel.name}</div>
-          {channel.topic && (
-            <div className="text-[11px] text-[hsl(var(--vs-text-muted))] truncate">{channel.topic}</div>
+      {/* Header — matches TextChannelView's 14-row header on desktop and
+          stacks cleanly on narrow viewports.
+
+          Layout:
+            • mobile:  three rows — title (full width, truncated), subtitle
+              (truncated), action buttons (their own line). Auto height so
+              nothing crowds or wraps into an unreadable ribbon.
+            • sm+:     single 56px row — title/subtitle stacked next to
+              the icon on the left, actions right-aligned. Matches the
+              rest of the app's channel headers.
+
+          The old header collapsed title + subtitle + “Log placements”
+          into one flex row inside a fixed 56px shell, which crushed the
+          subtitle and pushed the primary CTA past the viewport on phones. */}
+      <div className="border-b border-[hsl(var(--vs-border))] px-4 md:px-6 py-2 sm:py-0 sm:h-14 shrink-0">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3 sm:h-full">
+          {/* Identity row — icon + title stack. Grows to fill remaining
+              width on desktop; on mobile it's the full width. min-w-0 is
+              critical so the truncate on the title actually clips. */}
+          <div className="flex items-center gap-3 min-w-0 sm:flex-1">
+            <div className="w-8 h-8 rounded-full flex items-center justify-center bg-gradient-to-br from-[#0090F0] to-[#0064B8] shadow-sm shrink-0">
+              <DollarSign className="w-4 h-4 text-white" strokeWidth={2.5} />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div
+                className="font-display text-[hsl(var(--vs-text))] text-base truncate"
+                data-testid="scorecard-header-title"
+              >
+                {channel.name}
+              </div>
+              {channel.topic && (
+                <div
+                  className="text-[11px] text-[hsl(var(--vs-text-muted))] truncate"
+                  data-testid="scorecard-header-subtitle"
+                >
+                  {channel.topic}
+                </div>
+              )}
+            </div>
+          </div>
+          {/* Action row. On mobile this lives on its own line beneath the
+              title stack so “Log placements” never fights the subtitle for
+              horizontal space. On sm+ it snaps to the right of the header
+              via ml-auto. */}
+          {canEdit && (
+            <div
+              className="flex items-center gap-2 sm:ml-auto sm:shrink-0"
+              data-testid="scorecard-header-actions"
+            >
+              <button
+                type="button"
+                onClick={() => setLogOpen(true)}
+                className="h-8 px-3 rounded-full text-[13px] font-medium bg-[#0090F0] text-white hover:bg-[#0080D8] active:scale-[0.98] transition shadow-[0_1px_2px_rgba(0,144,240,0.35)] whitespace-nowrap"
+                data-testid="button-log-actuals"
+              >
+                <Plus className="w-3.5 h-3.5 inline -ml-0.5 mr-1 -mt-0.5" />
+                Log placements
+              </button>
+              <button
+                type="button"
+                onClick={() => setEditOpen(true)}
+                className="h-8 w-8 rounded-full flex items-center justify-center text-[hsl(var(--vs-text-muted))] hover:text-[#0090F0] hover-elevate transition shrink-0"
+                title="Edit scorecard config"
+                data-testid="button-edit-config"
+              >
+                <Pencil className="w-4 h-4" />
+              </button>
+            </div>
           )}
         </div>
-        {canEdit && (
-          <div className="ml-auto flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setLogOpen(true)}
-              className="h-8 px-3 rounded-full text-[13px] font-medium bg-[#0090F0] text-white hover:bg-[#0080D8] active:scale-[0.98] transition shadow-[0_1px_2px_rgba(0,144,240,0.35)]"
-              data-testid="button-log-actuals"
-            >
-              <Plus className="w-3.5 h-3.5 inline -ml-0.5 mr-1 -mt-0.5" />
-              Log placements
-            </button>
-            <button
-              type="button"
-              onClick={() => setEditOpen(true)}
-              className="h-8 w-8 rounded-full flex items-center justify-center text-[hsl(var(--vs-text-muted))] hover:text-[#0090F0] hover-elevate transition"
-              title="Edit scorecard config"
-              data-testid="button-edit-config"
-            >
-              <Pencil className="w-4 h-4" />
-            </button>
-          </div>
-        )}
       </div>
 
       {/* Body */}
@@ -483,8 +599,8 @@ export function ScorecardChannelView({ channel }: Props) {
           {/* Team summary card — the top hero. Leads with the current-month
               TEAM progress bar (MTD actuals vs monthly team goal, heated by
               pace) so the first thing anyone sees is "where is the team right
-              now?" The 6-month + monthly + floor + profit targets follow as
-              reference. */}
+              now?" The program-horizon + monthly + floor + profit targets
+              follow as reference. */}
           <motion.div
             initial={{ opacity: 0, y: 4 }}
             animate={{ opacity: 1, y: 0 }}
@@ -550,12 +666,12 @@ export function ScorecardChannelView({ channel }: Props) {
               />
             </div>
 
-            {/* 6-month team progress — second, longer-horizon read.
-                Shows trailing 6-month fee vs the team 6-month goal, with
-                the dashed marker at the 6-month elapsed fraction. */}
+            {/* Program-horizon team progress — second, longer-horizon read.
+                Shows in-window fee vs the team {H}-month goal, with the
+                dashed marker at the elapsed fraction of the program. */}
             <div className="mt-4 flex items-center gap-2 text-white/80 text-[12px] uppercase tracking-wider font-medium">
               <TrendingUp className="w-3.5 h-3.5" />
-              Team — 6-month horizon
+              Team — {horizonMonths}-month horizon
             </div>
             <div className="mt-2 flex items-end justify-between gap-4 flex-wrap">
               <div>
@@ -564,8 +680,8 @@ export function ScorecardChannelView({ channel }: Props) {
                 </div>
                 <div className="mt-1 text-[12px] text-white/80">
                   {team6MoHasAnyActuals
-                    ? `${team6MoPlacements} placement${team6MoPlacements === 1 ? "" : "s"} · ${Math.round(team6MoProgress * 100)}% of ${fmtUSD(team6MoGoal)} 6-mo goal`
-                    : `No placements in the last 6 months · goal ${fmtUSD(team6MoGoal)}`}
+                    ? `${team6MoPlacements} placement${team6MoPlacements === 1 ? "" : "s"} · ${Math.round(team6MoProgress * 100)}% of ${fmtUSD(team6MoGoal)} ${horizonMonths}-mo goal`
+                    : `No placements yet in the ${horizonMonths}-month program · goal ${fmtUSD(team6MoGoal)}`}
                 </div>
               </div>
               <div className="text-right">
@@ -581,11 +697,11 @@ export function ScorecardChannelView({ channel }: Props) {
                   )}
                 </div>
                 <div className="mt-1 text-[11px] text-white/70 tabular-nums">
-                  Today ≡ {Math.round(sixMoFractionElapsed * 100)}% of 6‑mo
+                  Today ≡ {Math.round(programFractionElapsed * 100)}% of {horizonMonths}‑mo
                 </div>
               </div>
             </div>
-            <div className="mt-3 relative h-3 rounded-full bg-white/15 overflow-hidden" aria-label="Team 6-month progress">
+            <div className="mt-3 relative h-3 rounded-full bg-white/15 overflow-hidden" aria-label={`Team ${horizonMonths}-month progress`}>
               <motion.div
                 initial={{ width: 0 }}
                 animate={{ width: `${Math.min(1.3, Math.max(0, team6MoProgress)) * 100 / 1.3}%` }}
@@ -595,7 +711,7 @@ export function ScorecardChannelView({ channel }: Props) {
               />
               <div
                 className="absolute inset-y-0 border-l border-dashed border-white/70"
-                style={{ left: `${(sixMoFractionElapsed * 100) / 1.3}%` }}
+                style={{ left: `${(programFractionElapsed * 100) / 1.3}%` }}
                 aria-hidden
               />
               <div
@@ -608,13 +724,13 @@ export function ScorecardChannelView({ channel }: Props) {
             {/* Row 2: reference targets */}
             <div className="mt-5 pt-4 border-t border-white/15">
               <div className="flex items-center gap-2 text-white/70 text-[11px] uppercase tracking-wider font-medium mb-2">
-                6-month reference
+                {horizonMonths}-month reference
               </div>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-6">
                 <SummaryStat
                   label="Team revenue target"
                   value={fmtUSD(targets.teamSixMonthRevenue)}
-                  sub="6 months"
+                  sub={`${horizonMonths} months`}
                 />
                 <SummaryStat
                   label="Monthly team target"
@@ -650,13 +766,13 @@ export function ScorecardChannelView({ channel }: Props) {
 
           {/* Recruiter heat map — the "at a glance" visual sitting
               between the team card and the detailed recruiter cards.
-              Each recruiter is a tile: color = pace vs 6-month goal,
-              size = attainment fraction of that goal. */}
+              Each recruiter is a tile: color = pace vs the fixed
+              program window, size = attainment fraction of that goal. */}
           <RecruiterHeatmap
             perRecruiter={targets.perRecruiter}
-            currentMonthByRecruiter={currentMonthByRecruiter}
-            trailing6ByRecruiter={trailing6ByRecruiter}
-            monthElapsed={monthElapsed}
+            programFeeByRecruiter={trailing6ByRecruiter}
+            programFractionElapsed={programFractionElapsed}
+            horizonMonths={horizonMonths}
             thresholds={config.thresholds}
           />
 
@@ -673,16 +789,22 @@ export function ScorecardChannelView({ channel }: Props) {
                 const actual = currentMonthByRecruiter.get(r.key);
                 const actualFee = (actual?.feeAmountCents ?? 0) / 100;
                 const trailing6 = trailing6ByRecruiter.get(r.key) ?? { fee: 0, placements: 0 };
-                // Pace: what fraction of the pro-rated monthly target has been
-                // realized so far this month. 100% = on pace; <90% = red.
+                // Monthly pace — kept ONLY for the small pace pill in the
+                // card header so the MTD hero still has a fresh “how's
+                // this month going” read. It no longer drives card color.
                 const expectedByNow = r.monthly * monthElapsed;
                 const pace = expectedByNow > 0 ? actualFee / expectedByNow : 0;
-                // 6-month attainment vs goal — used for the secondary hero's
-                // subtle color and the reference row's % note.
+                // Program-horizon attainment vs goal — used for the
+                // reference row's % note.
                 const sixMonthAttainment = r.sixMonth > 0 ? trailing6.fee / r.sixMonth : 0;
-                // Colorize the card by pace. Left border reads at a glance;
-                // subtle background tint reinforces without shouting.
-                const heat = paceHeat(pace, actual != null, config.thresholds);
+                // Window pace = the only card colorization signal. Aligns
+                // the per-recruiter card, the heat map tile, and the top
+                // card on one consistent “where are they in the FIXED
+                // program window” read.
+                const windowExpected = r.sixMonth * programFractionElapsed;
+                const windowPace = windowExpected > 0 ? trailing6.fee / windowExpected : 0;
+                const windowHasActuals = trailing6.fee > 0;
+                const heat = paceHeat(windowPace, windowHasActuals, config.thresholds);
                 return (
                   <motion.div
                     key={r.key}
@@ -698,10 +820,10 @@ export function ScorecardChannelView({ channel }: Props) {
                     }}
                     data-testid={`recruiter-card-${r.key}`}
                   >
-                    {/* Left-edge heat strip — 4px column of the pace color. */}
+                    {/* Left-edge heat strip — 4px column of the window-pace color. */}
                     <div
                       className="absolute left-0 top-0 bottom-0 w-1"
-                      style={{ background: heat.color, opacity: actual != null ? 1 : 0.4 }}
+                      style={{ background: heat.color, opacity: windowHasActuals ? 1 : 0.4 }}
                       aria-hidden
                     />
                     {/* Header: name + pace pill */}
@@ -740,7 +862,7 @@ export function ScorecardChannelView({ channel }: Props) {
                         channelId={channel.id}
                         recruiterKey={r.key}
                         recruiterName={r.name}
-                        scope={{ kind: "range", fromMonth: sixMoRange.from, toMonth: sixMoRange.to, label: "Last 6 months" }}
+                        scope={{ kind: "range", fromMonth: sixMoRange.from, toMonth: sixMoRange.to, label: `${horizonMonths}-month program` }}
                         canEdit={canEdit}
                       >
                         <button
@@ -749,7 +871,7 @@ export function ScorecardChannelView({ channel }: Props) {
                           data-testid={`hero-6mo-${r.key}`}
                         >
                           <ActualHeroStat
-                            label="Actual 6-mo"
+                            label={`Actual ${horizonMonths}-mo`}
                             value={trailing6.fee > 0 ? fmtUSD(trailing6.fee) : "—"}
                             sub={
                               trailing6.fee > 0
@@ -768,7 +890,7 @@ export function ScorecardChannelView({ channel }: Props) {
                         actuals above first. */}
                     <div className="mt-4 pt-3 border-t border-dashed border-[hsl(var(--vs-border))] grid grid-cols-3 gap-3">
                       <MiniStat label="Monthly goal" value={fmtUSD(r.monthly)} />
-                      <MiniStat label="6-mo goal" value={fmtUSD(r.sixMonth)} />
+                      <MiniStat label={`${horizonMonths}-mo goal`} value={fmtUSD(r.sixMonth)} />
                       <MiniStat label="Stretch" value={fmtUSD(r.stretch)} />
                     </div>
                   </motion.div>
@@ -927,7 +1049,7 @@ function HeroStat({ label, value, sizeClass = "text-[20px]" }: { label: string; 
 }
 
 /**
- * The bigger, brighter hero used for actuals (MTD + trailing 6mo). Wrapped in
+ * The bigger, brighter hero used for actuals (MTD + program-window). Wrapped in
  * a filled blue chip so the eye lands here first — goals live in the muted
  * reference row below the card body.
  *
@@ -1227,6 +1349,14 @@ function EditConfigDialog({
   const [averageFee, setAverageFee] = useState(String(config.averageFee));
   const [profitPct, setProfitPct] = useState(String(Math.round(config.profitTarget * 100)));
   const [stretchMul, setStretchMul] = useState(config.stretchMultiplier.toFixed(2));
+  // Fixed forward program window — defaults to VTS Aug→Dec 2026 for
+  // pre-existing configs that don't have these fields yet.
+  const [programStartMonth, setProgramStartMonth] = useState(
+    config.programStartMonth ?? DEFAULT_PROGRAM_START_MONTH,
+  );
+  const [programHorizonMonths, setProgramHorizonMonths] = useState(
+    String(config.programHorizonMonths ?? DEFAULT_PROGRAM_HORIZON_MONTHS),
+  );
   const [rows, setRows] = useState(
     config.recruiters.map((r) => ({ key: r.key, name: r.name, salary: r.monthlySalary != null ? String(r.monthlySalary) : "" })),
   );
@@ -1258,6 +1388,11 @@ function EditConfigDialog({
           monthlySalary: Number(r.salary || 0),
         })),
         display: { preset, density, sortBy, leaderboardMetric },
+        // Program window — sent explicitly so admins can shift the
+        // fixed forward horizon (e.g. next year's Aug→Dec run) without
+        // a code change. Zod re-applies defaults if either is missing.
+        programStartMonth: programStartMonth.trim() || DEFAULT_PROGRAM_START_MONTH,
+        programHorizonMonths: Number(programHorizonMonths) || DEFAULT_PROGRAM_HORIZON_MONTHS,
       };
       return apiRequest("PATCH", `/api/channels/${channelId}/scorecard/config`, payload);
     },
@@ -1286,6 +1421,21 @@ function EditConfigDialog({
           <LabeledInput label="Avg fee ($)" value={averageFee} onChange={setAverageFee} />
           <LabeledInput label="Profit %" value={profitPct} onChange={setProfitPct} />
           <LabeledInput label="Stretch ×" value={stretchMul} onChange={setStretchMul} />
+        </div>
+        {/* Fixed forward program window. Pace, attainment %, and the
+            heat-map coloring all key off THIS range — not a rolling
+            trailing 6-month view. Defaults to VTS Aug→Dec 2026. */}
+        <div className="mt-3 grid grid-cols-2 gap-3">
+          <LabeledInput
+            label="Program start (YYYY-MM)"
+            value={programStartMonth}
+            onChange={setProgramStartMonth}
+          />
+          <LabeledInput
+            label="Program horizon (months)"
+            value={programHorizonMonths}
+            onChange={setProgramHorizonMonths}
+          />
         </div>
         <div className="mt-2 space-y-2">
           <div className="text-[11px] uppercase tracking-wider font-medium text-[hsl(var(--vs-text-muted))]">
