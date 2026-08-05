@@ -129,7 +129,7 @@ async function main() {
   const res = await fetch(url, {
     headers: {
       Authorization: `Bearer ${token}`,
-      "User-Agent": "bulldog-contracts-patch-notes",
+      "User-Agent": "bulldog-chat-patch-notes",
       Accept: "application/vnd.github+json",
     },
   });
