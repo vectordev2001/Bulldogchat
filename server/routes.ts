@@ -26,6 +26,7 @@ import { signCallJoinToken, verifyCallJoinToken, sendSms, smsAvailable, buildCal
 import { checkSmsConsent } from "./auth-consent";
 import { mintShortLink, resolveShortLink, bumpShortLinkUses } from "./short-links";
 import { sendEmail, isEmailConfigured } from "./email";
+import { renderScorecardEmail, type ScorecardConfigForEmail, type ActualRow } from "./scorecard-email";
 import { emitOpsNotifications } from "./notify-ops";
 import { firePhotoBridgeToOps } from "./suite-photo-bridge";
 import {
@@ -1299,6 +1300,106 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
       return res.status(500).json({ message: e?.message ?? "Delete failed" });
     }
     res.json({ ok: true });
+  });
+
+  // POST /api/channels/:id/scorecard/email
+  //
+  // Renders the current scorecard snapshot (config + actuals from the DB) as
+  // an HTML + plain-text email and sends it via SendGrid to the provided
+  // recipients. Anyone with channel access can send; there's no data
+  // mutation. Rate-limiting is handled by SendGrid quotas + the fact that
+  // recipient count is capped below.
+  //
+  // Request body: { recipients: string[], subject: string, note?: string|null }
+  // Response:     { ok: boolean, sent: string[], failed: [{email, reason}] }
+  //
+  // Per-recipient send failures do NOT fail the whole request — the client
+  // shows a partial-success toast so users can retry only the addresses that
+  // bounced.
+  app.post("/api/channels/:id/scorecard/email", requireAuth, async (req, res) => {
+    const u = (req as AuthedRequest).user;
+    const channelId = Number(req.params.id);
+    if (!Number.isFinite(channelId)) return res.status(400).json({ message: "Invalid channel id" });
+    const ch = storage.getChannel(channelId);
+    if (!ch) return res.status(404).json({ message: "Channel not found" });
+    if (ch.type !== "scorecard") return res.status(400).json({ message: "Not a scorecard channel" });
+    const access = userCanAccessChannel(u.id, u.orgId, channelId, (req as AuthedRequest).access);
+    if (!access) return res.status(404).json({ message: "Channel not found" });
+
+    // Manual validation — keeping this file zod-free.
+    const body = req.body ?? {};
+    const rawRecipients = Array.isArray(body.recipients) ? body.recipients : [];
+    const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    const seen = new Set<string>();
+    const recipients: string[] = [];
+    for (const raw of rawRecipients) {
+      if (typeof raw !== "string") continue;
+      const s = raw.trim();
+      if (!s || !emailRe.test(s)) continue;
+      const key = s.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      recipients.push(s);
+      if (recipients.length >= 25) break; // hard cap to prevent blast lists
+    }
+    if (recipients.length === 0) {
+      return res.status(400).json({ message: "At least one valid recipient email is required" });
+    }
+    const subject = typeof body.subject === "string" && body.subject.trim().length > 0
+      ? body.subject.trim().slice(0, 200)
+      : `${ch.name} — scorecard update`;
+    const note = typeof body.note === "string" ? body.note.slice(0, 2000) : null;
+
+    if (!isEmailConfigured()) {
+      return res.status(503).json({ message: "Email is not configured on this server (SENDGRID_API_KEY missing)." });
+    }
+
+    // Load config + actuals directly. Salaries are needed for the target
+    // math and this endpoint is server-side, so we don't apply the
+    // canEdit-based salary-stripping the GET endpoint uses; the rendered
+    // email still doesn't expose per-recruiter salary values.
+    const cfgRow = rawDb
+      .prepare(`SELECT config_json AS configJson FROM channel_scorecard_configs WHERE channel_id = ?`)
+      .get(channelId) as { configJson: string } | undefined;
+    if (!cfgRow) return res.status(400).json({ message: "Scorecard not configured yet" });
+    let cfg: ScorecardConfigForEmail;
+    try {
+      cfg = JSON.parse(cfgRow.configJson) as ScorecardConfigForEmail;
+    } catch {
+      return res.status(500).json({ message: "Config parse error" });
+    }
+    const actuals = rawDb
+      .prepare(`SELECT recruiter_key AS recruiterKey, period_month AS periodMonth, placements_count AS placementsCount, fee_amount_cents AS feeAmountCents FROM channel_scorecard_actuals WHERE channel_id = ?`)
+      .all(channelId) as ActualRow[];
+
+    const senderName = ((u as { name?: string; email?: string }).name)
+      || ((u as { email?: string }).email ?? null);
+
+    const { text, html } = renderScorecardEmail({
+      channelName: ch.name,
+      channelTopic: (ch as { topic?: string | null }).topic ?? null,
+      senderName,
+      note,
+      config: cfg,
+      actuals,
+    });
+
+    const sent: string[] = [];
+    const failed: Array<{ email: string; reason: string }> = [];
+    for (const to of recipients) {
+      try {
+        const result = await sendEmail({ to, subject, text, html });
+        if (result.sent) {
+          sent.push(to);
+        } else {
+          failed.push({ email: to, reason: result.reason ?? "unknown error" });
+        }
+      } catch (e: any) {
+        failed.push({ email: to, reason: e?.message ?? "send threw" });
+      }
+    }
+
+    res.json({ ok: failed.length === 0, sent, failed });
   });
 
   // Phase 1.9.3 — proxy: list contracts from bulldog-contracts so the chat
