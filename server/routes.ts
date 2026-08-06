@@ -5,7 +5,7 @@ import { storage, sanitize } from "./storage";
 import {
   signupSchema, loginSchema, acceptInviteSchema, sendMessageSchema, reactionSchema,
   insertProjectSchema, insertChannelSchema, insertInviteSchema, channelCreateSchema, linkedContractAttachSchema,
-  scorecardConfigInputSchema, scorecardActualInputSchema, scorecardPlacementBatchSchema,
+  scorecardConfigInputSchema, scorecardActualInputSchema, scorecardPlacementBatchSchema, scorecardPlacementUpdateSchema,
 } from "@shared/schema";
 import { hashPassword, verifyPassword, signJwt, requireAuth, requireRole, requireCap, setAuthCookie, clearAuthCookie, AuthedRequest, AUTH_COOKIE } from "./auth";
 import { can } from "@shared/permissions";
@@ -1298,6 +1298,124 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
       txn();
     } catch (e: any) {
       return res.status(500).json({ message: e?.message ?? "Delete failed" });
+    }
+    res.json({ ok: true });
+  });
+
+  // Update a single placement. Partial: caller sends any subset of the
+  // editable fields (placedAt, candidateName, clientName, feeAmountCents,
+  // notes). recruiterKey cannot be changed — that's a delete+create so
+  // the aggregates on both recruiters stay consistent.
+  //
+  // If placedAt moves to a different month, we reconcile BOTH the old and
+  // the new month's aggregate row. If it stays in the same month, we
+  // reconcile once.
+  app.patch("/api/channels/:id/scorecard/placements/:placementId", requireAuth, (req, res) => {
+    const u = (req as AuthedRequest).user;
+    if (!can.scorecard.edit(u.role as any)) return res.status(403).json({ message: "Not allowed" });
+    const channelId = Number(req.params.id);
+    const placementId = Number(req.params.placementId);
+    if (!Number.isFinite(channelId) || !Number.isFinite(placementId)) {
+      return res.status(400).json({ message: "Invalid id" });
+    }
+    const ch = storage.getChannel(channelId);
+    if (!ch) return res.status(404).json({ message: "Channel not found" });
+    if (ch.type !== "scorecard") return res.status(400).json({ message: "Not a scorecard channel" });
+    const parsed = scorecardPlacementUpdateSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.issues[0]?.message ?? "Invalid input" });
+
+    // Load existing row so we know what months to reconcile.
+    const existing = rawDb
+      .prepare(
+        `SELECT recruiter_key AS recruiterKey, period_month AS periodMonth
+         FROM channel_scorecard_placements WHERE id = ? AND channel_id = ?`,
+      )
+      .get(placementId, channelId) as { recruiterKey: string; periodMonth: string } | undefined;
+    if (!existing) return res.status(404).json({ message: "Placement not found" });
+
+    const oldMonth = existing.periodMonth;
+    const newMonth = parsed.data.placedAt ? parsed.data.placedAt.slice(0, 7) : oldMonth;
+    const now = Math.floor(Date.now() / 1000);
+
+    // Build UPDATE dynamically so we only touch fields the caller sent.
+    // Using named parameters keeps the SQL safe even though the SET list is
+    // constructed from a whitelist of column names.
+    const sets: string[] = [];
+    const params: Record<string, unknown> = { id: placementId, channelId };
+    if (parsed.data.placedAt !== undefined) {
+      sets.push("placed_at = @placedAt", "period_month = @periodMonth");
+      params.placedAt = parsed.data.placedAt;
+      params.periodMonth = newMonth;
+    }
+    if (parsed.data.candidateName !== undefined) {
+      sets.push("candidate_name = @candidateName");
+      params.candidateName = parsed.data.candidateName;
+    }
+    if (parsed.data.clientName !== undefined) {
+      sets.push("client_name = @clientName");
+      params.clientName = parsed.data.clientName;
+    }
+    if (parsed.data.feeAmountCents !== undefined) {
+      sets.push("fee_amount_cents = @feeAmountCents");
+      params.feeAmountCents = parsed.data.feeAmountCents;
+    }
+    if (parsed.data.notes !== undefined) {
+      sets.push("notes = @notes");
+      params.notes = parsed.data.notes;
+    }
+
+    // Aggregate reconciler shared by both months (identical to the delete
+    // path). Reads placements, writes actuals — placements table is the
+    // source of truth.
+    const reconcile = (month: string, recruiterKey: string) => {
+      const agg = rawDb
+        .prepare(
+          `SELECT COUNT(*) AS c, COALESCE(SUM(fee_amount_cents), 0) AS f
+           FROM channel_scorecard_placements
+           WHERE channel_id = ? AND recruiter_key = ? AND period_month = ?`,
+        )
+        .get(channelId, recruiterKey, month) as { c: number; f: number };
+      if (agg.c === 0) {
+        rawDb
+          .prepare(
+            `DELETE FROM channel_scorecard_actuals
+             WHERE channel_id = ? AND recruiter_key = ? AND period_month = ? AND notes IS NULL`,
+          )
+          .run(channelId, recruiterKey, month);
+      } else {
+        rawDb
+          .prepare(
+            `INSERT INTO channel_scorecard_actuals (channel_id, recruiter_key, period_month, placements_count, fee_amount_cents, notes, updated_by_user_id, updated_at)
+             VALUES (?, ?, ?, ?, ?, NULL, ?, ?)
+             ON CONFLICT(channel_id, recruiter_key, period_month) DO UPDATE SET
+               placements_count = excluded.placements_count,
+               fee_amount_cents = excluded.fee_amount_cents,
+               updated_by_user_id = excluded.updated_by_user_id,
+               updated_at = excluded.updated_at`,
+          )
+          .run(channelId, recruiterKey, month, agg.c, agg.f, u.id, now);
+      }
+    };
+
+    const txn = rawDb.transaction(() => {
+      if (sets.length > 0) {
+        rawDb
+          .prepare(`UPDATE channel_scorecard_placements SET ${sets.join(", ")} WHERE id = @id AND channel_id = @channelId`)
+          .run(params);
+      }
+      // Always reconcile the old month; also reconcile the new month if it
+      // moved. If unchanged, reconciling twice is idempotent so we still
+      // fall through to the single-month path below cheaply, but this
+      // avoids an unnecessary second query.
+      reconcile(oldMonth, existing.recruiterKey);
+      if (newMonth !== oldMonth) {
+        reconcile(newMonth, existing.recruiterKey);
+      }
+    });
+    try {
+      txn();
+    } catch (e: any) {
+      return res.status(500).json({ message: e?.message ?? "Update failed" });
     }
     res.json({ ok: true });
   });

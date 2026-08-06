@@ -1357,6 +1357,10 @@ function PlacementsPopover({
   children: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
+  // When set, we render the EditPlacementDialog on top of everything else
+  // and pass through the mutation invalidation to the same query keys the
+  // popover uses.
+  const [editing, setEditing] = useState<Placement | null>(null);
   const { toast } = useToast();
 
   const query = useQuery<{ placements: Placement[] }>({
@@ -1420,6 +1424,7 @@ function PlacementsPopover({
   };
 
   return (
+    <>
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <button
@@ -1497,17 +1502,34 @@ function PlacementsPopover({
                     )}
                   </div>
                   {canEdit && (
-                    <button
-                      type="button"
-                      className="h-6 w-6 rounded-full inline-flex items-center justify-center text-[hsl(var(--vs-text-muted))] hover:text-[#ef4444] hover-elevate disabled:opacity-40"
-                      onClick={() => {
-                        if (window.confirm("Delete this placement?")) del.mutate(p.id);
-                      }}
-                      disabled={del.isPending}
-                      aria-label="Delete placement"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
+                    <div className="flex items-center gap-0.5 shrink-0">
+                      <button
+                        type="button"
+                        className="h-6 w-6 rounded-full inline-flex items-center justify-center text-[hsl(var(--vs-text-muted))] hover:text-[#0090F0] hover-elevate"
+                        onClick={() => {
+                          // Close the popover so the dialog isn't fighting for
+                          // focus; the dialog manages its own dismissal.
+                          setOpen(false);
+                          setEditing(p);
+                        }}
+                        aria-label="Edit placement"
+                        title="Edit placement"
+                      >
+                        <Pencil className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        className="h-6 w-6 rounded-full inline-flex items-center justify-center text-[hsl(var(--vs-text-muted))] hover:text-[#ef4444] hover-elevate disabled:opacity-40"
+                        onClick={() => {
+                          if (window.confirm("Delete this placement?")) del.mutate(p.id);
+                        }}
+                        disabled={del.isPending}
+                        aria-label="Delete placement"
+                        title="Delete placement"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
                   )}
                 </li>
               ))}
@@ -1516,6 +1538,186 @@ function PlacementsPopover({
         </div>
       </PopoverContent>
     </Popover>
+    {editing && (
+      <EditPlacementDialog
+        channelId={channelId}
+        placement={editing}
+        recruiterName={recruiterName}
+        onClose={() => setEditing(null)}
+      />
+    )}
+    </>
+  );
+}
+
+/**
+ * Edit a single existing placement. Sends a PATCH with only the fields the
+ * user changed — the server derives periodMonth from placedAt and reconciles
+ * both the old and (if moved) new month's aggregate row. recruiterKey is
+ * NOT editable here: moving a placement between recruiters would require
+ * cross-recruiter aggregate reconciliation, and it's much safer to delete
+ * the row and log a fresh one under the intended recruiter.
+ */
+function EditPlacementDialog({
+  channelId,
+  placement,
+  recruiterName,
+  onClose,
+}: {
+  channelId: number;
+  placement: Placement;
+  recruiterName: string;
+  onClose: () => void;
+}) {
+  const { toast } = useToast();
+  const [placedAt, setPlacedAt] = useState(placement.placedAt);
+  const [candidateName, setCandidateName] = useState(placement.candidateName ?? "");
+  const [clientName, setClientName] = useState(placement.clientName ?? "");
+  const [feeAmount, setFeeAmount] = useState(String(placement.feeAmountCents / 100));
+  const [notes, setNotes] = useState(placement.notes ?? "");
+
+  const feeCents = Math.max(0, Math.round((Number(feeAmount) || 0) * 100));
+  const canSubmit = !!placedAt && /^\d{4}-\d{2}-\d{2}$/.test(placedAt) && feeCents >= 0;
+
+  const submit = useMutation({
+    mutationFn: async () => {
+      // Only send fields that actually changed so the PATCH body is minimal
+      // and the server's update-only-if-different reconcile stays clean.
+      const body: Record<string, unknown> = {};
+      if (placedAt !== placement.placedAt) body.placedAt = placedAt;
+      if ((candidateName || null) !== (placement.candidateName ?? null)) {
+        body.candidateName = candidateName.trim() || null;
+      }
+      if ((clientName || null) !== (placement.clientName ?? null)) {
+        body.clientName = clientName.trim() || null;
+      }
+      if (feeCents !== placement.feeAmountCents) body.feeAmountCents = feeCents;
+      if ((notes || null) !== (placement.notes ?? null)) {
+        body.notes = notes.trim() || null;
+      }
+      if (Object.keys(body).length === 0) {
+        // Nothing changed — just close without a round-trip.
+        return { ok: true, noop: true };
+      }
+      return apiRequest(
+        "PATCH",
+        `/api/channels/${channelId}/scorecard/placements/${placement.id}`,
+        body,
+      );
+    },
+    onSuccess: (res: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/channels", channelId, "scorecard"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/channels", channelId, "scorecard", "placements"] });
+      toast({
+        title: res?.noop ? "No changes" : "Placement updated",
+      });
+      onClose();
+    },
+    onError: (e: any) => {
+      toast({
+        title: "Save failed",
+        description: e?.body?.message ?? e?.message ?? "Try again.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  return (
+    <Dialog open onOpenChange={(v) => !v && onClose()}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Edit placement</DialogTitle>
+          <DialogDescription>
+            {recruiterName} · recruiter cannot be changed here; delete and re-log if needed.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+            <div>
+              <div className="text-[11px] uppercase tracking-wider text-[hsl(var(--vs-text-muted))] mb-1">
+                Date
+              </div>
+              <input
+                type="date"
+                className="w-full h-9 px-2 rounded-md bg-[hsl(var(--vs-surface))] border border-[hsl(var(--vs-border))] text-sm"
+                value={placedAt}
+                onChange={(e) => setPlacedAt(e.target.value)}
+              />
+            </div>
+            <div>
+              <div className="text-[11px] uppercase tracking-wider text-[hsl(var(--vs-text-muted))] mb-1">
+                Fee (USD)
+              </div>
+              <input
+                type="number"
+                inputMode="decimal"
+                step="0.01"
+                min="0"
+                className="w-full h-9 px-2 rounded-md bg-[hsl(var(--vs-surface))] border border-[hsl(var(--vs-border))] text-sm tabular-nums"
+                value={feeAmount}
+                onChange={(e) => setFeeAmount(e.target.value)}
+              />
+            </div>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+            <div>
+              <div className="text-[11px] uppercase tracking-wider text-[hsl(var(--vs-text-muted))] mb-1">
+                Candidate
+              </div>
+              <input
+                type="text"
+                maxLength={120}
+                className="w-full h-9 px-2 rounded-md bg-[hsl(var(--vs-surface))] border border-[hsl(var(--vs-border))] text-sm"
+                value={candidateName}
+                onChange={(e) => setCandidateName(e.target.value)}
+              />
+            </div>
+            <div>
+              <div className="text-[11px] uppercase tracking-wider text-[hsl(var(--vs-text-muted))] mb-1">
+                Client
+              </div>
+              <input
+                type="text"
+                maxLength={120}
+                className="w-full h-9 px-2 rounded-md bg-[hsl(var(--vs-surface))] border border-[hsl(var(--vs-border))] text-sm"
+                value={clientName}
+                onChange={(e) => setClientName(e.target.value)}
+              />
+            </div>
+          </div>
+          <div>
+            <div className="text-[11px] uppercase tracking-wider text-[hsl(var(--vs-text-muted))] mb-1">
+              Notes
+            </div>
+            <textarea
+              rows={2}
+              maxLength={500}
+              className="w-full px-2 py-1.5 rounded-md bg-[hsl(var(--vs-surface))] border border-[hsl(var(--vs-border))] text-sm resize-none"
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+            />
+          </div>
+        </div>
+        <div className="flex items-center justify-end gap-2 pt-2">
+          <button
+            type="button"
+            className="h-9 px-3 rounded-full text-[13px] font-medium text-[hsl(var(--vs-text))] hover-elevate"
+            onClick={onClose}
+            disabled={submit.isPending}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="h-9 px-4 rounded-full text-[13px] font-medium bg-[#0090F0] text-white hover:bg-[#0080D8] active:scale-[0.98] transition disabled:opacity-50"
+            onClick={() => submit.mutate()}
+            disabled={!canSubmit || submit.isPending}
+          >
+            {submit.isPending ? "Saving…" : "Save"}
+          </button>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
