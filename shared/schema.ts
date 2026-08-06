@@ -1258,6 +1258,19 @@ export const scorecardConfigInputSchema = z.object({
   // set equal to programHorizonMonths to get the classic "pro-rata by
   // program length" behavior.
   fundingHorizonMonths: z.number().int().min(1).max(24).default(6),
+
+  // Extra revenue we want the team to capture ON TOP of the program
+  // total, to recover startup / seed costs. Adds one additional target
+  // tier ("stretch total = program total + startupCostRecoveryTarget")
+  // that appears alongside the program goal at the top of the scorecard
+  // and inside each recruiter card. Split across active recruiters in
+  // proportion to their monthly salary. Default $500,000 for VTS; set
+  // to 0 to hide the stretch tier entirely.
+  startupCostRecoveryTarget: z
+    .number()
+    .min(0)
+    .max(100_000_000)
+    .default(500_000),
 });
 export type ScorecardConfigInput = z.infer<typeof scorecardConfigInputSchema>;
 
