@@ -75,6 +75,10 @@ interface ScorecardConfig {
   // Funding horizon that sized the total revenue target. See
   // scorecardConfigInputSchema for the full rationale.
   fundingHorizonMonths?: number;
+  // Extra revenue tier on top of the program total — e.g. VTS $500k of
+  // startup capital the team wants to earn back. Adds a stretch chip
+  // to the top card and to each recruiter card. Zero suppresses it.
+  startupCostRecoveryTarget?: number;
 }
 
 // Defaults for the fixed forward program window — mirror the shared
@@ -86,6 +90,9 @@ const DEFAULT_PROGRAM_HORIZON_MONTHS = 5;
 // the horizon that sizes the whole-program revenue target. The program
 // itself only runs 5 months, so monthly cadence = total / 5.
 const DEFAULT_FUNDING_HORIZON_MONTHS = 6;
+// Default startup/seed cost the team is asked to recover on top of the
+// program revenue target. Zero suppresses the stretch tier in the UI.
+const DEFAULT_STARTUP_COST_RECOVERY = 500_000;
 interface Actual {
   recruiterKey: string;
   periodMonth: string; // "YYYY-MM"
@@ -143,10 +150,21 @@ const fmtUSD = (dollars: number) =>
  *
  *  Field names keep the historical `sixMonth` label to avoid rippling
  *  into every consumer; the value is “whole-program revenue target,”
- *  now sized by F rather than P. */
+ *  now sized by F rather than P.
+ *
+ *  Stretch tier (Phase 2.6.x — startup-cost recovery):
+ *    startupCostRecovery is an ADDITIONAL dollar amount the team is
+ *    asked to earn on top of the program total. It adds four new
+ *    fields to the top-level return (teamStretch* + startupCostRecovery)
+ *    and three per-recruiter fields (stretchExtra, stretchTotalRevenue,
+ *    stretchMonthlyRevenue). The per-recruiter startup share is salary-
+ *    proportional so recruiters carrying more monthly cost also carry a
+ *    bigger slice of the recovery target. When startupCostRecovery == 0,
+ *    the stretch chip and card row simply don't render. */
 function computeTargets(cfg: ScorecardConfig) {
   const programHorizonMonths = cfg.programHorizonMonths ?? DEFAULT_PROGRAM_HORIZON_MONTHS;
   const fundingHorizonMonths = cfg.fundingHorizonMonths ?? DEFAULT_FUNDING_HORIZON_MONTHS;
+  const startupCostRecovery = Math.max(0, cfg.startupCostRecoveryTarget ?? DEFAULT_STARTUP_COST_RECOVERY);
   const totalMonthlySalary = cfg.recruiters.reduce((s, r) => s + (r.monthlySalary ?? 0), 0);
   // Total salary is sized by the FUNDING horizon — the underwritten cost
   // base — not the program horizon. Shortening the program does not
@@ -159,11 +177,30 @@ function computeTargets(cfg: ScorecardConfig) {
   const teamMonthlyRevenue = teamSixMonthRevenue / programHorizonMonths;
   const teamFloorPlacements = Math.round(teamSixMonthRevenue / Math.max(1, cfg.averageFee));
 
+  // Stretch tier = program total + startup cost we want to recover.
+  // The same actuals fill it, so hitting stretch means we covered
+  // salaries + underwritten profit + startup capital. Split across
+  // recruiters PROPORTIONALLY TO SALARY so higher-paid recruiters
+  // carry more of the stretch, matching how the program goal already
+  // scales with each person's monthly salary.
+  const teamStretchRevenue = teamSixMonthRevenue + startupCostRecovery;
+  const teamStretchMonthly = teamStretchRevenue / programHorizonMonths;
+  const teamStretchFloorPlacements = Math.round(teamStretchRevenue / Math.max(1, cfg.averageFee));
+  const salaryBase = totalMonthlySalary > 0 ? totalMonthlySalary : cfg.recruiters.length; // avoid /0
+
   const perRecruiter = cfg.recruiters.map((r) => {
     const salaryFunding = (r.monthlySalary ?? 0) * fundingHorizonMonths;
     const sixMonthRevenue = salaryFunding / denom;
     const monthly = sixMonthRevenue / programHorizonMonths;
     const floorPlacements = Math.round(sixMonthRevenue / Math.max(1, cfg.averageFee));
+    // Salary-proportional stretch share. When salary is unknown on the
+    // non-admin projection we fall back to an equal split so the field
+    // still reads sensibly (and no one sees a $0 stretch chip).
+    const salaryShare = totalMonthlySalary > 0 && r.monthlySalary != null
+      ? r.monthlySalary / salaryBase
+      : 1 / cfg.recruiters.length;
+    const stretchExtra = startupCostRecovery * salaryShare;
+    const stretchTotalRevenue = sixMonthRevenue + stretchExtra;
     return {
       key: r.key,
       name: r.name,
@@ -176,6 +213,17 @@ function computeTargets(cfg: ScorecardConfig) {
         ? floorPlacements
         : Math.round(teamFloorPlacements / cfg.recruiters.length),
       stretch: (r.monthlySalary != null ? monthly : teamMonthlyRevenue / cfg.recruiters.length) * cfg.stretchMultiplier,
+      // New stretch-tier fields (program + startup-recovery share).
+      // `stretchTotalRevenue` is the per-recruiter share of the combined
+      // goal (program-window revenue + startup-cost share); everything
+      // downstream keys off it.
+      stretchExtra: r.monthlySalary != null ? stretchExtra : startupCostRecovery / cfg.recruiters.length,
+      stretchTotalRevenue: r.monthlySalary != null
+        ? stretchTotalRevenue
+        : (teamSixMonthRevenue + startupCostRecovery) / cfg.recruiters.length,
+      stretchMonthlyRevenue: (r.monthlySalary != null
+        ? stretchTotalRevenue
+        : (teamSixMonthRevenue + startupCostRecovery) / cfg.recruiters.length) / programHorizonMonths,
       hasSalary: r.monthlySalary != null,
     };
   });
@@ -187,6 +235,10 @@ function computeTargets(cfg: ScorecardConfig) {
     teamSixMonthRevenue,
     teamMonthlyRevenue,
     teamFloorPlacements,
+    startupCostRecovery,
+    teamStretchRevenue,
+    teamStretchMonthly,
+    teamStretchFloorPlacements,
     perRecruiter,
   };
 }
@@ -832,6 +884,81 @@ export function ScorecardChannelView({ channel }: Props) {
                   sub={`${config.stretchMultiplier.toFixed(2)}× stretch`}
                 />
               </div>
+
+              {/* Stretch tier chip — program total + startup-cost
+                  recovery. Shown only when startupCostRecovery > 0 so
+                  channels that don't opt in stay visually identical.
+                  The chip's actuals reuse the same trailing6 fee bag as
+                  the program pace so hitting stretch means we covered
+                  underwritten salaries + profit + startup capital. */}
+              {targets.startupCostRecovery > 0 && (
+                <div
+                  className="mt-4 rounded-xl bg-white/10 border border-white/20 px-4 py-3"
+                  data-testid="team-stretch-chip"
+                >
+                  <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
+                    <div className="text-white/70 text-[11px] uppercase tracking-wider font-medium">
+                      Stretch total
+                    </div>
+                    <div className="text-white text-lg font-semibold font-variant-numeric-tabular">
+                      {fmtUSD(targets.teamStretchRevenue)}
+                    </div>
+                    <div className="text-white/70 text-[12px]">
+                      = <span className="text-white">{fmtUSD(targets.teamSixMonthRevenue)}</span>
+                      {" program · "}
+                      <span className="text-white">+{fmtUSD(targets.startupCostRecovery)}</span>
+                      {" startup recovery"}
+                    </div>
+                    <div className="ml-auto text-right">
+                      <div className="text-white/70 text-[11px] uppercase tracking-wider font-medium">
+                        Monthly cadence
+                      </div>
+                      <div className="text-white text-[15px] font-semibold font-variant-numeric-tabular">
+                        {fmtUSD(targets.teamStretchMonthly)}
+                        <span className="text-white/60 font-normal text-[12px]">
+                          {" · "}
+                          {targets.teamStretchFloorPlacements} placements
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Per-recruiter split of the stretch tier. Salary-
+                      proportional — recruiters carrying more monthly cost
+                      also carry a bigger share of the startup-recovery
+                      target. Hides itself when there are no recruiters
+                      (empty configs) or when salaries aren't visible on
+                      the non-admin projection (all-equal split would be
+                      misleading, better to just say "see admin view"). */}
+                  {targets.perRecruiter.length > 0 && targets.perRecruiter.every((r) => r.hasSalary) && (
+                    <div className="mt-3 pt-3 border-t border-white/15">
+                      <div className="text-white/70 text-[10px] uppercase tracking-wider font-medium mb-1.5">
+                        Per recruiter
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {targets.perRecruiter.map((r) => (
+                          <div
+                            key={r.key}
+                            className="inline-flex items-baseline gap-1.5 rounded-full bg-white/10 border border-white/15 px-2.5 py-1"
+                            title={`${r.name}: ${fmtUSD(r.sixMonth)} program + ${fmtUSD(r.stretchExtra)} startup = ${fmtUSD(r.stretchTotalRevenue)} total`}
+                            data-testid={`stretch-per-recruiter-${r.key}`}
+                          >
+                            <span className="text-white text-[12px] font-medium truncate max-w-[10rem]">
+                              {r.name}
+                            </span>
+                            <span className="text-white text-[12px] font-semibold font-variant-numeric-tabular">
+                              {fmtUSD(r.stretchTotalRevenue)}
+                            </span>
+                            <span className="text-white/60 text-[11px] font-variant-numeric-tabular">
+                              (+{fmtUSD(r.stretchExtra)})
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </motion.div>
 
@@ -971,11 +1098,26 @@ export function ScorecardChannelView({ channel }: Props) {
 
                     {/* Reference row: the goals live here now — smaller,
                         muted, clearly labelled as targets so eyes go to the
-                        actuals above first. */}
+                        actuals above first.
+
+                        When the startup-recovery tier is enabled, the third
+                        slot shows the recruiter's combined program+startup
+                        total (their share of the team stretch chip above)
+                        and the sub-label calls out how much of that is the
+                        startup slice. When the tier is off, we keep the
+                        classic cadence-multiplier "Stretch" number. */}
                     <div className="mt-4 pt-3 border-t border-dashed border-[hsl(var(--vs-border))] grid grid-cols-3 gap-3">
                       <MiniStat label="Monthly goal" value={fmtUSD(r.monthly)} />
                       <MiniStat label={`${horizonMonths}-mo goal`} value={fmtUSD(r.sixMonth)} />
-                      <MiniStat label="Stretch" value={fmtUSD(r.stretch)} />
+                      {targets.startupCostRecovery > 0 ? (
+                        <MiniStat
+                          label="Stretch total"
+                          value={fmtUSD(r.stretchTotalRevenue)}
+                          sub={`+${fmtUSD(r.stretchExtra)} startup`}
+                        />
+                      ) : (
+                        <MiniStat label="Stretch" value={fmtUSD(r.stretch)} />
+                      )}
                     </div>
                   </motion.div>
                 );
@@ -1377,7 +1519,18 @@ function PlacementsPopover({
   );
 }
 
-function MiniStat({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
+function MiniStat({
+  label,
+  value,
+  accent,
+  sub,
+}: {
+  label: string;
+  value: string;
+  accent?: boolean;
+  /** Optional muted supporting line under the value (e.g. "+$100k startup"). */
+  sub?: string;
+}) {
   return (
     <div>
       <div className="text-[10px] uppercase tracking-wider font-medium text-[hsl(var(--vs-text-muted))]">{label}</div>
@@ -1388,6 +1541,11 @@ function MiniStat({ label, value, accent }: { label: string; value: string; acce
       >
         {value}
       </div>
+      {sub && (
+        <div className="mt-0.5 text-[10px] tabular-nums text-[hsl(var(--vs-text-muted))]">
+          {sub}
+        </div>
+      )}
     </div>
   );
 }
