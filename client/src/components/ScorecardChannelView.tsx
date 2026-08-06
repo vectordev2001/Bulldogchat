@@ -1037,10 +1037,24 @@ export function ScorecardChannelView({ channel }: Props) {
                       style={{ background: heat.color, opacity: windowHasActuals ? 1 : 0.4 }}
                       aria-hidden
                     />
-                    {/* Header: name + pace pill */}
+                    {/* Header: name + attainment pills.
+                        MTD % = actual this month / monthly goal (raw, not pace-adjusted).
+                        5-mo % = actual across program / program goal (raw).
+                        Color signal is still window pace so the header still
+                        reads as "on pace / behind / off track", but the numbers
+                        are honest attainment fractions so a $2,550 placement
+                        against a $12k monthly goal reads ~21%, not 116%. */}
                     <div className="flex items-start justify-between gap-3">
                       <div className={`font-display ${nameSizeClass} text-[hsl(var(--vs-text))] truncate`}>{r.name}</div>
-                      <PacePill pace={pace} thresholds={config.thresholds} hasActuals={actual != null} />
+                      <AttainmentPills
+                        mtdFee={actualFee}
+                        monthlyGoal={r.monthly}
+                        programFee={trailing6.fee}
+                        programGoal={r.sixMonth}
+                        heatColor={heat.color}
+                        hasActuals={windowHasActuals || actual != null}
+                        horizonMonths={horizonMonths}
+                      />
                     </div>
 
                     {/* Hero: actual performance — big + bright. This is the
@@ -1546,6 +1560,77 @@ function MiniStat({
           {sub}
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * Two small pills — MTD % and program % — shown in each recruiter card
+ * header. Both are RAW attainment (actual / goal), not pace-adjusted.
+ *
+ * Rationale: the old single "pace" pill showed actual / (goal * fraction-of-
+ * period-elapsed). That's a legitimate signal but visually confusing: a
+ * recruiter at 4% of a 5-month goal on day 6 of month 1 reads as 116%
+ * pace even though they've only captured 4% of their target. Splitting into
+ * MTD and program attainment makes both numbers reconcile 1:1 with the hero
+ * values below ("$2,550 · 4% of goal").
+ *
+ * Color still comes from window pace (heatColor prop) so the header keeps
+ * the same red/amber/green semantics the rest of the card uses.
+ */
+function AttainmentPills({
+  mtdFee,
+  monthlyGoal,
+  programFee,
+  programGoal,
+  heatColor,
+  hasActuals,
+  horizonMonths,
+}: {
+  mtdFee: number;
+  monthlyGoal: number;
+  programFee: number;
+  programGoal: number;
+  heatColor: string;
+  hasActuals: boolean;
+  horizonMonths: number;
+}) {
+  if (!hasActuals) {
+    return (
+      <div className="text-[10px] uppercase tracking-wider font-medium px-2 py-0.5 rounded-full bg-[hsl(var(--vs-surface))] text-[hsl(var(--vs-text-muted))] border border-[hsl(var(--vs-border))]">
+        No data
+      </div>
+    );
+  }
+  const mtdPct = monthlyGoal > 0 ? Math.round((mtdFee / monthlyGoal) * 100) : 0;
+  const programPct = programGoal > 0 ? Math.round((programFee / programGoal) * 100) : 0;
+  // Tint the pill background/text with the same pace color used by the
+  // left-edge strip so the header reads consistently with the rest of the
+  // card. Using inline styles because the color comes from a data-driven
+  // paceHeat lookup, not a fixed Tailwind class.
+  const pillStyle = {
+    background: `${heatColor}26`, // ~15% alpha
+    color: heatColor,
+    boxShadow: `inset 0 0 0 1px ${heatColor}33`, // ~20% alpha ring
+  } as const;
+  return (
+    <div className="flex items-center gap-1.5 shrink-0">
+      <div
+        className="text-[10px] font-semibold tabular-nums px-2 py-0.5 rounded-full inline-flex items-baseline gap-1"
+        style={pillStyle}
+        title={`Month-to-date: ${fmtUSD(mtdFee)} of ${fmtUSD(monthlyGoal)} monthly goal`}
+      >
+        <span className="text-[8px] uppercase tracking-wider opacity-80">MTD</span>
+        <span>{mtdPct}%</span>
+      </div>
+      <div
+        className="text-[10px] font-semibold tabular-nums px-2 py-0.5 rounded-full inline-flex items-baseline gap-1"
+        style={pillStyle}
+        title={`${horizonMonths}-month program: ${fmtUSD(programFee)} of ${fmtUSD(programGoal)} goal`}
+      >
+        <span className="text-[8px] uppercase tracking-wider opacity-80">{horizonMonths}MO</span>
+        <span>{programPct}%</span>
+      </div>
     </div>
   );
 }
