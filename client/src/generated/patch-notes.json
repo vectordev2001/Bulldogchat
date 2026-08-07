@@ -1,7 +1,17 @@
 {
-  "generated_at": "2026-08-07T06:07:57.784Z",
+  "generated_at": "2026-08-07T06:43:16.444Z",
   "repo": "vectordev2001/Bulldogchat",
   "notes": [
+    {
+      "number": 136,
+      "title": "Dual hero tiles with goal + pace + $/day per horizon",
+      "raw_title": "feat(scorecard): dual hero tiles with goal + pace + $/day per horizon",
+      "summary": "Each hero tile is self-contained — actual, goal, pace, and \"how to close\" all in one place.",
+      "merged_at": "2026-08-07T06:43:01Z",
+      "author": "vectordev2001",
+      "url": "https://github.com/vectordev2001/Bulldogchat/pull/136",
+      "category": "feature"
+    },
     {
       "number": 135,
       "title": "Edit individual placements (PATCH + edit dialog)",
@@ -90,16 +100,6 @@
       "merged_at": "2026-08-05T01:58:15Z",
       "author": "vectordev2001",
       "url": "https://github.com/vectordev2001/Bulldogchat/pull/127",
-      "category": "feature"
-    },
-    {
-      "number": 126,
-      "title": "Actuals-first recruiter cards + team chart",
-      "raw_title": "feat(scorecard): actuals-first recruiter cards + team chart",
-      "summary": "Screenshot-driven rework of the VTS recruiter scorecard. Josh's ask:",
-      "merged_at": "2026-08-05T01:40:06Z",
-      "author": "vectordev2001",
-      "url": "https://github.com/vectordev2001/Bulldogchat/pull/126",
       "category": "feature"
     }
   ]
