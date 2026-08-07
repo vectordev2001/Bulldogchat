@@ -1,7 +1,17 @@
 {
-  "generated_at": "2026-08-07T16:37:01.161Z",
+  "generated_at": "2026-08-07T16:47:58.081Z",
   "repo": "vectordev2001/Bulldogchat",
   "notes": [
+    {
+      "number": 139,
+      "title": "Bound Dialog + AlertDialog to viewport and scroll long content",
+      "raw_title": "fix(ui): bound Dialog + AlertDialog to viewport and scroll long content",
+      "summary": "On shorter viewports (laptops, split screens, browser zoomed in), tall modals like **Create channel** were rendering with the title clipped off the top and the Cancel/Create buttons clipped off the bottom — with no way to scroll inside the dialog to reach them.",
+      "merged_at": "2026-08-07T16:47:42Z",
+      "author": "vectordev2001",
+      "url": "https://github.com/vectordev2001/Bulldogchat/pull/139",
+      "category": "fix"
+    },
     {
       "number": 138,
       "title": "Cascade meetings + scorecard rows to avoid FK constraint",
@@ -91,16 +101,6 @@
       "author": "vectordev2001",
       "url": "https://github.com/vectordev2001/Bulldogchat/pull/130",
       "category": "fix"
-    },
-    {
-      "number": 129,
-      "title": "Scorecard v3: 6-month team viz, recruiter heat map, tap-to-open placements",
-      "raw_title": "Scorecard v3: 6-month team viz, recruiter heat map, tap-to-open placements",
-      "summary": "Overachievers grow ~2.7× the min tile. Tapping a tile smooth-scrolls to that recruiter's detail card. Legend included on wide screens.",
-      "merged_at": "2026-08-05T02:30:30Z",
-      "author": "vectordev2001",
-      "url": "https://github.com/vectordev2001/Bulldogchat/pull/129",
-      "category": "other"
     }
   ]
 }
