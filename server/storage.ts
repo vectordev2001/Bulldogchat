@@ -1087,6 +1087,35 @@ class DatabaseStorage implements IStorage {
     } catch (e: any) {
       if (!/no such table/i.test(String(e?.message))) throw e;
     }
+    // Scorecard tables — three FK edges into channels.id. All three must go
+    // before the channel row itself or SQLite trips FOREIGN KEY constraint.
+    // Placements first (child of the config concept), then actuals, then
+    // configs. Order doesn't actually matter between these three since none
+    // reference each other, but this reads top-down.
+    safeRun(`DELETE FROM channel_scorecard_placements WHERE channel_id = ?`, channelId);
+    safeRun(`DELETE FROM channel_scorecard_actuals WHERE channel_id = ?`, channelId);
+    safeRun(`DELETE FROM channel_scorecard_configs WHERE channel_id = ?`, channelId);
+    // Unified meetings model — meetings.channel_id FKs into channels.id and
+    // was not previously cascaded, which was the FOREIGN KEY constraint
+    // failure blocking delete for any channel that had ever had a huddle,
+    // scheduled call, or guest meeting attached to it.
+    //
+    // meetings' own children (meeting_bridge_participants, meeting_participants,
+    // meeting_summary_recipients) all have ON DELETE CASCADE so they clear
+    // automatically. But direct_calls.meeting_id is a nullable FK with NO
+    // cascade, so if any direct_call row still points at a meeting we are
+    // about to delete, the meetings DELETE would fail. Null those refs
+    // out first — the direct_call row itself is org-scoped, not channel-scoped,
+    // so it correctly outlives the channel and just loses its meeting link.
+    try {
+      safeRun(
+        `UPDATE direct_calls SET meeting_id = NULL WHERE meeting_id IN (SELECT id FROM meetings WHERE channel_id = ?)`,
+        channelId,
+      );
+      safeRun(`DELETE FROM meetings WHERE channel_id = ?`, channelId);
+    } catch (e: any) {
+      if (!/no such table/i.test(String(e?.message))) throw e;
+    }
     db.delete(channels).where(eq(channels.id, channelId)).run();
   }
   // Cascade-delete a job (work_object) and every channel nested under it.
