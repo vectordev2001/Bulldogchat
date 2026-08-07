@@ -590,14 +590,28 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers, me
       onDrop={onDrop}
     >
       <header className="h-14 px-4 max-md:pl-14 flex items-center gap-3 border-b border-border shadow-sm shrink-0 bg-secondary/80 backdrop-blur-sm">
-        {!hideHeaderTitle && <Hash className="w-5 h-5 text-[hsl(var(--vs-text-muted))]" />}
+        {!hideHeaderTitle && <Hash className="w-5 h-5 shrink-0 text-[hsl(var(--vs-text-muted))]" />}
         {!hideHeaderTitle && (
-          <div className="font-display text-[hsl(var(--vs-text))] text-base" data-testid="text-channel-name">{channel.name}</div>
+          // min-w-0 + truncate is the standard flex-child overflow trick:
+          // without min-w-0, flex children default to min-width:auto which
+          // means "never shrink below content width", so a long slug like
+          // #master-workforce-recruitment-and-onboarding-services-agreement
+          // pushes the whole header past the viewport and either overflows
+          // horizontally or wraps into a multi-line pill on mobile. Adding
+          // both here bounds the title to the available flex space and
+          // ellipsizes cleanly.
+          <div
+            className="font-display text-[hsl(var(--vs-text))] text-base min-w-0 truncate"
+            data-testid="text-channel-name"
+            title={channel.name}
+          >
+            {channel.name}
+          </div>
         )}
         {channel.topic && (
           <>
-            <span className="w-px h-5 bg-border" />
-            <span className="text-xs text-[hsl(var(--vs-text-muted))] truncate hidden md:inline">{channel.topic}</span>
+            <span className="w-px h-5 bg-border shrink-0 hidden md:inline" />
+            <span className="text-xs text-[hsl(var(--vs-text-muted))] truncate hidden md:inline min-w-0">{channel.topic}</span>
           </>
         )}
         <div className="ml-auto flex items-center gap-1 text-[hsl(var(--vs-text-muted))]">
@@ -1154,8 +1168,18 @@ function ChannelIntro({ channel }: { channel: ApiChannel }) {
       <div className="w-14 h-14 rounded-2xl bg-accent border border-vs-red/30 flex items-center justify-center mb-3">
         <Hash className="w-7 h-7 text-vs-red" />
       </div>
-      <h2 className="text-xl font-display text-[hsl(var(--vs-text))]">Welcome to #{channel.name}</h2>
-      <p className="text-sm text-[hsl(var(--vs-text-muted))] mt-1 max-w-xl">
+      {/* break-words uses `overflow-wrap: break-word`, which lets very long
+          slug-style names (all-hyphens, no spaces) wrap at ANY character
+          instead of only at hyphens. Without it, a name like
+          #master-workforce-recruitment-and-onboarding-services-agreement
+          renders as a tall skinny stack on mobile because each hyphen-
+          delimited segment is treated as its own "word." Also dropped the
+          font size a step on mobile so the intro doesn't dominate the
+          message list on a narrow viewport. */}
+      <h2 className="text-lg sm:text-xl font-display text-[hsl(var(--vs-text))] break-words">
+        Welcome to #{channel.name}
+      </h2>
+      <p className="text-sm text-[hsl(var(--vs-text-muted))] mt-1 max-w-xl break-words">
         {channel.topic ?? "This is the start of the channel."}
       </p>
       <div className="mt-3 h-px bg-border" />

@@ -1108,8 +1108,19 @@ export function ScorecardChannelView({ channel }: Props) {
                     {/* Hero: actual performance — big + bright. This is the
                         primary answer to "where is this recruiter right now."
                         Both tiles are click-through: they open a popover
-                        listing the underlying placements. */}
-                    <div className="mt-3 grid grid-cols-2 gap-3">
+                        listing the underlying placements.
+
+                        Stack vertically at every breakpoint. Earlier iterations
+                        tried side-by-side tiles inside the recruiter card, but
+                        the recruiter card itself is already 1/2 or 1/3 of the
+                        viewport in the medium/desktop density presets, so
+                        splitting THAT in half again leaves each tile ~150px
+                        wide — too narrow to fit $27,900 without clipping,
+                        and labels like MONTHLY GOAL / PACE stack awkwardly.
+                        Full-width tiles are consistently readable at every
+                        card width, and the vertical layout mirrors the email
+                        renderer so the two views stay visually aligned. */}
+                    <div className="mt-3 flex flex-col gap-3">
                       <PlacementsPopover
                         channelId={channel.id}
                         recruiterKey={r.key}
