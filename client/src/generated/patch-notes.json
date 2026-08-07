@@ -1,7 +1,17 @@
 {
-  "generated_at": "2026-08-07T06:07:36.635Z",
+  "generated_at": "2026-08-07T06:07:57.784Z",
   "repo": "vectordev2001/Bulldogchat",
   "notes": [
+    {
+      "number": 135,
+      "title": "Edit individual placements (PATCH + edit dialog)",
+      "raw_title": "feat(scorecard): edit individual placements (PATCH + edit dialog)",
+      "summary": "Placements were create + delete only. If someone changes their fee, a candidate name is wrong, or a placement gets recorded on the wrong day, the only fix today is delete + relog. This adds proper in-place edit.",
+      "merged_at": "2026-08-07T06:07:45Z",
+      "author": "vectordev2001",
+      "url": "https://github.com/vectordev2001/Bulldogchat/pull/135",
+      "category": "feature"
+    },
     {
       "number": 134,
       "title": "Raw attainment pills (MTD % + 5MO %) replace confusing pace %",
@@ -91,16 +101,6 @@
       "author": "vectordev2001",
       "url": "https://github.com/vectordev2001/Bulldogchat/pull/126",
       "category": "feature"
-    },
-    {
-      "number": 125,
-      "title": "Add What's New patch notes to Bulldog Chat",
-      "raw_title": "Add What's New patch notes to Bulldog Chat",
-      "summary": "Ports the What's New surface from bulldog-contracts.",
-      "merged_at": "2026-08-04T20:50:49Z",
-      "author": "vectordev2001",
-      "url": "https://github.com/vectordev2001/Bulldogchat/pull/125",
-      "category": "other"
     }
   ]
 }
