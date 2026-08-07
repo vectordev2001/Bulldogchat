@@ -1,7 +1,27 @@
 {
-  "generated_at": "2026-08-07T06:43:16.444Z",
+  "generated_at": "2026-08-07T16:36:47.474Z",
   "repo": "vectordev2001/Bulldogchat",
   "notes": [
+    {
+      "number": 138,
+      "title": "Cascade meetings + scorecard rows to avoid FK constraint",
+      "raw_title": "fix(delete-channel): cascade meetings + scorecard rows to avoid FK constraint",
+      "summary": "Deleting a channel via the sidebar was failing for #joshjustin-test with:",
+      "merged_at": "2026-08-07T16:36:42Z",
+      "author": "vectordev2001",
+      "url": "https://github.com/vectordev2001/Bulldogchat/pull/138",
+      "category": "fix"
+    },
+    {
+      "number": 137,
+      "title": "Dual hero tiles with goal + pace + $/day per horizon",
+      "raw_title": "feat(scorecard-email): dual hero tiles with goal + pace + $/day per horizon",
+      "summary": "Mirrors the dashboard's per-recruiter card layout in the emailed scorecard snapshot so the email and the app tell the same story.",
+      "merged_at": "2026-08-07T16:36:33Z",
+      "author": "vectordev2001",
+      "url": "https://github.com/vectordev2001/Bulldogchat/pull/137",
+      "category": "feature"
+    },
     {
       "number": 136,
       "title": "Dual hero tiles with goal + pace + $/day per horizon",
@@ -81,26 +101,6 @@
       "author": "vectordev2001",
       "url": "https://github.com/vectordev2001/Bulldogchat/pull/129",
       "category": "other"
-    },
-    {
-      "number": 128,
-      "title": "Scorecard v2: per-placement entry + progress-to-goal chart + click-through popovers",
-      "raw_title": "Scorecard v2: per-placement entry + progress-to-goal chart + click-through popovers",
-      "summary": "Round-2 review of the recruiter scorecard. Three shifts:",
-      "merged_at": "2026-08-05T02:16:56Z",
-      "author": "vectordev2001",
-      "url": "https://github.com/vectordev2001/Bulldogchat/pull/128",
-      "category": "other"
-    },
-    {
-      "number": 127,
-      "title": "Notify users on every release (push + email)",
-      "raw_title": "feat(patch-notes): notify users on every release (push + email)",
-      "summary": "Ports the contracts patch-notes announcer to chat. On server startup (which coincides with every Render redeploy), compare bundled patch-notes.json against the highest PR number we've already announced (new system_state key-value table) and fan out one web/Expo/APNs push per user plus one email per user for any new entries.",
-      "merged_at": "2026-08-05T01:58:15Z",
-      "author": "vectordev2001",
-      "url": "https://github.com/vectordev2001/Bulldogchat/pull/127",
-      "category": "feature"
     }
   ]
 }
