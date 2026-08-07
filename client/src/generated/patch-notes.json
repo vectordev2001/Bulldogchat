@@ -1,7 +1,37 @@
 {
-  "generated_at": "2026-08-05T16:30:12.764Z",
+  "generated_at": "2026-08-07T06:07:36.635Z",
   "repo": "vectordev2001/Bulldogchat",
   "notes": [
+    {
+      "number": 134,
+      "title": "Raw attainment pills (MTD % + 5MO %) replace confusing pace %",
+      "raw_title": "fix(scorecard): raw attainment pills (MTD % + 5MO %) replace confusing pace %",
+      "summary": "The pill in each recruiter card header was showing **pace-adjusted attainment**: actual / (goal × fraction-of-period-elapsed). That's a legitimate signal but visually confusing.",
+      "merged_at": "2026-08-07T06:07:19Z",
+      "author": "vectordev2001",
+      "url": "https://github.com/vectordev2001/Bulldogchat/pull/134",
+      "category": "fix"
+    },
+    {
+      "number": 133,
+      "title": "Stretch tier — program total + $500k startup-cost recovery",
+      "raw_title": "feat(scorecard): stretch tier — program total + $500k startup-cost recovery",
+      "summary": "Adds a **stretch tier** on top of the program revenue goal — extra revenue the team should capture to recover startup/seed capital in the same window. Defaults to **$500,000** for VTS; setting it to 0 hides the whole tier so other scorecards stay visually identical.",
+      "merged_at": "2026-08-06T20:16:07Z",
+      "author": "vectordev2001",
+      "url": "https://github.com/vectordev2001/Bulldogchat/pull/133",
+      "category": "feature"
+    },
+    {
+      "number": 132,
+      "title": "Print + email export buttons",
+      "raw_title": "feat(scorecard): print + email export buttons",
+      "summary": "Adds Print and Email buttons to the scorecard channel header so the current view can leave the app.",
+      "merged_at": "2026-08-06T20:15:41Z",
+      "author": "vectordev2001",
+      "url": "https://github.com/vectordev2001/Bulldogchat/pull/132",
+      "category": "feature"
+    },
     {
       "number": 131,
       "title": "Keep 6-month total goal, scale monthly cadence to 5 months",
@@ -71,36 +101,6 @@
       "author": "vectordev2001",
       "url": "https://github.com/vectordev2001/Bulldogchat/pull/125",
       "category": "other"
-    },
-    {
-      "number": 124,
-      "title": "Admin-picked display presets (preset / density / sort)",
-      "raw_title": "feat(scorecard): admin-picked display presets (preset / density / sort)",
-      "summary": "A small, curated set of \"ways to look at it\" for the VTS scorecard widget. Admin picks one, everyone sees the same view. Three knobs, no more:",
-      "merged_at": "2026-07-30T22:07:44Z",
-      "author": "vectordev2001",
-      "url": "https://github.com/vectordev2001/Bulldogchat/pull/124",
-      "category": "feature"
-    },
-    {
-      "number": 123,
-      "title": "Dual hero targets side-by-side on recruiter cards",
-      "raw_title": "feat(scorecard): dual hero targets side-by-side on recruiter cards",
-      "summary": "Small polish on the VTS scorecard: each recruiter card now leads with **two big $ numbers side-by-side** \\u2014 This Month on the left, 6-Month on the right. Supporting stats (floor placements, stretch, MTD actual) demoted to a 3-column mini-stat row below.",
-      "merged_at": "2026-07-30T21:38:02Z",
-      "author": "vectordev2001",
-      "url": "https://github.com/vectordev2001/Bulldogchat/pull/123",
-      "category": "feature"
-    },
-    {
-      "number": 122,
-      "title": "VTS recruiter scorecard channel (Phase 2.6)",
-      "raw_title": "feat(scorecard): VTS recruiter scorecard channel (Phase 2.6)",
-      "summary": "New scorecard channel type. Renders a Bulldog-branded fee/placement dashboard for the VTS recruiter team instead of a message stream.",
-      "merged_at": "2026-07-30T05:13:27Z",
-      "author": "vectordev2001",
-      "url": "https://github.com/vectordev2001/Bulldogchat/pull/122",
-      "category": "feature"
     }
   ]
 }
