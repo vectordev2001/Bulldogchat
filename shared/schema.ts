@@ -1325,3 +1325,17 @@ export const scorecardPlacementBatchSchema = z.object({
   placements: z.array(scorecardPlacementSchema).min(1).max(50),
 });
 export type ScorecardPlacementBatchInput = z.infer<typeof scorecardPlacementBatchSchema>;
+
+// Partial update for a single placement. recruiterKey is intentionally
+// omitted — moving a placement between recruiters is a delete+create,
+// not an edit, because it needs to reconcile aggregates on BOTH sides.
+// Everything else is optional; the server only touches fields that are
+// present in the request body.
+export const scorecardPlacementUpdateSchema = z.object({
+  placedAt: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "YYYY-MM-DD").optional(),
+  candidateName: z.string().max(120).optional().nullable(),
+  clientName: z.string().max(120).optional().nullable(),
+  feeAmountCents: z.number().int().nonnegative().max(1_000_000_000).optional(),
+  notes: z.string().max(500).optional().nullable(),
+}).refine((v) => Object.keys(v).length > 0, { message: "At least one field must be provided" });
+export type ScorecardPlacementUpdateInput = z.infer<typeof scorecardPlacementUpdateSchema>;
