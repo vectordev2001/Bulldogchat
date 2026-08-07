@@ -1016,6 +1016,54 @@ export function ScorecardChannelView({ channel }: Props) {
                 const windowPace = windowExpected > 0 ? trailing6.fee / windowExpected : 0;
                 const windowHasActuals = trailing6.fee > 0;
                 const heat = paceHeat(windowPace, windowHasActuals, config.thresholds);
+
+                // Hero-tile pace and "how much more to close" helpers.
+                //
+                // MTD side:
+                //   pace = actualMTD / (monthlyGoal * monthElapsed)
+                //          -> "how am I doing vs where I should be today?"
+                //   $/day = (monthlyGoal - actualMTD) / daysRemainingInMonth
+                //          -> "what do I need to average from here to close?"
+                //   If actualMTD >= monthlyGoal, we surface "Goal met" instead
+                //   of a nonsensical negative number.
+                //
+                // Program side: same math but against sixMonth goal and the
+                // fixed forward window's days-remaining.
+                const monthlyPacePct = expectedByNow > 0 ? Math.round(pace * 100) : 0;
+                const programPacePct = windowExpected > 0 ? Math.round(windowPace * 100) : 0;
+
+                const now = new Date();
+                const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+                const daysLeftInMonth = Math.max(1, daysInMonth - now.getDate() + 1);
+                const mtdRemaining = Math.max(0, r.monthly - actualFee);
+                const mtdPerDay = mtdRemaining > 0 ? mtdRemaining / daysLeftInMonth : 0;
+                const mtdActionLabel = actual == null
+                  ? undefined
+                  : mtdRemaining === 0
+                  ? "Goal met"
+                  : `${fmtUSD(Math.round(mtdPerDay))}/day to close`;
+
+                // Program days-remaining: use the fixed forward window end.
+                // (programStartMonth + horizonMonths months) minus today, clamped.
+                const programEnd = (() => {
+                  const mm = /^(\d{4})-(\d{2})$/.exec(programStartMonth);
+                  if (!mm) return null;
+                  return new Date(Number(mm[1]), Number(mm[2]) - 1 + horizonMonths, 1);
+                })();
+                const msLeft = programEnd ? programEnd.getTime() - now.getTime() : 0;
+                const daysLeftInProgram = Math.max(1, Math.ceil(msLeft / 86_400_000));
+                const programRemaining = Math.max(0, r.sixMonth - trailing6.fee);
+                const programPerDay = programRemaining > 0 ? programRemaining / daysLeftInProgram : 0;
+                const programActionLabel = !windowHasActuals
+                  ? undefined
+                  : programRemaining === 0
+                  ? "Goal met"
+                  : `${fmtUSD(Math.round(programPerDay))}/day to hit goal`;
+
+                // Local pace color helpers so we can tint dim tiles' pace
+                // numbers red/amber/green without adding a full heat strip.
+                const mtdPaceColor = paceHeat(pace, actual != null, config.thresholds).color;
+                const programPaceColor = heat.color;
                 return (
                   <motion.div
                     key={r.key}
@@ -1080,6 +1128,13 @@ export function ScorecardChannelView({ channel }: Props) {
                             sub={actual ? `${actual.placementsCount} placement${actual.placementsCount === 1 ? "" : "s"}` : "No data"}
                             sizeClass={heroSizeClass}
                             dim={!actual}
+                            footer={{
+                              goalLabel: "Monthly goal",
+                              goalValue: fmtUSD(r.monthly),
+                              pacePct: actual ? monthlyPacePct : undefined,
+                              paceColor: mtdPaceColor,
+                              actionLabel: mtdActionLabel,
+                            }}
                           />
                         </button>
                       </PlacementsPopover>
@@ -1105,32 +1160,44 @@ export function ScorecardChannelView({ channel }: Props) {
                             }
                             sizeClass={heroSizeClass}
                             dim={trailing6.fee <= 0}
+                            footer={{
+                              goalLabel: `${horizonMonths}-mo goal`,
+                              goalValue: fmtUSD(r.sixMonth),
+                              pacePct: windowHasActuals ? programPacePct : undefined,
+                              paceColor: programPaceColor,
+                              actionLabel: programActionLabel,
+                            }}
                           />
                         </button>
                       </PlacementsPopover>
                     </div>
 
-                    {/* Reference row: the goals live here now — smaller,
-                        muted, clearly labelled as targets so eyes go to the
-                        actuals above first.
+                    {/* Reference row: goals used to live here as three
+                        mini-stats, but they've moved INTO the two hero tiles
+                        above (so each actual reads with its goal + pace as
+                        one unit). What remains is the stretch/startup-
+                        recovery number, which spans both horizons and
+                        doesn't belong inside either hero tile.
 
-                        When the startup-recovery tier is enabled, the third
-                        slot shows the recruiter's combined program+startup
-                        total (their share of the team stretch chip above)
-                        and the sub-label calls out how much of that is the
-                        startup slice. When the tier is off, we keep the
-                        classic cadence-multiplier "Stretch" number. */}
-                    <div className="mt-4 pt-3 border-t border-dashed border-[hsl(var(--vs-border))] grid grid-cols-3 gap-3">
-                      <MiniStat label="Monthly goal" value={fmtUSD(r.monthly)} />
-                      <MiniStat label={`${horizonMonths}-mo goal`} value={fmtUSD(r.sixMonth)} />
+                        When the startup-recovery tier is enabled, this
+                        shows the recruiter's combined program+startup total
+                        (their share of the team stretch chip above) and the
+                        sub-label calls out how much of that is the startup
+                        slice. When the tier is off, we keep the classic
+                        cadence-multiplier "Stretch" number. */}
+                    <div className="mt-4 pt-3 border-t border-dashed border-[hsl(var(--vs-border))]">
                       {targets.startupCostRecovery > 0 ? (
                         <MiniStat
                           label="Stretch total"
                           value={fmtUSD(r.stretchTotalRevenue)}
-                          sub={`+${fmtUSD(r.stretchExtra)} startup`}
+                          sub={`+${fmtUSD(r.stretchExtra)} startup · salary-proportional share of team recovery`}
                         />
                       ) : (
-                        <MiniStat label="Stretch" value={fmtUSD(r.stretch)} />
+                        <MiniStat
+                          label="Stretch"
+                          value={fmtUSD(r.stretch)}
+                          sub={`${config.stretchMultiplier}x monthly cadence`}
+                        />
                       )}
                     </div>
                   </motion.div>
@@ -1303,18 +1370,38 @@ function HeroStat({ label, value, sizeClass = "text-[20px]" }: { label: string; 
  * When `dim=true` the chip renders in a neutral tone ("No data yet") so an
  * empty recruiter doesn't shout an accidental $0 in bright brand blue.
  */
+/**
+ * Hero tile used for the two big "actual" numbers on each recruiter card.
+ *
+ * The optional `footer` block renders inside the same tile below a subtle
+ * divider and is used by the recruiter cards to show goal + pace + $/day-
+ * needed for each horizon (MTD and 5-mo). Keeping this inside the same
+ * tile means the actual, its goal, and the pace read together as one unit
+ * rather than being scattered across a separate reference row.
+ *
+ * `footer` rows are rendered as label / value pairs so we can layer more
+ * context without changing the parent call sites when the shape evolves.
+ */
 function ActualHeroStat({
   label,
   value,
   sub,
   sizeClass = "text-[20px]",
   dim = false,
+  footer,
 }: {
   label: string;
   value: string;
   sub?: string;
   sizeClass?: string;
   dim?: boolean;
+  footer?: {
+    goalLabel: string;
+    goalValue: string;
+    pacePct?: number; // e.g. 116 for 116%. Undefined => no pace shown.
+    paceColor?: string; // hex tint applied to the pace number.
+    actionLabel?: string; // e.g. "$394/day to close" or "Goal exceeded"
+  };
 }) {
   return (
     <div
@@ -1341,6 +1428,53 @@ function ActualHeroStat({
       {sub && (
         <div className={`mt-1 text-[11px] tabular-nums ${dim ? "text-[hsl(var(--vs-text-muted))]" : "text-white/80"}`}>
           {sub}
+        </div>
+      )}
+      {footer && (
+        <div
+          className={`mt-2 pt-2 border-t ${
+            dim ? "border-[hsl(var(--vs-border))]" : "border-white/20"
+          } space-y-0.5`}
+        >
+          <div
+            className={`flex items-baseline justify-between gap-2 text-[10px] ${
+              dim ? "text-[hsl(var(--vs-text-muted))]" : "text-white/80"
+            }`}
+          >
+            <span className="uppercase tracking-wider">{footer.goalLabel}</span>
+            <span className="tabular-nums font-semibold">{footer.goalValue}</span>
+          </div>
+          {footer.pacePct !== undefined && (
+            <div
+              className={`flex items-baseline justify-between gap-2 text-[10px] ${
+                dim ? "text-[hsl(var(--vs-text-muted))]" : "text-white/80"
+              }`}
+            >
+              <span className="uppercase tracking-wider">Pace</span>
+              <span
+                className="tabular-nums font-semibold"
+                // When we have a paceColor override AND the tile is
+                // dimmed (no actuals), tint the pace number. Skipping the
+                // tint on the bright-blue variant keeps contrast strong.
+                style={
+                  dim && footer.paceColor
+                    ? { color: footer.paceColor }
+                    : undefined
+                }
+              >
+                {footer.pacePct}%
+              </span>
+            </div>
+          )}
+          {footer.actionLabel && (
+            <div
+              className={`text-[10px] tabular-nums pt-0.5 ${
+                dim ? "text-[hsl(var(--vs-text-muted))]" : "text-white/70"
+              }`}
+            >
+              {footer.actionLabel}
+            </div>
+          )}
         </div>
       )}
     </div>
