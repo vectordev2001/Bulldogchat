@@ -32,10 +32,21 @@ export const can = {
   },
   scorecard: {
     // Phase 2.6 — recruiter scorecard channel. Reads are open to any project
-    // member (RBAC enforced via channel visibility). Only admin/super_admin
-    // can edit the config (recruiters, salaries, fee, profit target) or log
-    // monthly actuals. Salaries are stripped from GET responses for anyone
-    // who fails this check.
+    // member (RBAC enforced via channel visibility).
+    //
+    // Two capabilities:
+    //   editConfig — admin/super_admin only. Gates the program config (fee
+    //     target, profit floor, stretch tier, recruiter list including
+    //     salaries) and the ability to *see* per-recruiter salaries at all.
+    //   editPlacements — managers + admins. Gates logging, editing, and
+    //     deleting individual placement rows plus rolling up monthly
+    //     actuals. Managers can maintain their own team's data without
+    //     seeing salaries or being able to reshape the program.
+    //
+    // `edit` is retained as an alias of `editConfig` for backward compat
+    // with older callers; new code should use the split names.
+    editConfig: (r: Role) => r === "admin" || r === "super_admin",
+    editPlacements: (r: Role) => r !== "user",
     edit: (r: Role) => r === "admin" || r === "super_admin",
   },
 };

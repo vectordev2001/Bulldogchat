@@ -1001,9 +1001,16 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     if (!row) return res.status(404).json({ message: "Scorecard not configured yet" });
     let cfg: any;
     try { cfg = JSON.parse(row.configJson); } catch { return res.status(500).json({ message: "Config parse error" }); }
-    const canEdit = can.scorecard.edit(u.role as any);
-    // Non-admins never see per-recruiter salaries; strip before serializing.
-    if (!canEdit && cfg && Array.isArray(cfg.recruiters)) {
+    const canEditConfig = can.scorecard.editConfig(u.role as any);
+    const canEditPlacements = can.scorecard.editPlacements(u.role as any);
+    // `canEdit` is kept as an alias of `canEditConfig` for any older
+    // client build still reading the flat field. New client code should
+    // gate on the split flags below.
+    const canEdit = canEditConfig;
+    // Only users who can edit the program config see per-recruiter
+    // salaries. Managers who can only edit placements don't need to see
+    // teammates' pay, so we strip salaries for them too.
+    if (!canEditConfig && cfg && Array.isArray(cfg.recruiters)) {
       cfg = {
         ...cfg,
         recruiters: cfg.recruiters.map((r: any) => ({ key: r.key, name: r.name })),
@@ -1017,15 +1024,19 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
       config: cfg,
       actuals,
       canEdit,
+      canEditConfig,
+      canEditPlacements,
       updatedByUserId: row.updatedByUserId,
       updatedAt: row.updatedAt,
     });
   });
 
-  // PATCH replaces the full config. Admin/super_admin only.
+  // PATCH replaces the full config. Admin/super_admin only — config
+  // reshapes recruiters, salaries, and program targets, which is out of
+  // scope for a manager fixing placement data.
   app.patch("/api/channels/:id/scorecard/config", requireAuth, (req, res) => {
     const u = (req as AuthedRequest).user;
-    if (!can.scorecard.edit(u.role as any)) return res.status(403).json({ message: "Not allowed" });
+    if (!can.scorecard.editConfig(u.role as any)) return res.status(403).json({ message: "Not allowed" });
     const channelId = Number(req.params.id);
     if (!Number.isFinite(channelId)) return res.status(400).json({ message: "Invalid channel id" });
     const ch = storage.getChannel(channelId);
@@ -1053,10 +1064,10 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     res.json({ ok: true, updatedAt: now, updatedByUserId: u.id });
   });
 
-  // POST upserts one (recruiter, month) actual row. Admin/super_admin only.
+  // POST upserts one (recruiter, month) actual row. Managers + admins.
   app.post("/api/channels/:id/scorecard/actuals", requireAuth, (req, res) => {
     const u = (req as AuthedRequest).user;
-    if (!can.scorecard.edit(u.role as any)) return res.status(403).json({ message: "Not allowed" });
+    if (!can.scorecard.editPlacements(u.role as any)) return res.status(403).json({ message: "Not allowed" });
     const channelId = Number(req.params.id);
     if (!Number.isFinite(channelId)) return res.status(400).json({ message: "Invalid channel id" });
     const ch = storage.getChannel(channelId);
@@ -1111,7 +1122,7 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
   // (source of truth) so the aggregate never drifts.
   app.post("/api/channels/:id/scorecard/placements", requireAuth, (req, res) => {
     const u = (req as AuthedRequest).user;
-    if (!can.scorecard.edit(u.role as any)) return res.status(403).json({ message: "Not allowed" });
+    if (!can.scorecard.editPlacements(u.role as any)) return res.status(403).json({ message: "Not allowed" });
     const channelId = Number(req.params.id);
     if (!Number.isFinite(channelId)) return res.status(400).json({ message: "Invalid channel id" });
     const ch = storage.getChannel(channelId);
@@ -1240,7 +1251,7 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
   // (recruiter, month) it belonged to.
   app.delete("/api/channels/:id/scorecard/placements/:placementId", requireAuth, (req, res) => {
     const u = (req as AuthedRequest).user;
-    if (!can.scorecard.edit(u.role as any)) return res.status(403).json({ message: "Not allowed" });
+    if (!can.scorecard.editPlacements(u.role as any)) return res.status(403).json({ message: "Not allowed" });
     const channelId = Number(req.params.id);
     const placementId = Number(req.params.placementId);
     if (!Number.isFinite(channelId) || !Number.isFinite(placementId)) {
@@ -1312,7 +1323,7 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
   // reconcile once.
   app.patch("/api/channels/:id/scorecard/placements/:placementId", requireAuth, (req, res) => {
     const u = (req as AuthedRequest).user;
-    if (!can.scorecard.edit(u.role as any)) return res.status(403).json({ message: "Not allowed" });
+    if (!can.scorecard.editPlacements(u.role as any)) return res.status(403).json({ message: "Not allowed" });
     const channelId = Number(req.params.id);
     const placementId = Number(req.params.placementId);
     if (!Number.isFinite(channelId) || !Number.isFinite(placementId)) {
