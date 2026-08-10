@@ -105,6 +105,12 @@ interface ScorecardResponse {
   config: ScorecardConfig;
   actuals: Actual[];
   canEdit: boolean;
+  // Server split canEdit into two capabilities so managers can maintain
+  // placements without seeing salaries or reshaping the program. Both are
+  // optional so this client can gracefully fall back to `canEdit` when
+  // talking to an older server build.
+  canEditConfig?: boolean;
+  canEditPlacements?: boolean;
   updatedAt: number;
 }
 // Phase 2.6.3 — per-placement rows. Aggregate `Actual` above is still
@@ -473,6 +479,11 @@ export function ScorecardChannelView({ channel }: Props) {
   }
 
   const { config, actuals, canEdit } = q.data;
+  // Prefer the split flags when the server sent them; otherwise fall back
+  // to the legacy `canEdit`, which behaved like `canEditConfig` (admin +
+  // super_admin only).
+  const canEditConfig = q.data.canEditConfig ?? canEdit;
+  const canEditPlacements = q.data.canEditPlacements ?? canEdit;
   const targets = computeTargets(config);
   const currentMonth = recentMonths(1)[0];
   const monthElapsed = fractionOfCurrentMonthElapsed();
@@ -688,27 +699,27 @@ export function ScorecardChannelView({ channel }: Props) {
             >
               <Mail className="w-4 h-4" />
             </button>
-            {canEdit && (
-              <>
-                <button
-                  type="button"
-                  onClick={() => setLogOpen(true)}
-                  className="h-8 px-3 rounded-full text-[13px] font-medium bg-[#0090F0] text-white hover:bg-[#0080D8] active:scale-[0.98] transition shadow-[0_1px_2px_rgba(0,144,240,0.35)] whitespace-nowrap"
-                  data-testid="button-log-actuals"
-                >
-                  <Plus className="w-3.5 h-3.5 inline -ml-0.5 mr-1 -mt-0.5" />
-                  Log placements
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setEditOpen(true)}
-                  className="h-8 w-8 rounded-full flex items-center justify-center text-[hsl(var(--vs-text-muted))] hover:text-[#0090F0] hover-elevate transition shrink-0"
-                  title="Edit scorecard config"
-                  data-testid="button-edit-config"
-                >
-                  <Pencil className="w-4 h-4" />
-                </button>
-              </>
+            {canEditPlacements && (
+              <button
+                type="button"
+                onClick={() => setLogOpen(true)}
+                className="h-8 px-3 rounded-full text-[13px] font-medium bg-[#0090F0] text-white hover:bg-[#0080D8] active:scale-[0.98] transition shadow-[0_1px_2px_rgba(0,144,240,0.35)] whitespace-nowrap"
+                data-testid="button-log-actuals"
+              >
+                <Plus className="w-3.5 h-3.5 inline -ml-0.5 mr-1 -mt-0.5" />
+                Log placements
+              </button>
+            )}
+            {canEditConfig && (
+              <button
+                type="button"
+                onClick={() => setEditOpen(true)}
+                className="h-8 w-8 rounded-full flex items-center justify-center text-[hsl(var(--vs-text-muted))] hover:text-[#0090F0] hover-elevate transition shrink-0"
+                title="Edit scorecard config"
+                data-testid="button-edit-config"
+              >
+                <Pencil className="w-4 h-4" />
+              </button>
             )}
           </div>
         </div>
@@ -1126,7 +1137,7 @@ export function ScorecardChannelView({ channel }: Props) {
                         recruiterKey={r.key}
                         recruiterName={r.name}
                         scope={{ kind: "month", periodMonth: currentMonth, label: `${currentMonth} placements` }}
-                        canEdit={canEdit}
+                        canEdit={canEditPlacements}
                       >
                         <button
                           type="button"
@@ -1154,7 +1165,7 @@ export function ScorecardChannelView({ channel }: Props) {
                         recruiterKey={r.key}
                         recruiterName={r.name}
                         scope={{ kind: "range", fromMonth: sixMoRange.from, toMonth: sixMoRange.to, label: `${horizonMonths}-month program` }}
-                        canEdit={canEdit}
+                        canEdit={canEditPlacements}
                       >
                         <button
                           type="button"
