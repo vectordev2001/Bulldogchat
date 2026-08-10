@@ -1,7 +1,17 @@
 {
-  "generated_at": "2026-08-07T18:49:26.511Z",
+  "generated_at": "2026-08-10T22:16:35.862Z",
   "repo": "vectordev2001/Bulldogchat",
   "notes": [
+    {
+      "number": 141,
+      "title": "Split scorecard.edit so managers can maintain placements",
+      "raw_title": "Split scorecard.edit so managers can maintain placements",
+      "summary": "Nick needs to delete placements on the recruiter scorecard, but the edit/delete buttons only render for admin and super_admin. Making Nick an admin gives him more power than the task requires (channel management, everyone's messages, etc.).",
+      "merged_at": "2026-08-10T22:16:24Z",
+      "author": "vectordev2001",
+      "url": "https://github.com/vectordev2001/Bulldogchat/pull/141",
+      "category": "other"
+    },
     {
       "number": 140,
       "title": "Stack recruiter hero tiles + clean up long channel names",
@@ -91,16 +101,6 @@
       "author": "vectordev2001",
       "url": "https://github.com/vectordev2001/Bulldogchat/pull/132",
       "category": "feature"
-    },
-    {
-      "number": 131,
-      "title": "Keep 6-month total goal, scale monthly cadence to 5 months",
-      "raw_title": "fix(scorecard): keep 6-month total goal, scale monthly cadence to 5 months",
-      "summary": "Follow-up to #130. When the program horizon shrank from 6 to 5 months, the total revenue target shrank with it — but that target is the number VTS was underwritten to deliver, not a pro-rata of program length. The right behavior is: **total stays**, **monthly cadence scales up** so the shorter window still lands the full 6-month goal.",
-      "merged_at": "2026-08-05T16:30:02Z",
-      "author": "vectordev2001",
-      "url": "https://github.com/vectordev2001/Bulldogchat/pull/131",
-      "category": "fix"
     }
   ]
 }
