@@ -1313,6 +1313,70 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     res.json({ ok: true });
   });
 
+  // Delete a *legacy* aggregate row: one that has no backing individual
+  // placements. Pre-PR-135 the app only wrote to channel_scorecard_actuals
+  // directly, so those months show a number on the tile but have nothing
+  // to click-delete in the popover. This endpoint clears that specific
+  // row so the user can re-log the month with individual placements.
+  //
+  // Refuses if any placement rows exist for the (recruiter, month) — in
+  // that case the aggregate is the reconciled sum of those placements and
+  // the caller should delete individual placement rows instead.
+  app.delete("/api/channels/:id/scorecard/actuals/legacy", requireAuth, (req, res) => {
+    const u = (req as AuthedRequest).user;
+    if (!can.scorecard.editPlacements(u.role as any)) return res.status(403).json({ message: "Not allowed" });
+    const channelId = Number(req.params.id);
+    if (!Number.isFinite(channelId)) return res.status(400).json({ message: "Invalid channel id" });
+    const recruiterKey = String((req.query.recruiterKey ?? req.body?.recruiterKey ?? "")).trim();
+    const periodMonth = String((req.query.periodMonth ?? req.body?.periodMonth ?? "")).trim();
+    if (!recruiterKey) return res.status(400).json({ message: "Missing recruiterKey" });
+    if (!/^\d{4}-\d{2}$/.test(periodMonth)) return res.status(400).json({ message: "Missing or bad periodMonth (YYYY-MM)" });
+    const ch = storage.getChannel(channelId);
+    if (!ch) return res.status(404).json({ message: "Channel not found" });
+
+    const backing = rawDb
+      .prepare(
+        `SELECT COUNT(*) AS c FROM channel_scorecard_placements
+         WHERE channel_id = ? AND recruiter_key = ? AND period_month = ?`,
+      )
+      .get(channelId, recruiterKey, periodMonth) as { c: number };
+    if (backing.c > 0) {
+      return res.status(409).json({
+        message: "This month has individual placements; delete those rows instead.",
+        placementsCount: backing.c,
+      });
+    }
+
+    const existing = rawDb
+      .prepare(
+        `SELECT placements_count AS placementsCount, fee_amount_cents AS feeAmountCents
+         FROM channel_scorecard_actuals
+         WHERE channel_id = ? AND recruiter_key = ? AND period_month = ?`,
+      )
+      .get(channelId, recruiterKey, periodMonth) as
+      | { placementsCount: number; feeAmountCents: number }
+      | undefined;
+    if (!existing) return res.status(404).json({ message: "No aggregate row for that recruiter and month" });
+
+    try {
+      rawDb
+        .prepare(
+          `DELETE FROM channel_scorecard_actuals
+           WHERE channel_id = ? AND recruiter_key = ? AND period_month = ?`,
+        )
+        .run(channelId, recruiterKey, periodMonth);
+    } catch (e: any) {
+      return res.status(500).json({ message: e?.message ?? "Delete failed" });
+    }
+    console.log(
+      `[scorecard] legacy actuals row deleted by user=${u.id} channel=${channelId} recruiter=${recruiterKey} month=${periodMonth} (was ${existing.placementsCount} placements / ${existing.feeAmountCents} cents)`,
+    );
+    res.json({
+      ok: true,
+      deleted: { recruiterKey, periodMonth, placementsCount: existing.placementsCount, feeAmountCents: existing.feeAmountCents },
+    });
+  });
+
   // Update a single placement. Partial: caller sends any subset of the
   // editable fields (placedAt, candidateName, clientName, feeAmountCents,
   // notes). recruiterKey cannot be changed — that's a delete+create so
