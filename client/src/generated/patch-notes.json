@@ -1,7 +1,17 @@
 {
-  "generated_at": "2026-08-11T15:44:51.040Z",
+  "generated_at": "2026-08-11T16:31:58.913Z",
   "repo": "vectordev2001/Bulldogchat",
   "notes": [
+    {
+      "number": 143,
+      "title": "Propagate Bulldog Auth role changes to chat + reconcile legacy popover header",
+      "raw_title": "Propagate Bulldog Auth role changes to chat + reconcile legacy popover header",
+      "summary": "When an admin promoted Nick from user to admin inside Bulldog Auth's Admin Panel, chat's users.role never updated. The scorecard edit/delete affordances stayed hidden, and can.scorecard.edit(nick.role) kept returning false.",
+      "merged_at": "2026-08-11T16:31:40Z",
+      "author": "vectordev2001",
+      "url": "https://github.com/vectordev2001/Bulldogchat/pull/143",
+      "category": "other"
+    },
     {
       "number": 142,
       "title": "Allow deleting legacy scorecard aggregates that have no backing placements",
@@ -91,16 +101,6 @@
       "author": "vectordev2001",
       "url": "https://github.com/vectordev2001/Bulldogchat/pull/134",
       "category": "fix"
-    },
-    {
-      "number": 133,
-      "title": "Stretch tier — program total + $500k startup-cost recovery",
-      "raw_title": "feat(scorecard): stretch tier — program total + $500k startup-cost recovery",
-      "summary": "Adds a **stretch tier** on top of the program revenue goal — extra revenue the team should capture to recover startup/seed capital in the same window. Defaults to **$500,000** for VTS; setting it to 0 hides the whole tier so other scorecards stay visually identical.",
-      "merged_at": "2026-08-06T20:16:07Z",
-      "author": "vectordev2001",
-      "url": "https://github.com/vectordev2001/Bulldogchat/pull/133",
-      "category": "feature"
     }
   ]
 }
