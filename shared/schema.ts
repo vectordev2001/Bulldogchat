@@ -1315,6 +1315,12 @@ export const scorecardPlacementSchema = z.object({
   clientName: z.string().max(120).optional().nullable(),
   feeAmountCents: z.number().int().nonnegative().max(1_000_000_000),
   notes: z.string().max(500).optional().nullable(),
+  // Optional account-manager split credit. When set, the server writes
+  // two sibling rows sharing a group_id: one credited to recruiterKey,
+  // one to accountManagerKey, each carrying half the feeAmountCents.
+  // Must differ from recruiterKey and must exist in the scorecard
+  // config's recruiter list. Legacy and solo placements omit this.
+  accountManagerKey: z.string().min(1).max(40).optional().nullable(),
 });
 export type ScorecardPlacementInput = z.infer<typeof scorecardPlacementSchema>;
 

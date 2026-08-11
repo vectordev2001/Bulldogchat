@@ -127,6 +127,13 @@ interface Placement {
   notes: string | null;
   createdByUserId: number;
   createdAt: number;
+  // Non-null when this row is one half of a 50/50 split placement. Both
+  // sibling rows share the same groupId; each carries half the total
+  // fee. Server annotates each grouped row with the OTHER sibling's
+  // recruiterKey as `partnerRecruiterKey` so the UI can render
+  // "Split with <partner>" without a second round-trip.
+  groupId?: string | null;
+  partnerRecruiterKey?: string | null;
 }
 
 interface Props {
@@ -484,6 +491,11 @@ export function ScorecardChannelView({ channel }: Props) {
   // super_admin only).
   const canEditConfig = q.data.canEditConfig ?? canEdit;
   const canEditPlacements = q.data.canEditPlacements ?? canEdit;
+  // Reused by popovers and "View all" dialog to render "Split with <name>"
+  // for grouped placement rows, so the UI never leaks internal keys.
+  const recruiterNames: Record<string, string> = Object.fromEntries(
+    config.recruiters.map((r) => [r.key, r.name]),
+  );
   const targets = computeTargets(config);
   const currentMonth = recentMonths(1)[0];
   const monthElapsed = fractionOfCurrentMonthElapsed();
@@ -1138,6 +1150,7 @@ export function ScorecardChannelView({ channel }: Props) {
                         recruiterName={r.name}
                         scope={{ kind: "month", periodMonth: currentMonth, label: `${currentMonth} placements` }}
                         canEdit={canEditPlacements}
+                        recruiterNames={recruiterNames}
                         legacyAggregate={
                           actual
                             ? { placementsCount: actual.placementsCount, feeAmountCents: actual.feeAmountCents }
@@ -1171,6 +1184,7 @@ export function ScorecardChannelView({ channel }: Props) {
                         recruiterName={r.name}
                         scope={{ kind: "range", fromMonth: sixMoRange.from, toMonth: sixMoRange.to, label: `${horizonMonths}-month program` }}
                         canEdit={canEditPlacements}
+                        recruiterNames={recruiterNames}
                       >
                         <button
                           type="button"
@@ -1521,6 +1535,7 @@ function PlacementsPopover({
   scope,
   canEdit,
   legacyAggregate,
+  recruiterNames,
   children,
 }: {
   channelId: number;
@@ -1536,6 +1551,9 @@ function PlacementsPopover({
   // month-scoped popovers; range scopes fan out to multiple months and
   // would need a different UX. Server refuses if any placements exist.
   legacyAggregate?: { placementsCount: number; feeAmountCents: number } | null;
+  // Map of recruiterKey → display name. Used to render "Split with <name>"
+  // for grouped placement rows. Optional — falls back to the key.
+  recruiterNames?: Record<string, string>;
   children: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
@@ -1543,6 +1561,12 @@ function PlacementsPopover({
   // and pass through the mutation invalidation to the same query keys the
   // popover uses.
   const [editing, setEditing] = useState<Placement | null>(null);
+  // When set, we render the AllPlacementsDialog — a full management
+  // screen listing every placement for this recruiter across every
+  // month, with edit + delete on each. Popover-scoped views (MTD /
+  // 6-month) miss anything outside that window, so this is the escape
+  // hatch for corrections on old data.
+  const [showAll, setShowAll] = useState(false);
   const { toast } = useToast();
 
   const query = useQuery<{ placements: Placement[] }>({
@@ -1764,20 +1788,37 @@ function PlacementsPopover({
                         {p.notes}
                       </div>
                     )}
+                    {p.groupId && p.partnerRecruiterKey && (
+                      <div className="mt-0.5 inline-flex items-center gap-1 rounded-full bg-[#0090F0]/10 text-[#0090F0] px-1.5 py-[1px] text-[10px] font-medium">
+                        Split 50/50 with {(recruiterNames?.[p.partnerRecruiterKey]) ?? p.partnerRecruiterKey}
+                      </div>
+                    )}
                   </div>
                   {canEdit && (
                     <div className="flex items-center gap-0.5 shrink-0">
                       <button
                         type="button"
-                        className="h-6 w-6 rounded-full inline-flex items-center justify-center text-[hsl(var(--vs-text-muted))] hover:text-[#0090F0] hover-elevate"
+                        className="h-6 w-6 rounded-full inline-flex items-center justify-center text-[hsl(var(--vs-text-muted))] hover:text-[#0090F0] hover-elevate disabled:opacity-40"
                         onClick={() => {
+                          if (p.groupId) {
+                            // Editing a split placement in-place would let
+                            // the two sibling rows drift apart. Server
+                            // rejects the PATCH; surface that here so the
+                            // pencil doesn't look broken.
+                            toast({
+                              title: "Can't edit a split placement",
+                              description: "Delete it and re-log to change the details.",
+                            });
+                            return;
+                          }
                           // Close the popover so the dialog isn't fighting for
                           // focus; the dialog manages its own dismissal.
                           setOpen(false);
                           setEditing(p);
                         }}
-                        aria-label="Edit placement"
-                        title="Edit placement"
+                        disabled={Boolean(p.groupId)}
+                        aria-label={p.groupId ? "Edit disabled for split placements" : "Edit placement"}
+                        title={p.groupId ? "Delete and re-log to change a split placement" : "Edit placement"}
                       >
                         <Pencil className="w-3.5 h-3.5" />
                       </button>
@@ -1800,6 +1841,23 @@ function PlacementsPopover({
             </ul>
           )}
         </div>
+        {canEdit && (
+          <div className="px-3 py-2 border-t border-[hsl(var(--vs-border))] flex items-center justify-between gap-2">
+            <div className="text-[10px] uppercase tracking-wider text-[hsl(var(--vs-text-muted))]">
+              {scope.kind === "month" ? "This month only" : `${scope.label}`}
+            </div>
+            <button
+              type="button"
+              className="text-[11px] font-medium text-[#0090F0] hover:underline"
+              onClick={() => {
+                setOpen(false);
+                setShowAll(true);
+              }}
+            >
+              View all placements →
+            </button>
+          </div>
+        )}
       </PopoverContent>
     </Popover>
     {editing && (
@@ -1810,7 +1868,215 @@ function PlacementsPopover({
         onClose={() => setEditing(null)}
       />
     )}
+    {showAll && (
+      <AllPlacementsDialog
+        channelId={channelId}
+        recruiterKey={recruiterKey}
+        recruiterName={recruiterName}
+        recruiterNames={recruiterNames}
+        canEdit={canEdit}
+        onClose={() => setShowAll(false)}
+      />
+    )}
     </>
+  );
+}
+
+/**
+ * All-placements management dialog. Lists every placement for a single
+ * recruiter, across every month, with edit + delete on each row. Powers
+ * the "View all placements" link in the popover. Uses the same GET
+ * endpoint as the popover, with `all=1` to bypass the scope filter.
+ *
+ * Grouped (split) placements render "Split with <partner>" and disable
+ * the pencil icon; deleting one row cascades over its group so both
+ * credits vanish in a single click.
+ */
+function AllPlacementsDialog({
+  channelId,
+  recruiterKey,
+  recruiterName,
+  recruiterNames,
+  canEdit,
+  onClose,
+}: {
+  channelId: number;
+  recruiterKey: string;
+  recruiterName: string;
+  recruiterNames: Record<string, string>;
+  canEdit: boolean;
+  onClose: () => void;
+}) {
+  const { toast } = useToast();
+  const [editing, setEditing] = useState<Placement | null>(null);
+
+  const query = useQuery<{ placements: Placement[] }>({
+    queryKey: ["/api/channels", channelId, "scorecard", "placements", "all", recruiterKey],
+    queryFn: async () => {
+      const params = new URLSearchParams({ recruiterKey, all: "1" });
+      const res = await apiRequest(
+        "GET",
+        `/api/channels/${channelId}/scorecard/placements?${params.toString()}`,
+      );
+      return res as { placements: Placement[] };
+    },
+    staleTime: 10_000,
+  });
+
+  const del = useMutation({
+    mutationFn: async (placementId: number) => {
+      return apiRequest("DELETE", `/api/channels/${channelId}/scorecard/placements/${placementId}`);
+    },
+    onSuccess: () => {
+      // Invalidate the popover-scoped and all-scoped queries plus the
+      // parent scorecard so aggregates refresh in one round-trip.
+      queryClient.invalidateQueries({ queryKey: ["/api/channels", channelId, "scorecard"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/channels", channelId, "scorecard", "placements"] });
+      toast({ title: "Placement deleted" });
+    },
+    onError: (e: any) => {
+      toast({
+        title: "Delete failed",
+        description: e?.body?.message ?? e?.message ?? "Try again.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  // Group by month for a clearer scan. Months are already returned newest
+  // first from the server; we just partition on the client.
+  const placements = query.data?.placements ?? [];
+  const byMonth = placements.reduce<Record<string, Placement[]>>((acc, p) => {
+    (acc[p.periodMonth] ??= []).push(p);
+    return acc;
+  }, {});
+  const monthKeys = Object.keys(byMonth); // insertion order = server order
+
+  const totalFee = placements.reduce((s, p) => s + p.feeAmountCents, 0);
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>All placements — {recruiterName}</DialogTitle>
+          <DialogDescription>
+            {placements.length === 0
+              ? "No individual placements logged yet."
+              : `${placements.length} placement${placements.length === 1 ? "" : "s"} across ${monthKeys.length} month${monthKeys.length === 1 ? "" : "s"} · ${fmtUSD(totalFee / 100)} total`}
+          </DialogDescription>
+        </DialogHeader>
+        <div className="max-h-[60vh] overflow-y-auto -mx-6 px-6">
+          {query.isLoading && (
+            <div className="py-6 text-center text-[12px] text-[hsl(var(--vs-text-muted))] inline-flex items-center justify-center gap-2 w-full">
+              <Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading…
+            </div>
+          )}
+          {!query.isLoading && placements.length === 0 && (
+            <div className="py-6 text-center text-[12px] text-[hsl(var(--vs-text-muted))]">
+              Nothing to show. Log a placement to see it here.
+            </div>
+          )}
+          {!query.isLoading && placements.length > 0 && (
+            <div className="space-y-4">
+              {monthKeys.map((mk) => (
+                <div key={mk}>
+                  <div className="text-[10px] uppercase tracking-wider font-semibold text-[hsl(var(--vs-text-muted))] mb-1">
+                    {mk} · {byMonth[mk].length} placement{byMonth[mk].length === 1 ? "" : "s"} · {fmtUSD(byMonth[mk].reduce((s, p) => s + p.feeAmountCents, 0) / 100)}
+                  </div>
+                  <ul className="divide-y divide-[hsl(var(--vs-border))] rounded-lg border border-[hsl(var(--vs-border))]">
+                    {byMonth[mk].map((p) => (
+                      <li key={p.id} className="px-3 py-2 flex items-start justify-between gap-2 text-[12px]">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <span className="tabular-nums text-[hsl(var(--vs-text-muted))]">{p.placedAt}</span>
+                            <span className="font-medium tabular-nums text-[hsl(var(--vs-text))]">
+                              {fmtUSD(p.feeAmountCents / 100)}
+                            </span>
+                          </div>
+                          {(p.candidateName || p.clientName) && (
+                            <div className="mt-0.5 text-[11px] text-[hsl(var(--vs-text))] truncate">
+                              {p.candidateName ?? "—"}
+                              {p.clientName && (
+                                <span className="text-[hsl(var(--vs-text-muted))]"> · {p.clientName}</span>
+                              )}
+                            </div>
+                          )}
+                          {p.notes && (
+                            <div className="mt-0.5 text-[11px] text-[hsl(var(--vs-text-muted))] truncate">
+                              {p.notes}
+                            </div>
+                          )}
+                          {p.groupId && p.partnerRecruiterKey && (
+                            <div className="mt-0.5 inline-flex items-center gap-1 rounded-full bg-[#0090F0]/10 text-[#0090F0] px-1.5 py-[1px] text-[10px] font-medium">
+                              Split 50/50 with {recruiterNames[p.partnerRecruiterKey] ?? p.partnerRecruiterKey}
+                            </div>
+                          )}
+                        </div>
+                        {canEdit && (
+                          <div className="flex items-center gap-0.5 shrink-0">
+                            <button
+                              type="button"
+                              className="h-6 w-6 rounded-full inline-flex items-center justify-center text-[hsl(var(--vs-text-muted))] hover:text-[#0090F0] hover-elevate disabled:opacity-40"
+                              onClick={() => {
+                                if (p.groupId) {
+                                  toast({
+                                    title: "Can't edit a split placement",
+                                    description: "Delete it and re-log to change the details.",
+                                  });
+                                  return;
+                                }
+                                setEditing(p);
+                              }}
+                              disabled={Boolean(p.groupId)}
+                              aria-label={p.groupId ? "Edit disabled for split placements" : "Edit placement"}
+                              title={p.groupId ? "Delete and re-log to change a split placement" : "Edit placement"}
+                            >
+                              <Pencil className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              className="h-6 w-6 rounded-full inline-flex items-center justify-center text-[hsl(var(--vs-text-muted))] hover:text-[#ef4444] hover-elevate disabled:opacity-40"
+                              onClick={() => {
+                                const label = p.groupId
+                                  ? "Delete this split placement? Both recruiter and account manager credits will be removed."
+                                  : "Delete this placement?";
+                                if (window.confirm(label)) del.mutate(p.id);
+                              }}
+                              disabled={del.isPending}
+                              aria-label="Delete placement"
+                              title="Delete placement"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+        <div className="mt-3 flex justify-end">
+          <button
+            type="button"
+            className="h-9 px-3 rounded-md border border-[hsl(var(--vs-border))] text-[12px] font-medium text-[hsl(var(--vs-text))] hover-elevate"
+            onClick={onClose}
+          >
+            Close
+          </button>
+        </div>
+      </DialogContent>
+      {editing && (
+        <EditPlacementDialog
+          channelId={channelId}
+          placement={editing}
+          recruiterName={recruiterName}
+          onClose={() => setEditing(null)}
+        />
+      )}
+    </Dialog>
   );
 }
 
@@ -2385,6 +2651,10 @@ type PlacementDraft = {
   clientName: string;
   feeAmount: string; // dollars, string for input state
   notes: string;
+  // 50/50 split-credit with an account manager. When set, the server
+  // writes two sibling rows (recruiter + AM) sharing a group_id and
+  // credits half the fee to each. Blank = solo credit, no split.
+  accountManagerKey: string;
 };
 
 function todayISO(): string {
@@ -2404,6 +2674,7 @@ function newDraft(defaultRecruiterKey: string): PlacementDraft {
     clientName: "",
     feeAmount: "",
     notes: "",
+    accountManagerKey: "",
   };
 }
 
@@ -2451,6 +2722,12 @@ function LogActualsDialog({
         clientName: d.clientName.trim() || null,
         feeAmountCents: Math.max(0, Math.round((Number(d.feeAmount) || 0) * 100)),
         notes: d.notes.trim() || null,
+        // Send accountManagerKey only when the user selected one that's
+        // different from the recruiter. Server validates the rest.
+        accountManagerKey:
+          d.accountManagerKey && d.accountManagerKey !== d.recruiterKey
+            ? d.accountManagerKey
+            : null,
       }));
       return apiRequest("POST", `/api/channels/${channelId}/scorecard/placements`, { placements });
     },
@@ -2592,6 +2869,72 @@ function LogActualsDialog({
                     onChange={(e) => updateDraft(d.id, { notes: e.target.value })}
                     maxLength={500}
                   />
+                </div>
+                {/* 50/50 split-credit with an account manager. Business */}
+                {/* rule: some placements are jointly credited to a */}
+                {/* recruiter and an AM — both should get half in their */}
+                {/* scorecard. We keep it as an optional checkbox so solo */}
+                {/* placements stay a one-click flow. */}
+                <div className="sm:col-span-2">
+                  <label className="inline-flex items-center gap-2 text-[12px] text-[hsl(var(--vs-text))] select-none cursor-pointer">
+                    <input
+                      type="checkbox"
+                      className="h-3.5 w-3.5 rounded border-[hsl(var(--vs-border))]"
+                      checked={Boolean(d.accountManagerKey)}
+                      onChange={(e) => {
+                        if (!e.target.checked) {
+                          updateDraft(d.id, { accountManagerKey: "" });
+                          return;
+                        }
+                        // Default to the first recruiter other than the
+                        // primary. If there's only one recruiter in the
+                        // config, leave blank so the picker shows no
+                        // valid option and the checkbox becomes a no-op.
+                        const first = config.recruiters.find((r) => r.key !== d.recruiterKey);
+                        updateDraft(d.id, { accountManagerKey: first?.key ?? "" });
+                      }}
+                    />
+                    <span>Split 50/50 with account manager</span>
+                  </label>
+                  {d.accountManagerKey && (
+                    <div className="mt-2 grid grid-cols-1 sm:grid-cols-[1fr,auto] gap-2 items-end">
+                      <div>
+                        <div className="text-[11px] uppercase tracking-wider text-[hsl(var(--vs-text-muted))] mb-1">
+                          Account manager
+                        </div>
+                        <select
+                          className="w-full h-9 px-2 rounded-md bg-[hsl(var(--vs-surface))] border border-[hsl(var(--vs-border))] text-sm"
+                          value={d.accountManagerKey}
+                          onChange={(e) => updateDraft(d.id, { accountManagerKey: e.target.value })}
+                        >
+                          {config.recruiters
+                            .filter((r) => r.key !== d.recruiterKey)
+                            .map((r) => (
+                              <option key={r.key} value={r.key}>
+                                {r.name}
+                              </option>
+                            ))}
+                        </select>
+                      </div>
+                      {(() => {
+                        // Preview the split so Josh can see "$5,000 →
+                        // recruiter, $5,000 → AM" before submitting. On
+                        // odd-cent totals the recruiter gets the extra
+                        // cent so the math is exact.
+                        const totalCents = Math.max(0, Math.round((Number(d.feeAmount) || 0) * 100));
+                        if (totalCents <= 0) return null;
+                        const primary = totalCents - Math.floor(totalCents / 2);
+                        const secondary = Math.floor(totalCents / 2);
+                        const rName = config.recruiters.find((r) => r.key === d.recruiterKey)?.name ?? d.recruiterKey;
+                        const amName = config.recruiters.find((r) => r.key === d.accountManagerKey)?.name ?? d.accountManagerKey;
+                        return (
+                          <div className="text-[11px] text-[hsl(var(--vs-text-muted))] tabular-nums whitespace-nowrap self-center">
+                            {fmtUSD(primary / 100)} to {rName} · {fmtUSD(secondary / 100)} to {amName}
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  )}
                 </div>
               </div>
             </div>

@@ -1607,4 +1607,29 @@ export function runMigrations() {
   } catch (e: any) {
     console.warn("[migrate v37] scorecard seed skipped:", e?.message);
   }
+
+  // v38 — group_id for placement splits.
+  //
+  // Business need: a single placement can be jointly credited to a
+  // recruiter and an account manager (50/50). We model this as two
+  // sibling rows in channel_scorecard_placements that share a group_id;
+  // both rows carry half the fee. Delete cascades over the group so
+  // clicking trash on either row removes both. group_id is nullable —
+  // legacy and solo-credit placements have group_id = NULL.
+  try {
+    const cols = rawDb
+      .prepare(`PRAGMA table_info(channel_scorecard_placements)`)
+      .all() as Array<{ name: string }>;
+    const hasGroup = cols.some((c) => c.name === "group_id");
+    if (!hasGroup) {
+      rawDb.exec(`ALTER TABLE channel_scorecard_placements ADD COLUMN group_id TEXT`);
+      console.log("[migrate] v38 added group_id to channel_scorecard_placements");
+    }
+    rawDb.exec(
+      `CREATE INDEX IF NOT EXISTS idx_scorecard_placements_group
+         ON channel_scorecard_placements (group_id)`,
+    );
+  } catch (e: any) {
+    console.warn("[migrate v38] group_id skipped:", e?.message);
+  }
 }
