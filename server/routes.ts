@@ -1146,19 +1146,80 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
       if (!recruiterKeys.has(p.recruiterKey)) {
         return res.status(400).json({ message: `Unknown recruiter: ${p.recruiterKey}` });
       }
+      // Validate optional split-credit account manager.
+      if (p.accountManagerKey) {
+        if (p.accountManagerKey === p.recruiterKey) {
+          return res.status(400).json({
+            message: "Account manager must be different from the recruiter",
+          });
+        }
+        if (!recruiterKeys.has(p.accountManagerKey)) {
+          return res.status(400).json({
+            message: `Unknown account manager: ${p.accountManagerKey}`,
+          });
+        }
+      }
     }
     const now = Math.floor(Date.now() / 1000);
     const insert = rawDb.prepare(
       `INSERT INTO channel_scorecard_placements
-         (channel_id, recruiter_key, period_month, placed_at, candidate_name, client_name, fee_amount_cents, notes, created_by_user_id, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (channel_id, recruiter_key, period_month, placed_at, candidate_name, client_name, fee_amount_cents, notes, created_by_user_id, created_at, group_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
     // (recruiterKey, periodMonth) tuples to reconcile after the batch.
     const touched = new Map<string, { recruiterKey: string; periodMonth: string }>();
     const insertedIds: number[] = [];
+    // Split-credit fee-split helper. 50/50; on odd cents the recruiter
+    // (primary) gets the extra cent so recruiter+AM sums exactly to the
+    // stated placement fee.
+    const splitFee = (total: number): { primary: number; secondary: number } => {
+      const half = Math.floor(total / 2);
+      return { primary: total - half, secondary: half };
+    };
     const txn = rawDb.transaction((rows: typeof parsed.data.placements) => {
       for (const p of rows) {
         const periodMonth = p.placedAt.slice(0, 7); // "YYYY-MM"
+        if (p.accountManagerKey) {
+          // Split placement: write two sibling rows with a shared group_id.
+          // Each row carries half the fee and is credited to its own
+          // recruiter, so aggregate reconciliation (which SUMs the
+          // placements table per recruiter/month) just works.
+          // 21-char URL-safe id; matches other short-id patterns in this codebase.
+          const groupId = `plc_${nanoid(16)}`;
+          const { primary, secondary } = splitFee(p.feeAmountCents);
+          const primaryNote = (p.notes ? `${p.notes} · ` : "") + `Split 50/50 with ${p.accountManagerKey} (AM)`;
+          const secondaryNote = (p.notes ? `${p.notes} · ` : "") + `Split 50/50 with ${p.recruiterKey} (recruiter)`;
+          const infoR = insert.run(
+            channelId,
+            p.recruiterKey,
+            periodMonth,
+            p.placedAt,
+            p.candidateName ?? null,
+            p.clientName ?? null,
+            primary,
+            primaryNote,
+            u.id,
+            now,
+            groupId,
+          );
+          const infoAM = insert.run(
+            channelId,
+            p.accountManagerKey,
+            periodMonth,
+            p.placedAt,
+            p.candidateName ?? null,
+            p.clientName ?? null,
+            secondary,
+            secondaryNote,
+            u.id,
+            now,
+            groupId,
+          );
+          insertedIds.push(Number(infoR.lastInsertRowid), Number(infoAM.lastInsertRowid));
+          touched.set(`${p.recruiterKey}\u0001${periodMonth}`, { recruiterKey: p.recruiterKey, periodMonth });
+          touched.set(`${p.accountManagerKey}\u0001${periodMonth}`, { recruiterKey: p.accountManagerKey, periodMonth });
+          continue;
+        }
         const info = insert.run(
           channelId,
           p.recruiterKey,
@@ -1170,6 +1231,7 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
           p.notes ?? null,
           u.id,
           now,
+          null,
         );
         insertedIds.push(Number(info.lastInsertRowid));
         touched.set(`${p.recruiterKey}\u0001${periodMonth}`, { recruiterKey: p.recruiterKey, periodMonth });
@@ -1219,12 +1281,14 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     const toMonth = String(req.query.toMonth ?? "").slice(0, 7);
     if (!recruiterKey) return res.status(400).json({ message: "recruiterKey required" });
     let rows: any[];
+    const SELECT_COLS = `SELECT id, recruiter_key AS recruiterKey, period_month AS periodMonth, placed_at AS placedAt,
+                  candidate_name AS candidateName, client_name AS clientName,
+                  fee_amount_cents AS feeAmountCents, notes, group_id AS groupId,
+                  created_by_user_id AS createdByUserId, created_at AS createdAt`;
     if (periodMonth) {
       rows = rawDb
         .prepare(
-          `SELECT id, recruiter_key AS recruiterKey, period_month AS periodMonth, placed_at AS placedAt,
-                  candidate_name AS candidateName, client_name AS clientName,
-                  fee_amount_cents AS feeAmountCents, notes, created_by_user_id AS createdByUserId, created_at AS createdAt
+          `${SELECT_COLS}
            FROM channel_scorecard_placements
            WHERE channel_id = ? AND recruiter_key = ? AND period_month = ?
            ORDER BY placed_at DESC, id DESC`,
@@ -1233,18 +1297,61 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     } else if (fromMonth && toMonth) {
       rows = rawDb
         .prepare(
-          `SELECT id, recruiter_key AS recruiterKey, period_month AS periodMonth, placed_at AS placedAt,
-                  candidate_name AS candidateName, client_name AS clientName,
-                  fee_amount_cents AS feeAmountCents, notes, created_by_user_id AS createdByUserId, created_at AS createdAt
+          `${SELECT_COLS}
            FROM channel_scorecard_placements
            WHERE channel_id = ? AND recruiter_key = ? AND period_month >= ? AND period_month <= ?
            ORDER BY placed_at DESC, id DESC`,
         )
         .all(channelId, recruiterKey, fromMonth, toMonth);
+    } else if (String(req.query.all ?? "") === "1") {
+      // "all" mode — every placement for this recruiter across every month.
+      // Powers the "View all placements" management dialog.
+      rows = rawDb
+        .prepare(
+          `${SELECT_COLS}
+           FROM channel_scorecard_placements
+           WHERE channel_id = ? AND recruiter_key = ?
+           ORDER BY placed_at DESC, id DESC`,
+        )
+        .all(channelId, recruiterKey);
     } else {
-      return res.status(400).json({ message: "periodMonth or (fromMonth,toMonth) required" });
+      return res.status(400).json({ message: "periodMonth, (fromMonth,toMonth), or all=1 required" });
     }
-    res.json({ placements: rows });
+    // Annotate each grouped row with its partner recruiter key so the UI
+    // can render "Split with <partner>" without a second round-trip.
+    const groupIds = Array.from(new Set(rows.map((r: any) => r.groupId).filter(Boolean)));
+    const partnerByRowId = new Map<number, string>();
+    if (groupIds.length > 0) {
+      const placeholders = groupIds.map(() => "?").join(",");
+      const siblings = rawDb
+        .prepare(
+          `SELECT id, recruiter_key AS recruiterKey, group_id AS groupId
+           FROM channel_scorecard_placements
+           WHERE channel_id = ? AND group_id IN (${placeholders})`,
+        )
+        .all(channelId, ...groupIds) as Array<{ id: number; recruiterKey: string; groupId: string }>;
+      // For each row, its partner is the sibling with the same groupId
+      // and a different recruiter_key. Assumes at most 2 rows per group
+      // (recruiter + AM); if we ever extend to 3-way splits this needs
+      // to return an array instead of a single key.
+      const byGroup = new Map<string, Array<{ id: number; recruiterKey: string }>>();
+      for (const s of siblings) {
+        const arr = byGroup.get(s.groupId) ?? [];
+        arr.push({ id: s.id, recruiterKey: s.recruiterKey });
+        byGroup.set(s.groupId, arr);
+      }
+      for (const r of rows) {
+        if (!r.groupId) continue;
+        const sibs = byGroup.get(r.groupId) ?? [];
+        const partner = sibs.find((s) => s.id !== r.id);
+        if (partner) partnerByRowId.set(r.id, partner.recruiterKey);
+      }
+    }
+    const annotated = rows.map((r: any) => ({
+      ...r,
+      partnerRecruiterKey: partnerByRowId.get(r.id) ?? null,
+    }));
+    res.json({ placements: annotated });
   });
 
   // Delete a single placement. Reconciles the aggregate row for the
@@ -1259,24 +1366,51 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     }
     const row = rawDb
       .prepare(
-        `SELECT recruiter_key AS recruiterKey, period_month AS periodMonth
+        `SELECT recruiter_key AS recruiterKey, period_month AS periodMonth, group_id AS groupId
          FROM channel_scorecard_placements WHERE id = ? AND channel_id = ?`,
       )
-      .get(placementId, channelId) as { recruiterKey: string; periodMonth: string } | undefined;
+      .get(placementId, channelId) as { recruiterKey: string; periodMonth: string; groupId: string | null } | undefined;
     if (!row) return res.status(404).json({ message: "Placement not found" });
+    // If this row is part of a split group, gather every sibling in the
+    // group so we can delete them all and reconcile every affected
+    // (recruiter, month) tuple. This keeps the two credits paired: you
+    // can't accidentally leave one half of a split placement dangling.
+    const groupRows = row.groupId
+      ? (rawDb
+          .prepare(
+            `SELECT id, recruiter_key AS recruiterKey, period_month AS periodMonth
+             FROM channel_scorecard_placements WHERE channel_id = ? AND group_id = ?`,
+          )
+          .all(channelId, row.groupId) as Array<{ id: number; recruiterKey: string; periodMonth: string }>)
+      : [{ id: placementId, recruiterKey: row.recruiterKey, periodMonth: row.periodMonth }];
     const now = Math.floor(Date.now() / 1000);
     const txn = rawDb.transaction(() => {
-      rawDb
-        .prepare(`DELETE FROM channel_scorecard_placements WHERE id = ? AND channel_id = ?`)
-        .run(placementId, channelId);
-      const agg = rawDb
-        .prepare(
-          `SELECT COUNT(*) AS c, COALESCE(SUM(fee_amount_cents), 0) AS f
-           FROM channel_scorecard_placements
-           WHERE channel_id = ? AND recruiter_key = ? AND period_month = ?`,
-        )
-        .get(channelId, row.recruiterKey, row.periodMonth) as { c: number; f: number };
-      if (agg.c === 0) {
+      if (row.groupId) {
+        rawDb
+          .prepare(`DELETE FROM channel_scorecard_placements WHERE channel_id = ? AND group_id = ?`)
+          .run(channelId, row.groupId);
+      } else {
+        rawDb
+          .prepare(`DELETE FROM channel_scorecard_placements WHERE id = ? AND channel_id = ?`)
+          .run(placementId, channelId);
+      }
+      // Reconcile every (recruiter, month) that lost a row.
+      const touched = new Map<string, { recruiterKey: string; periodMonth: string }>();
+      for (const gr of groupRows) {
+        touched.set(`${gr.recruiterKey}\u0001${gr.periodMonth}`, {
+          recruiterKey: gr.recruiterKey,
+          periodMonth: gr.periodMonth,
+        });
+      }
+      for (const { recruiterKey, periodMonth } of touched.values()) {
+        const agg = rawDb
+          .prepare(
+            `SELECT COUNT(*) AS c, COALESCE(SUM(fee_amount_cents), 0) AS f
+             FROM channel_scorecard_placements
+             WHERE channel_id = ? AND recruiter_key = ? AND period_month = ?`,
+          )
+          .get(channelId, recruiterKey, periodMonth) as { c: number; f: number };
+        if (agg.c === 0) {
         // No more placements for this month — clear the aggregate row so
         // it doesn't linger with stale (non-zero) legacy data. Legacy
         // aggregate rows without placement provenance are preserved:
@@ -1285,24 +1419,25 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
         // avoid clobbering a legacy row that never had placements, we
         // scope the DELETE by "aggregate touched by our system" —
         // proxy: notes IS NULL (placement-reconciled rows have notes NULL).
-        rawDb
-          .prepare(
-            `DELETE FROM channel_scorecard_actuals
-             WHERE channel_id = ? AND recruiter_key = ? AND period_month = ? AND notes IS NULL`,
-          )
-          .run(channelId, row.recruiterKey, row.periodMonth);
-      } else {
-        rawDb
-          .prepare(
-            `INSERT INTO channel_scorecard_actuals (channel_id, recruiter_key, period_month, placements_count, fee_amount_cents, notes, updated_by_user_id, updated_at)
-             VALUES (?, ?, ?, ?, ?, NULL, ?, ?)
-             ON CONFLICT(channel_id, recruiter_key, period_month) DO UPDATE SET
-               placements_count = excluded.placements_count,
-               fee_amount_cents = excluded.fee_amount_cents,
-               updated_by_user_id = excluded.updated_by_user_id,
-               updated_at = excluded.updated_at`,
-          )
-          .run(channelId, row.recruiterKey, row.periodMonth, agg.c, agg.f, u.id, now);
+          rawDb
+            .prepare(
+              `DELETE FROM channel_scorecard_actuals
+               WHERE channel_id = ? AND recruiter_key = ? AND period_month = ? AND notes IS NULL`,
+            )
+            .run(channelId, recruiterKey, periodMonth);
+        } else {
+          rawDb
+            .prepare(
+              `INSERT INTO channel_scorecard_actuals (channel_id, recruiter_key, period_month, placements_count, fee_amount_cents, notes, updated_by_user_id, updated_at)
+               VALUES (?, ?, ?, ?, ?, NULL, ?, ?)
+               ON CONFLICT(channel_id, recruiter_key, period_month) DO UPDATE SET
+                 placements_count = excluded.placements_count,
+                 fee_amount_cents = excluded.fee_amount_cents,
+                 updated_by_user_id = excluded.updated_by_user_id,
+                 updated_at = excluded.updated_at`,
+            )
+            .run(channelId, recruiterKey, periodMonth, agg.c, agg.f, u.id, now);
+        }
       }
     });
     try {
@@ -1402,11 +1537,22 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     // Load existing row so we know what months to reconcile.
     const existing = rawDb
       .prepare(
-        `SELECT recruiter_key AS recruiterKey, period_month AS periodMonth
+        `SELECT recruiter_key AS recruiterKey, period_month AS periodMonth, group_id AS groupId
          FROM channel_scorecard_placements WHERE id = ? AND channel_id = ?`,
       )
-      .get(placementId, channelId) as { recruiterKey: string; periodMonth: string } | undefined;
+      .get(placementId, channelId) as { recruiterKey: string; periodMonth: string; groupId: string | null } | undefined;
     if (!existing) return res.status(404).json({ message: "Placement not found" });
+    // Split placements are edited as a pair or not at all. Individual
+    // patches would let the two sibling rows drift apart (different
+    // candidate/client/date/fee), which defeats the point of the group.
+    // v1 restriction: reject the PATCH and instruct the caller to delete
+    // + re-log. The delete cascades over the group so it's a single click.
+    if (existing.groupId) {
+      return res.status(409).json({
+        message: "This placement is a 50/50 split. Delete it and re-log to change the details.",
+        groupId: existing.groupId,
+      });
+    }
 
     const oldMonth = existing.periodMonth;
     const newMonth = parsed.data.placedAt ? parsed.data.placedAt.slice(0, 7) : oldMonth;
