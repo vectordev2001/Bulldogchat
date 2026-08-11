@@ -156,13 +156,33 @@ export function bulldogSsoBridge(): RequestHandler {
           try { storage.updateUser(local.id, { title: authTitle }); }
           catch (e) { console.warn("[chat bulldogSsoBridge] title sync failed:", e); }
         }
-        // Phase 2.0 role sync: auth owns role. Promote/demote the chat row on
-        // every bridge so manager/admin grants made in auth take effect on the
-        // user's next page load rather than waiting for an admin sync sweep.
-        const syncedRole = mapSsoRoleToChatRole(req.user.role);
-        if (syncedRole !== local.role) {
-          try { storage.updateUser(local.id, { role: syncedRole }); }
-          catch (e) { console.warn("[chat bulldogSsoBridge] role sync failed:", e); }
+        // Phase 2.0 role sync: auth owns role. Previously we blindly synced
+        // the chat role to whatever the JWT payload said on every request,
+        // but JWT payloads are frozen at token-issue time and don't rotate
+        // when auth's Admin Panel promotes/demotes a user. That meant a
+        // stale JWT (issued while Nick was 'user') would clobber the fresh
+        // role written by the background user-sync job (which reads auth's
+        // live DB). To avoid that ping-pong:
+        //
+        //  - Only *promote* from the JWT payload here. If the JWT carries
+        //    a stronger role than what's in chat, apply it — users need
+        //    their new admin bit to take effect on the very next request
+        //    after they re-login.
+        //  - Never *demote* from the JWT. Demotions come from the
+        //    background user-sync job which reads auth's live DB directly
+        //    and is the source of truth for downgrades.
+        //
+        // rank order: user < manager < admin. super_admin collapses to
+        // admin in chat (no separate super_admin role locally).
+        const roleRank: Record<string, number> = { user: 0, manager: 1, admin: 2 };
+        const jwtRole = mapSsoRoleToChatRole(req.user.role);
+        const localRank = roleRank[local.role] ?? 0;
+        const jwtRank = roleRank[jwtRole] ?? 0;
+        if (jwtRank > localRank) {
+          try {
+            storage.updateUser(local.id, { role: jwtRole });
+            console.log(`[chat bulldogSsoBridge] promoted id=${local.id} ${local.role} → ${jwtRole} from JWT`);
+          } catch (e) { console.warn("[chat bulldogSsoBridge] role promote failed:", e); }
         }
         // Multi-tenant Option A: mirror auth grants[] into chat's
         // user_project_regions on every bridge so revocations land

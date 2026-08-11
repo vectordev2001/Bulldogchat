@@ -25,6 +25,14 @@ export interface SyncResult {
   deactivated: number;
   reactivated: number;
   provisioned: number;
+  // Number of existing chat users whose role was changed to match auth.
+  // This fires when auth promoted/demoted someone (e.g. user → admin) but
+  // their existing bulldog_access JWT still carries the old role, so the
+  // per-request SSO bridge alone can't catch it.
+  rolesUpdated: number;
+  // Number of existing chat users whose display name was refreshed from
+  // auth (renames in auth propagate on the next sync).
+  namesUpdated: number;
   source: "cookie" | "secret" | "none";
 }
 
@@ -156,6 +164,8 @@ export async function syncDeactivatedFromAuth(opts: SyncOpts = {}): Promise<Sync
   let deactivated = 0;
   let reactivated = 0;
   let provisioned = 0;
+  let rolesUpdated = 0;
+  let namesUpdated = 0;
 
   // 1. Reconcile state on existing chat users.
   const chatEmails = new Set<string>();
@@ -175,7 +185,45 @@ export async function syncDeactivatedFromAuth(opts: SyncOpts = {}): Promise<Sync
       }
     }
 
-    const shouldBeActive = activeEmails.has(e);
+    // Reconcile role and display name from auth on every sync. Auth is
+    // Phase-2.0 source of truth for role; the per-request SSO bridge only
+    // catches changes on the *next* request that carries a JWT reissued
+    // after the role change, and JWT cookies don't rotate on demand. So a
+    // promotion in auth's Admin Panel could sit invisible in chat until
+    // the user re-logged in. Doing it here closes that gap — within one
+    // sync tick of the auth change, chat picks up the new role.
+    const authRow = rowByEmail.get(e);
+    if (authRow) {
+      const desiredRole = mapAuthRoleToChatRole(authRow.role);
+      if (desiredRole !== cu.role) {
+        try {
+          storage.updateUser(cu.id, { role: desiredRole });
+          rolesUpdated++;
+          console.log(`[user-sync] role change id=${cu.id} email=${cu.email} ${cu.role} → ${desiredRole}`);
+        } catch (err) {
+          console.warn("[user-sync] role reconcile failed:", err);
+        }
+      }
+      const desiredName = (authRow.displayName || "").trim();
+      if (desiredName && desiredName !== (cu.name || "").trim()) {
+        try {
+          storage.updateUser(cu.id, { name: desiredName });
+          namesUpdated++;
+        } catch (err) {
+          console.warn("[user-sync] name reconcile failed:", err);
+        }
+      }
+    }
+
+    // appAccess revocation: if auth's row explicitly excludes 'chat',
+    // treat the user as deactivated in chat even if they're still active
+    // in auth overall. `activeEmails` already tracks the auth-level active
+    // flag; here we tighten it to app-scoped access. Legacy rows with a
+    // null/undefined appAccess are still treated as "all apps" (backcompat).
+    let shouldBeActive = activeEmails.has(e);
+    if (authRow && Array.isArray(authRow.appAccess) && !authRow.appAccess.includes("chat")) {
+      shouldBeActive = false;
+    }
     if (!shouldBeActive && !cu.deactivated) {
       try {
         storage.setUserDeactivated(cu.id, true);
@@ -246,6 +294,18 @@ export async function syncDeactivatedFromAuth(opts: SyncOpts = {}): Promise<Sync
     }
   });
 
-  console.log(`[user-sync] done source=${source} checked=${chatUsers.length} deactivated=${deactivated} reactivated=${reactivated} provisioned=${provisioned}`);
-  return { checked: chatUsers.length, deactivated, reactivated, provisioned, source };
+  console.log(
+    `[user-sync] done source=${source} checked=${chatUsers.length} ` +
+    `deactivated=${deactivated} reactivated=${reactivated} provisioned=${provisioned} ` +
+    `rolesUpdated=${rolesUpdated} namesUpdated=${namesUpdated}`,
+  );
+  return {
+    checked: chatUsers.length,
+    deactivated,
+    reactivated,
+    provisioned,
+    rolesUpdated,
+    namesUpdated,
+    source,
+  };
 }
