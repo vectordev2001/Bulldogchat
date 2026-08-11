@@ -1138,6 +1138,11 @@ export function ScorecardChannelView({ channel }: Props) {
                         recruiterName={r.name}
                         scope={{ kind: "month", periodMonth: currentMonth, label: `${currentMonth} placements` }}
                         canEdit={canEditPlacements}
+                        legacyAggregate={
+                          actual
+                            ? { placementsCount: actual.placementsCount, feeAmountCents: actual.feeAmountCents }
+                            : null
+                        }
                       >
                         <button
                           type="button"
@@ -1515,6 +1520,7 @@ function PlacementsPopover({
   recruiterName,
   scope,
   canEdit,
+  legacyAggregate,
   children,
 }: {
   channelId: number;
@@ -1524,6 +1530,12 @@ function PlacementsPopover({
     | { kind: "month"; periodMonth: string; label: string }
     | { kind: "range"; fromMonth: string; toMonth: string; label: string };
   canEdit: boolean;
+  // If the tile shows a non-zero aggregate for this scope but no
+  // individual placement rows back it, pass the aggregate so the popover
+  // can offer a "Delete legacy entry" affordance. Only supported for
+  // month-scoped popovers; range scopes fan out to multiple months and
+  // would need a different UX. Server refuses if any placements exist.
+  legacyAggregate?: { placementsCount: number; feeAmountCents: number } | null;
   children: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
@@ -1565,6 +1577,34 @@ function PlacementsPopover({
       queryClient.invalidateQueries({ queryKey: ["/api/channels", channelId, "scorecard"] });
       queryClient.invalidateQueries({ queryKey: ["/api/channels", channelId, "scorecard", "placements"] });
       toast({ title: "Placement deleted" });
+    },
+    onError: (e: any) => {
+      toast({
+        title: "Delete failed",
+        description: e?.body?.message ?? e?.message ?? "Try again.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  // Delete a legacy aggregate row (pre-PR-135 data written directly to
+  // channel_scorecard_actuals with no backing individual placements).
+  // The server refuses if any placements exist for the (recruiter,
+  // month), so this is safe even if data races with a new log.
+  const delLegacy = useMutation({
+    mutationFn: async () => {
+      if (scope.kind !== "month") throw new Error("Legacy delete only supported for month scope");
+      const params = new URLSearchParams({ recruiterKey, periodMonth: scope.periodMonth });
+      return apiRequest(
+        "DELETE",
+        `/api/channels/${channelId}/scorecard/actuals/legacy?${params.toString()}`,
+      );
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/channels", channelId, "scorecard"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/channels", channelId, "scorecard", "placements"] });
+      toast({ title: "Legacy entry deleted", description: "Re-log this month's placements individually to see the detail." });
+      setOpen(false);
     },
     onError: (e: any) => {
       toast({
@@ -1642,8 +1682,39 @@ function PlacementsPopover({
             </div>
           )}
           {!query.isLoading && placements.length === 0 && (
-            <div className="px-3 py-6 text-center text-[12px] text-[hsl(var(--vs-text-muted))]">
-              No detailed placements yet. Log placements individually to see them here.
+            <div className="px-3 py-4 text-[12px] text-[hsl(var(--vs-text-muted))]">
+              {scope.kind === "month" && legacyAggregate && (legacyAggregate.placementsCount > 0 || legacyAggregate.feeAmountCents > 0) ? (
+                <div className="space-y-3">
+                  <div className="text-[12px] text-[hsl(var(--vs-text))]">
+                    This month has a legacy aggregate entry with no individual placement detail:
+                    <span className="ml-1 font-medium tabular-nums">
+                      {legacyAggregate.placementsCount} placement{legacyAggregate.placementsCount === 1 ? "" : "s"} · {fmtUSD(legacyAggregate.feeAmountCents / 100)}
+                    </span>
+                  </div>
+                  <div className="text-[11px] text-[hsl(var(--vs-text-muted))]">
+                    Delete this legacy entry to clear it, then re-log the month's placements individually so the popover shows each one.
+                  </div>
+                  {canEdit && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!window.confirm(`Delete this legacy aggregate for ${recruiterName} (${legacyAggregate.placementsCount} placements, ${fmtUSD(legacyAggregate.feeAmountCents / 100)})? You can re-log the month afterwards.`)) return;
+                        delLegacy.mutate();
+                      }}
+                      disabled={delLegacy.isPending}
+                      className="inline-flex items-center gap-1.5 h-7 px-2.5 rounded-full text-[11px] font-medium text-[#DC2626] border border-[#DC2626]/30 hover:bg-[#DC2626]/10 disabled:opacity-50"
+                      data-testid={`button-delete-legacy-actual-${recruiterKey}-${scope.periodMonth}`}
+                    >
+                      <Trash2 className="w-3 h-3" />
+                      {delLegacy.isPending ? "Deleting…" : "Delete legacy entry"}
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <div className="py-3 text-center">
+                  No detailed placements yet. Log placements individually to see them here.
+                </div>
+              )}
             </div>
           )}
           {!query.isLoading && placements.length > 0 && (
