@@ -1,7 +1,17 @@
 {
-  "generated_at": "2026-08-10T22:16:35.862Z",
+  "generated_at": "2026-08-11T15:44:51.040Z",
   "repo": "vectordev2001/Bulldogchat",
   "notes": [
+    {
+      "number": 142,
+      "title": "Allow deleting legacy scorecard aggregates that have no backing placements",
+      "raw_title": "Allow deleting legacy scorecard aggregates that have no backing placements",
+      "summary": "Some scorecard tiles show a non-zero MTD number but the click-through popover shows \"No detailed placements yet.\" That's pre-PR-135 data — someone (or an older UI) wrote directly to channel_scorecard_actuals without creating individual channel_scorecard_placements rows. There's no way to delete or edit those aggregate-only entries from the UI, so a wrong number stays wrong forever unless someone h",
+      "merged_at": "2026-08-11T15:44:33Z",
+      "author": "vectordev2001",
+      "url": "https://github.com/vectordev2001/Bulldogchat/pull/142",
+      "category": "other"
+    },
     {
       "number": 141,
       "title": "Split scorecard.edit so managers can maintain placements",
@@ -90,16 +100,6 @@
       "merged_at": "2026-08-06T20:16:07Z",
       "author": "vectordev2001",
       "url": "https://github.com/vectordev2001/Bulldogchat/pull/133",
-      "category": "feature"
-    },
-    {
-      "number": 132,
-      "title": "Print + email export buttons",
-      "raw_title": "feat(scorecard): print + email export buttons",
-      "summary": "Adds Print and Email buttons to the scorecard channel header so the current view can leave the app.",
-      "merged_at": "2026-08-06T20:15:41Z",
-      "author": "vectordev2001",
-      "url": "https://github.com/vectordev2001/Bulldogchat/pull/132",
       "category": "feature"
     }
   ]
