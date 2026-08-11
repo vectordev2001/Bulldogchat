@@ -1659,12 +1659,35 @@ function PlacementsPopover({
             <div className="text-[10px] uppercase tracking-wider font-medium text-[hsl(var(--vs-text-muted))]">
               {recruiterName} · {scope.label}
             </div>
-            <div className="font-display text-[16px] leading-tight text-[hsl(var(--vs-text))] tabular-nums mt-0.5">
-              {placements.length > 0 ? fmtUSD(totalFee) : "—"}
-              <span className="ml-2 text-[11px] font-normal text-[hsl(var(--vs-text-muted))]">
-                {placements.length} placement{placements.length === 1 ? "" : "s"}
-              </span>
-            </div>
+            {(() => {
+              // Prefer the actual placement rows when we have them. When there
+              // are none but the tile shows a legacy aggregate, echo the
+              // aggregate here so the header doesn't contradict the tile
+              // (e.g., tile shows $48,864 / 6 placements while header shows
+              // "— / 0 placements").
+              const showLegacyInHeader =
+                placements.length === 0 &&
+                scope.kind === "month" &&
+                legacyAggregate &&
+                (legacyAggregate.placementsCount > 0 || legacyAggregate.feeAmountCents > 0);
+              const headerFee = showLegacyInHeader
+                ? fmtUSD((legacyAggregate!.feeAmountCents) / 100)
+                : placements.length > 0
+                  ? fmtUSD(totalFee)
+                  : "—";
+              const headerCount = showLegacyInHeader
+                ? legacyAggregate!.placementsCount
+                : placements.length;
+              const headerNote = showLegacyInHeader ? " (legacy)" : "";
+              return (
+                <div className="font-display text-[16px] leading-tight text-[hsl(var(--vs-text))] tabular-nums mt-0.5">
+                  {headerFee}
+                  <span className="ml-2 text-[11px] font-normal text-[hsl(var(--vs-text-muted))]">
+                    {headerCount} placement{headerCount === 1 ? "" : "s"}{headerNote}
+                  </span>
+                </div>
+              );
+            })()}
           </div>
           <button
             type="button"
