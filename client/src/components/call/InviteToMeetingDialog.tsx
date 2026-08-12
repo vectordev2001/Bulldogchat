@@ -115,7 +115,17 @@ export function InviteToMeetingDialog({ open, onOpenChange, code, meetingTitle }
     if (!canSend) return;
     setSending(true);
     try {
-      const result = await apiRequest<{ invitesSent: { sms: number; skipped: number }; joinUrl: string }>(
+      const result = await apiRequest<{
+        invitesSent: {
+          inApp?: number;
+          sms: number;
+          smsSkipped?: number;
+          email?: number;
+          emailSkipped?: number;
+          skipped: number;
+        };
+        joinUrl: string;
+      }>(
         "POST",
         `/api/meetings/${code}/invite`,
         {
@@ -123,16 +133,19 @@ export function InviteToMeetingDialog({ open, onOpenChange, code, meetingTitle }
           inviteeExternalPhones: validPhones,
         },
       );
-      const { sms, skipped } = result.invitesSent;
+      const { inApp = 0, sms = 0, email = 0, skipped = 0 } = result.invitesSent;
       const parts: string[] = [];
+      if (inApp > 0) parts.push(`${inApp} ringing`);
       if (sms > 0) parts.push(`${sms} text${sms === 1 ? "" : "s"} sent`);
+      if (email > 0) parts.push(`${email} email${email === 1 ? "" : "s"} sent`);
       if (skipped > 0) parts.push(`${skipped} skipped`);
+      const anyDelivered = inApp > 0 || sms > 0 || email > 0;
       toast({
-        title: sms > 0 ? "Invites sent" : "Nothing was sent",
+        title: anyDelivered ? "Invites sent" : "Nothing was sent",
         description: parts.length > 0 ? parts.join(" · ") : "No eligible recipients",
-        variant: sms > 0 ? "default" : "destructive",
+        variant: anyDelivered ? "default" : "destructive",
       });
-      if (sms > 0) {
+      if (anyDelivered) {
         setSelectedIds(new Set());
         setPhonesText("");
         onOpenChange(false);

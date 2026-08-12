@@ -35,6 +35,10 @@ import { sendSms, smsAvailable, buildMeetingInviteSmsBody, normalizeE164 } from 
 import { sendEmail, isEmailConfigured } from "./email";
 import { buildMeetingInviteEmail } from "./meetings/invite-email";
 import { checkSmsConsent } from "./auth-consent";
+// In-app ring path (matches /api/channels/:id/group-call/start).
+import { emitCallIncoming, emitCallEnded, type CallEventPayload } from "./events";
+import { sendNotificationToUsers } from "./push";
+import { rawDb } from "./db";
 import {
   allowKnock,
   cancelKnock,
@@ -764,6 +768,11 @@ export function registerMeetingRoutes(app: Express) {
     const InviteBodySchema = z.object({
       inviteeUserIds: z.array(z.number().int().positive()).max(50).optional(),
       inviteeExternalPhones: z.array(z.string()).max(50).optional(),
+      // When true (default), org-member invitees receive an in-app ring via
+      // the standard incoming-call modal in addition to any SMS/email. This
+      // is what users actually expect when picking a teammate from the list.
+      // Set false only for legacy callers that want SMS/email fan-out only.
+      inApp: z.boolean().optional(),
     });
     const parsed = InviteBodySchema.safeParse(req.body ?? {});
     if (!parsed.success) {
@@ -811,18 +820,89 @@ export function registerMeetingRoutes(app: Express) {
       recipients.push({ email: null, phone, external: true });
     }
 
-    if (recipients.length === 0) {
-      return res.json({
-        invitesSent: { sms: 0, smsSkipped: 0, email: 0, emailSkipped: 0, skipped: 0 },
-        joinUrl,
-      });
-    }
+    // Note: we DON'T early-return on recipients.length === 0. An in-app-only
+    // invite (teammate with no phone / no email) still needs to reach the
+    // ring block below — short-circuiting here was the original bug.
 
     // Look up the host's name for the SMS body. Fall back to the caller's
     // name (they're the one pressing Invite, so that reads naturally too).
     // hostUserId can be null for guest-started rooms — guard accordingly.
     const host = meeting.hostUserId != null ? storage.getUser(meeting.hostUserId) : null;
     const hostName = host?.name || u.name;
+
+    // ── IN-APP RING (org-member invitees) ──────────────────────────────
+    // We ring logged-in teammates through the same direct_call ledger the
+    // 1:1 and group-call paths use. Callee sees the standard incoming-call
+    // modal; on accept, they land in this meeting's LiveKit room.
+    //
+    // We ring EVERY passed userId (irrespective of whether they also have
+    // a phone). Teammate invites should reach them via in-app first;
+    // SMS/email below is belt-and-suspenders for offline recipients.
+    const inAppEnabled = body.inApp !== false;
+    const inAppRecipients: number[] = [];
+    if (inAppEnabled) {
+      for (const uid of body.inviteeUserIds ?? []) {
+        if (uid === u.id) continue;
+        const invUser = storage.getUser(uid);
+        if (!invUser || invUser.orgId !== u.orgId) continue;
+        inAppRecipients.push(uid);
+      }
+    }
+    let inAppOkCount = 0;
+    for (const calleeId of inAppRecipients) {
+      try {
+        const row = storage.createDirectCall({
+          orgId: u.orgId,
+          callerId: u.id,
+          calleeId,
+          roomName: meeting.livekitRoomName,
+          kind: "video",
+        });
+        storage.updateDirectCallStatus(row.id, "ringing");
+        // Defensive room_name patch, mirrors group-call path.
+        try {
+          rawDb
+            .prepare(`UPDATE direct_calls SET room_name = ? WHERE id = ?`)
+            .run(meeting.livekitRoomName, row.id);
+        } catch {
+          /* best-effort */
+        }
+        const payload: CallEventPayload = {
+          callId: row.id,
+          callerId: u.id,
+          calleeId,
+          callerName: u.name,
+          callerHue: (u as any).hue,
+          kind: "video",
+          roomName: meeting.livekitRoomName,
+          // No channel context for a mid-meeting invite — the callee is
+          // being pulled into an active meeting, not a channel call.
+          channelId: null,
+          channelName: meeting.title ?? null,
+        };
+        emitCallIncoming(payload);
+        // 60s auto-miss window matches group calls.
+        setTimeout(() => {
+          const current = storage.getDirectCall(row.id);
+          if (current && current.status === "ringing") {
+            storage.updateDirectCallStatus(row.id, "missed", { endedAt: new Date() });
+            emitCallEnded({ ...payload, reason: "missed" });
+          }
+        }, 60_000);
+        inAppOkCount++;
+      } catch (e) {
+        console.warn(`[meetings/invite] in-app ring failed for user ${calleeId}:`, (e as Error).message);
+      }
+    }
+    // Batched web push so callees get the ring even if their tab is closed.
+    if (inAppRecipients.length > 0) {
+      void sendNotificationToUsers(inAppRecipients, {
+        title: `${hostName || u.name} is inviting you`,
+        body: meeting.title ? `Join meeting — ${meeting.title}` : `Join meeting`,
+        url: `/#/m/${meeting.code}`,
+        tag: `meeting-invite-${meeting.code}`,
+      });
+    }
 
     let smsOkCount = 0;
     let smsSkipCount = 0;
@@ -898,13 +978,23 @@ export function registerMeetingRoutes(app: Express) {
       emailSkipCount = emailRecipients.length;
     }
 
+    // Skipped = attempted-and-failed only. The prior definition summed BOTH
+    // sms + email skips, which double-counted a single org member who
+    // failed both channels. In-app ring successes shouldn't inflate this
+    // count either.
+    const totalDelivered = inAppOkCount + smsOkCount + emailOkCount;
+    const totalSkipped = totalDelivered === 0
+      ? Math.max(smsSkipCount, emailSkipCount, recipients.length)
+      : 0;
+
     res.json({
       invitesSent: {
+        inApp: inAppOkCount,
         sms: smsOkCount,
         smsSkipped: smsSkipCount,
         email: emailOkCount,
         emailSkipped: emailSkipCount,
-        skipped: smsSkipCount + emailSkipCount,
+        skipped: totalSkipped,
       },
       joinUrl,
     });
