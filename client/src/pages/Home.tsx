@@ -335,6 +335,24 @@ export default function Home() {
         // inside the hook so a burst of messages collapses to one HTTP
         // call.
         window.dispatchEvent(new CustomEvent("unread:refresh", { detail: { channelId: data.channelId } }));
+
+        // Crelate poller writes system messages tagged with meta.kind that
+        // starts with "crelate." (e.g. crelate.placement.new). When one
+        // lands, the scorecard tiles for that channel need to refetch so
+        // the hire count and latest-placements strip update in real time.
+        // Cheap invalidate — the scorecard endpoint is a tiny query.
+        try {
+          const meta =
+            typeof data?.meta === "string" ? JSON.parse(data.meta) : data?.meta;
+          const kind: string | undefined = meta?.kind;
+          if (kind && kind.startsWith("crelate.")) {
+            queryClient.invalidateQueries({
+              queryKey: ["/api/channels", data.channelId, "scorecard"],
+            });
+          }
+        } catch {
+          // Malformed meta — ignore, don't break the message stream.
+        }
       }
     },
     onMessageUpdate: (data) => {

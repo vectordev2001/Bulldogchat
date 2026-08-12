@@ -102,7 +102,9 @@ function linkCallToMeeting(
   }
 }
 
-function buildWireMessage(messageId: number): WireMessage | null {
+// Exported so background pollers (see crelate-poller.ts) can emit system
+// messages via the same wire shape the WebSocket layer already knows.
+export function buildWireMessage(messageId: number): WireMessage | null {
   const msg = storage.getMessage(messageId);
   if (!msg) return null;
   const author = authorFor(msg.userId);
@@ -1019,6 +1021,63 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     const actuals = rawDb
       .prepare(`SELECT recruiter_key AS recruiterKey, period_month AS periodMonth, placements_count AS placementsCount, fee_amount_cents AS feeAmountCents, notes, updated_by_user_id AS updatedByUserId, updated_at AS updatedAt FROM channel_scorecard_actuals WHERE channel_id = ? ORDER BY period_month DESC, recruiter_key ASC`)
       .all(channelId);
+
+    // Crelate signals — open reqs count, hires whose StartDate falls in the
+    // program window, and the latest N placements for the "recent activity"
+    // strip. Read-only mirror of caches populated by crelate-poller.ts.
+    // Falls back to zeros if the poller hasn't seeded yet.
+    let crelateBlock: {
+      openReqsCount: number;
+      hiresInWindowCount: number;
+      hiresInWindow: unknown[];
+      latestPlacements: unknown[];
+    } = {
+      openReqsCount: 0,
+      hiresInWindowCount: 0,
+      hiresInWindow: [],
+      latestPlacements: [],
+    };
+    try {
+      const openCount = (rawDb
+        .prepare(`SELECT COUNT(*) AS n FROM crelate_open_reqs_cache WHERE channel_id = ?`)
+        .get(channelId) as { n: number } | undefined)?.n ?? 0;
+      const hiresCount = (rawDb
+        .prepare(`SELECT COUNT(*) AS n FROM crelate_placements_cache WHERE channel_id = ? AND in_program_window = 1`)
+        .get(channelId) as { n: number } | undefined)?.n ?? 0;
+      const hires = rawDb
+        .prepare(
+          `SELECT placement_id AS placementId, placed_contact_name AS placedContactName,
+                  job_title AS jobTitle, account_name AS accountName,
+                  start_date AS startDate, created_on AS createdOn,
+                  crelate_url AS crelateUrl
+             FROM crelate_placements_cache
+             WHERE channel_id = ? AND in_program_window = 1
+             ORDER BY start_date DESC
+             LIMIT 20`,
+        )
+        .all(channelId);
+      const latest = rawDb
+        .prepare(
+          `SELECT placement_id AS placementId, placed_contact_name AS placedContactName,
+                  job_title AS jobTitle, account_name AS accountName,
+                  start_date AS startDate, created_on AS createdOn,
+                  crelate_url AS crelateUrl
+             FROM crelate_placements_cache
+             WHERE channel_id = ?
+             ORDER BY COALESCE(created_on, '') DESC
+             LIMIT 5`,
+        )
+        .all(channelId);
+      crelateBlock = {
+        openReqsCount: openCount,
+        hiresInWindowCount: hiresCount,
+        hiresInWindow: hires,
+        latestPlacements: latest,
+      };
+    } catch {
+      // migration hasn't run yet on this instance — keep defaults
+    }
+
     res.json({
       channelId,
       config: cfg,
@@ -1026,9 +1085,38 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
       canEdit,
       canEditConfig,
       canEditPlacements,
+      crelate: crelateBlock,
       updatedByUserId: row.updatedByUserId,
       updatedAt: row.updatedAt,
     });
+  });
+
+  // Full open-reqs list for the click-to-modal from the scoreboard tile.
+  // Same auth path as the parent scorecard GET — any channel-accessible user.
+  app.get("/api/channels/:id/scorecard/open-reqs", requireAuth, (req, res) => {
+    const u = (req as AuthedRequest).user;
+    const channelId = Number(req.params.id);
+    if (!Number.isFinite(channelId)) return res.status(400).json({ message: "Invalid channel id" });
+    const ch = storage.getChannel(channelId);
+    if (!ch) return res.status(404).json({ message: "Channel not found" });
+    if (ch.type !== "scorecard") return res.status(400).json({ message: "Not a scorecard channel" });
+    const access = userCanAccessChannel(u.id, u.orgId, channelId, (req as AuthedRequest).access);
+    if (!access) return res.status(404).json({ message: "Channel not found" });
+    try {
+      const rows = rawDb
+        .prepare(
+          `SELECT job_id AS jobId, portal_title AS title, account_name AS account,
+                  openings, filled, workflow_status AS status,
+                  crelate_url AS crelateUrl, updated_at AS updatedAt
+             FROM crelate_open_reqs_cache
+             WHERE channel_id = ?
+             ORDER BY account_name ASC, portal_title ASC`,
+        )
+        .all(channelId);
+      res.json({ channelId, rows });
+    } catch {
+      res.json({ channelId, rows: [] });
+    }
   });
 
   // PATCH replaces the full config. Admin/super_admin only — config
