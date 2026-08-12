@@ -1,7 +1,17 @@
 {
-  "generated_at": "2026-08-12T16:56:56.383Z",
+  "generated_at": "2026-08-12T20:50:47.549Z",
   "repo": "vectordev2001/Bulldogchat",
   "notes": [
+    {
+      "number": 147,
+      "title": "Fix Crelate poller auth: read CRELATE_API_KEY env var, drop proxy assumption",
+      "raw_title": "Fix Crelate poller auth: read CRELATE_API_KEY env var, drop proxy assumption",
+      "summary": "The Crelate poller was hitting HTTP 401 on every request in production because it assumed an HTTPS_PROXY-injected credential (the Perplexity sandbox pattern). Render doesn't have that shim, so fetch() went out with no auth at all.",
+      "merged_at": "2026-08-12T20:50:22Z",
+      "author": "vectordev2001",
+      "url": "https://github.com/vectordev2001/Bulldogchat/pull/147",
+      "category": "other"
+    },
     {
       "number": 146,
       "title": "Add Crelate scoreboard integration: live open reqs, hires, and offer-signed alerts",
@@ -91,16 +101,6 @@
       "author": "vectordev2001",
       "url": "https://github.com/vectordev2001/Bulldogchat/pull/138",
       "category": "fix"
-    },
-    {
-      "number": 137,
-      "title": "Dual hero tiles with goal + pace + $/day per horizon",
-      "raw_title": "feat(scorecard-email): dual hero tiles with goal + pace + $/day per horizon",
-      "summary": "Mirrors the dashboard's per-recruiter card layout in the emailed scorecard snapshot so the email and the app tell the same story.",
-      "merged_at": "2026-08-07T16:36:33Z",
-      "author": "vectordev2001",
-      "url": "https://github.com/vectordev2001/Bulldogchat/pull/137",
-      "category": "feature"
     }
   ]
 }
