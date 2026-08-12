@@ -1,7 +1,17 @@
 {
-  "generated_at": "2026-08-12T04:57:00.492Z",
+  "generated_at": "2026-08-12T16:56:56.383Z",
   "repo": "vectordev2001/Bulldogchat",
   "notes": [
+    {
+      "number": 146,
+      "title": "Add Crelate scoreboard integration: live open reqs, hires, and offer-signed alerts",
+      "raw_title": "Add Crelate scoreboard integration: live open reqs, hires, and offer-signed alerts",
+      "summary": "Wires the recruiter scoreboard channel to Crelate so #vts-recruiter-scorecard shows live \"business we have to work on\" and \"hires this program\" numbers, and pings the whole channel the moment an offer is signed.",
+      "merged_at": "2026-08-12T16:56:38Z",
+      "author": "vectordev2001",
+      "url": "https://github.com/vectordev2001/Bulldogchat/pull/146",
+      "category": "other"
+    },
     {
       "number": 145,
       "title": "Fix chat call invite: add in-app ring + accurate toast counts",
@@ -90,16 +100,6 @@
       "merged_at": "2026-08-07T16:36:33Z",
       "author": "vectordev2001",
       "url": "https://github.com/vectordev2001/Bulldogchat/pull/137",
-      "category": "feature"
-    },
-    {
-      "number": 136,
-      "title": "Dual hero tiles with goal + pace + $/day per horizon",
-      "raw_title": "feat(scorecard): dual hero tiles with goal + pace + $/day per horizon",
-      "summary": "Each hero tile is self-contained — actual, goal, pace, and \"how to close\" all in one place.",
-      "merged_at": "2026-08-07T06:43:01Z",
-      "author": "vectordev2001",
-      "url": "https://github.com/vectordev2001/Bulldogchat/pull/136",
       "category": "feature"
     }
   ]
