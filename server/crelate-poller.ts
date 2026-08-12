@@ -20,10 +20,12 @@
 // The poller is idempotent — every read is upsert-by-Crelate-Id and
 // notifications gate on notified_at being null in crelate_placements_cache.
 //
-// Auth: uses the CUSTOM_CRED_APP_CRELATE_COM_TOKEN / _URL pair injected by
-// the custom-credentials proxy at runtime. Requests go through fetch()
-// which honors HTTPS_PROXY — Bulldogchat production already runs under
-// the proxy shim.
+// Auth: reads process.env.CRELATE_API_KEY and appends it as ?api_key=... on
+// every request. Crelate's API3 accepts the key as either a query param or
+// an Authorization header — we use the query param to match Crelate's own
+// documented examples. If CRELATE_API_KEY is missing we skip polling and
+// log once at boot; the scorecard client hides the tiles when the cache
+// stays empty.
 //
 // This module is deliberately dependency-light: no better-sqlite3 direct
 // import (it reads rawDb from db.ts), no Drizzle for the two cache tables
@@ -115,16 +117,24 @@ export interface HireRow {
 // ─── HTTP helper with timeout + error swallow ────────────────────────────
 
 async function fetchCrelate<T>(path: string): Promise<T | null> {
-  const url = `${CRELATE_API_BASE}${path}`;
+  const apiKey = process.env.CRELATE_API_KEY;
+  if (!apiKey) {
+    // Guarded once at boot too, but keep a defensive log here so
+    // production misconfig is loud, not silent.
+    console.warn(`[crelate-poller] ${path} skipped: CRELATE_API_KEY not set`);
+    return null;
+  }
+  // Build the URL without ever letting the key hit an error log line. We
+  // separate `path` (safe to log) from the auth-bearing URL. On 4xx/5xx
+  // we log only the path and status code — never the full URL, never the
+  // response body (Crelate echoes the api_key in 404 Metadata.Url).
+  const sep = path.includes("?") ? "&" : "?";
+  const url = `${CRELATE_API_BASE}${path}${sep}api_key=${encodeURIComponent(apiKey)}`;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
     const res = await fetch(url, { signal: controller.signal });
     if (!res.ok) {
-      // 4xx/5xx — log without echoing URL (Crelate echoes the api_key in
-      // error payloads; the outbound URL doesn't include it because auth
-      // is injected by the proxy, but we still avoid dumping response
-      // bodies that might contain it).
       console.warn(`[crelate-poller] ${path} HTTP ${res.status}`);
       return null;
     }
@@ -133,7 +143,11 @@ async function fetchCrelate<T>(path: string): Promise<T | null> {
     if (err?.name === "AbortError") {
       console.warn(`[crelate-poller] ${path} timeout`);
     } else {
-      console.warn(`[crelate-poller] ${path} error: ${err?.message ?? err}`);
+      // Scrub the message defensively in case a rare network stack
+      // surfaces the URL in the exception text.
+      const raw = String(err?.message ?? err);
+      const scrubbed = raw.replace(/api_key=[^&\s"]+/gi, "api_key=***");
+      console.warn(`[crelate-poller] ${path} error: ${scrubbed}`);
     }
     return null;
   } finally {
@@ -545,6 +559,12 @@ export function initializeCrelatePoller(): void {
   const enabled = process.env.CRELATE_POLLER_ENABLED !== "0";
   if (!enabled) {
     console.log("[crelate-poller] disabled via CRELATE_POLLER_ENABLED=0");
+    return;
+  }
+  if (!process.env.CRELATE_API_KEY) {
+    console.warn(
+      "[crelate-poller] CRELATE_API_KEY not set \u2014 poller idle. Scorecard tiles will read zeros until the env var is added.",
+    );
     return;
   }
 
