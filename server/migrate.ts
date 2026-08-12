@@ -1632,4 +1632,74 @@ export function runMigrations() {
   } catch (e: any) {
     console.warn("[migrate v38] group_id skipped:", e?.message);
   }
+
+  // v39 (Crelate scoreboard) — two cache tables backing the Crelate
+  // integration layer of the recruiter scorecard.
+  //
+  //   crelate_open_reqs_cache      — the live "open requisitions" list, one
+  //                                  row per Crelate job whose sales workflow
+  //                                  status is "Requisitions Open" and whose
+  //                                  ClosedOn is null. Full-wipe rewritten
+  //                                  on each poll so drop-offs disappear.
+  //
+  //   crelate_placements_cache     — every placement we've seen from Crelate
+  //                                  scoped to a scorecard channel. Idempotent
+  //                                  upsert by (placement_id, channel_id).
+  //                                  notified_at is NULL until we've fired
+  //                                  a toast + push for a first-see event;
+  //                                  the poller sets it to now() after the
+  //                                  notification lands, which is what makes
+  //                                  "new offer signed" a one-shot event.
+  //
+  // Both tables are managed by the poller (server/crelate-poller.ts) — the
+  // scorecard GET endpoint reads them; no user surface writes to them.
+  try {
+    rawDb.exec(`
+      CREATE TABLE IF NOT EXISTS crelate_open_reqs_cache (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        channel_id INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+        job_id TEXT NOT NULL,
+        portal_title TEXT NOT NULL,
+        account_name TEXT,
+        openings INTEGER NOT NULL DEFAULT 0,
+        filled INTEGER NOT NULL DEFAULT 0,
+        workflow_status TEXT NOT NULL,
+        crelate_url TEXT NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+    `);
+    rawDb.exec(`
+      CREATE INDEX IF NOT EXISTS idx_crelate_open_reqs_channel
+        ON crelate_open_reqs_cache (channel_id, portal_title);
+    `);
+    rawDb.exec(`
+      CREATE TABLE IF NOT EXISTS crelate_placements_cache (
+        placement_id TEXT NOT NULL,
+        channel_id INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+        placed_contact_name TEXT,
+        job_title TEXT,
+        account_name TEXT,
+        start_date TEXT,
+        created_on TEXT,
+        entity_status INTEGER,
+        status_reason TEXT,
+        crelate_url TEXT NOT NULL,
+        in_program_window INTEGER NOT NULL DEFAULT 0,
+        first_seen_at INTEGER NOT NULL,
+        notified_at INTEGER,
+        PRIMARY KEY (placement_id, channel_id)
+      );
+    `);
+    rawDb.exec(`
+      CREATE INDEX IF NOT EXISTS idx_crelate_placements_window
+        ON crelate_placements_cache (channel_id, in_program_window, start_date);
+    `);
+    rawDb.exec(`
+      CREATE INDEX IF NOT EXISTS idx_crelate_placements_notified
+        ON crelate_placements_cache (channel_id, notified_at);
+    `);
+    console.log("[migrate] v39 Crelate scoreboard caches ready");
+  } catch (e: any) {
+    console.warn("[migrate v39] Crelate caches skipped:", e?.message);
+  }
 }

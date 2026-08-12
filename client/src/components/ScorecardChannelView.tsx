@@ -37,7 +37,7 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { motion } from "framer-motion";
-import { DollarSign, Loader2, Mail, Pencil, Plus, Printer, Trash2, TrendingUp, Trophy, Users, X } from "lucide-react";
+import { DollarSign, Loader2, Mail, Pencil, Plus, Printer, Trash2, TrendingUp, Trophy, Users, Briefcase, UserCheck, ExternalLink, X } from "lucide-react";
 import type { ApiChannel } from "@/types/api";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -100,6 +100,31 @@ interface Actual {
   feeAmountCents: number;
   notes?: string | null;
 }
+interface CrelateHire {
+  placementId: string;
+  placedContactName: string | null;
+  jobTitle: string | null;
+  accountName: string | null;
+  startDate: string | null;
+  createdOn: string | null;
+  crelateUrl: string;
+}
+interface CrelateBlock {
+  openReqsCount: number;
+  hiresInWindowCount: number;
+  hiresInWindow: CrelateHire[];
+  latestPlacements: CrelateHire[];
+}
+interface CrelateOpenReq {
+  jobId: string;
+  title: string;
+  account: string | null;
+  openings: number;
+  filled: number;
+  status: string;
+  crelateUrl: string;
+  updatedAt: number;
+}
 interface ScorecardResponse {
   channelId: number;
   config: ScorecardConfig;
@@ -111,6 +136,9 @@ interface ScorecardResponse {
   // talking to an older server build.
   canEditConfig?: boolean;
   canEditPlacements?: boolean;
+  // Crelate-backed live signals. Optional so this client works against
+  // pre-v39 servers; falls back to hiding the tiles when absent.
+  crelate?: CrelateBlock;
   updatedAt: number;
 }
 // Phase 2.6.3 — per-placement rows. Aggregate `Actual` above is still
@@ -453,6 +481,176 @@ function RecruiterHeatmap({
   );
 }
 
+/* ─────────────────── Crelate tiles + open-reqs modal ─────────────────── */
+
+/**
+ * Two side-by-side stat tiles fed by the Crelate poller cache:
+ *   • Open Requisitions — clickable, opens a modal listing every currently
+ *     open req with an ExternalLink to the Crelate URL.
+ *   • Hires (Program Window) — count of placements whose Crelate StartDate
+ *     falls inside programStartMonth + programHorizonMonths (defaults to
+ *     Aug→Dec 2026 for VTS).
+ *
+ * The tiles do not render when the server didn't include a `crelate` block
+ * on the scorecard payload — keeps the surface clean on pre-v39 servers
+ * and when CRELATE_POLLER_ENABLED=0.
+ */
+function CrelateTiles({
+  channelId,
+  block,
+}: {
+  channelId: number;
+  block: CrelateBlock;
+}) {
+  const [modalOpen, setModalOpen] = useState(false);
+  return (
+    <>
+      <div
+        className="grid grid-cols-1 sm:grid-cols-2 gap-3 md:gap-4"
+        data-testid="crelate-tiles"
+      >
+        <button
+          type="button"
+          onClick={() => setModalOpen(true)}
+          className="text-left rounded-2xl bg-white border border-[hsl(var(--vs-border))] p-5 hover:border-[#0090F0] transition-colors group"
+          data-testid="tile-open-reqs"
+        >
+          <div className="flex items-center gap-2 text-[hsl(var(--vs-text-muted))] text-[11px] uppercase tracking-wider font-medium">
+            <Briefcase className="w-3.5 h-3.5" />
+            Open requisitions
+          </div>
+          <div className="mt-2 flex items-end justify-between">
+            <div className="font-display text-[36px] leading-none tabular-nums text-[hsl(var(--vs-text))]">
+              {block.openReqsCount}
+            </div>
+            <div className="text-[11px] text-[hsl(var(--vs-text-muted))] group-hover:text-[#0090F0]">
+              Click to view all
+            </div>
+          </div>
+          <div className="mt-1 text-[12px] text-[hsl(var(--vs-text-muted))]">
+            Business the team has to work on
+          </div>
+        </button>
+
+        <div
+          className="rounded-2xl bg-white border border-[hsl(var(--vs-border))] p-5"
+          data-testid="tile-crelate-hires"
+        >
+          <div className="flex items-center gap-2 text-[hsl(var(--vs-text-muted))] text-[11px] uppercase tracking-wider font-medium">
+            <UserCheck className="w-3.5 h-3.5" />
+            Hires this program (Crelate)
+          </div>
+          <div className="mt-2 flex items-end justify-between">
+            <div className="font-display text-[36px] leading-none tabular-nums text-[hsl(var(--vs-text))]">
+              {block.hiresInWindowCount}
+            </div>
+          </div>
+          <div className="mt-1 text-[12px] text-[hsl(var(--vs-text-muted))]">
+            Placements with a start date in the program window
+          </div>
+        </div>
+      </div>
+      <OpenReqsModal
+        channelId={channelId}
+        open={modalOpen}
+        onOpenChange={setModalOpen}
+      />
+    </>
+  );
+}
+
+/**
+ * Modal shown when the user clicks the Open Requisitions tile. Fetches the
+ * full list on demand — keeping it out of the parent scorecard payload so
+ * the initial page load stays lean.
+ */
+function OpenReqsModal({
+  channelId,
+  open,
+  onOpenChange,
+}: {
+  channelId: number;
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+}) {
+  const q = useQuery<{ channelId: number; rows: CrelateOpenReq[] }>({
+    queryKey: ["/api/channels", channelId, "scorecard/open-reqs"],
+    queryFn: () =>
+      apiRequest<{ channelId: number; rows: CrelateOpenReq[] }>(
+        "GET",
+        `/api/channels/${channelId}/scorecard/open-reqs`,
+      ),
+    enabled: open,
+    staleTime: 30_000,
+  });
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-2xl max-h-[85vh] overflow-hidden flex flex-col">
+        <DialogHeader>
+          <DialogTitle>Open requisitions</DialogTitle>
+          <DialogDescription>
+            Every job in Crelate with sales-workflow status “Requisitions Open”.
+            Click a title to open it in Crelate.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="flex-1 min-h-0 overflow-y-auto -mx-6 px-6">
+          {q.isLoading && (
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="w-4 h-4 animate-spin" />
+            </div>
+          )}
+          {q.isError && (
+            <div className="text-sm text-red-500 py-6">
+              Couldn't load requisitions. The Crelate poller may still be
+              seeding — refresh in a minute.
+            </div>
+          )}
+          {q.data && q.data.rows.length === 0 && (
+            <div className="text-sm text-[hsl(var(--vs-text-muted))] py-6">
+              No open requisitions right now.
+            </div>
+          )}
+          {q.data && q.data.rows.length > 0 && (
+            <ul
+              className="divide-y divide-[hsl(var(--vs-border))]"
+              data-testid="open-reqs-list"
+            >
+              {q.data.rows.map((r) => (
+                <li key={r.jobId} className="py-3">
+                  <a
+                    href={r.crelateUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="group flex items-start justify-between gap-3"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="text-sm font-medium text-[hsl(var(--vs-text))] group-hover:text-[#0090F0] truncate">
+                        {r.title}
+                      </div>
+                      {r.account && (
+                        <div className="text-[12px] text-[hsl(var(--vs-text-muted))] truncate">
+                          {r.account}
+                        </div>
+                      )}
+                    </div>
+                    <div className="shrink-0 flex items-center gap-2 text-[11px] text-[hsl(var(--vs-text-muted))]">
+                      <span className="tabular-nums">
+                        {r.filled}/{r.openings} filled
+                      </span>
+                      <ExternalLink className="w-3.5 h-3.5 opacity-60 group-hover:opacity-100" />
+                    </div>
+                  </a>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 /* ─────────────────── main view ─────────────────── */
 
 export function ScorecardChannelView({ channel }: Props) {
@@ -485,7 +683,7 @@ export function ScorecardChannelView({ channel }: Props) {
     );
   }
 
-  const { config, actuals, canEdit } = q.data;
+  const { config, actuals, canEdit, crelate } = q.data;
   // Prefer the split flags when the server sent them; otherwise fall back
   // to the legacy `canEdit`, which behaved like `canEditConfig` (admin +
   // super_admin only).
@@ -984,6 +1182,14 @@ export function ScorecardChannelView({ channel }: Props) {
               )}
             </div>
           </motion.div>
+
+          {/* Crelate live signals — open reqs + hires this program window.
+              Sits directly under the team hero so viewers see "how much
+              business we're working on" before the recruiter breakdown.
+              Renders only when the server included a `crelate` block. */}
+          {crelate && (
+            <CrelateTiles channelId={q.data.channelId} block={crelate} />
+          )}
 
           {/* Phase 2.6.2 — Leaderboard. Rendered only when the admin has
               picked a metric (leaderboardMetric != "off"). Keeps to a single

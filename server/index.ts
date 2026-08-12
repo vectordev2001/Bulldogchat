@@ -7,6 +7,7 @@ import { syncDeactivatedFromAuth } from "./users-sync";
 import { createServer } from "node:http";
 import { recordBogeyDiagnostic } from "./bogey-storage";
 import { announcePatchNotesIfChanged } from "./patch-notes-announcer";
+import { initializeCrelatePoller } from "./crelate-poller";
 
 const app = express();
 // Behind Render's TLS-terminating reverse proxy. Honor X-Forwarded-* so
@@ -187,4 +188,13 @@ app.use((req, res, next) => {
   setInterval(() => {
     syncDeactivatedFromAuth().catch(() => {});
   }, 5 * 60 * 1000);
+
+  // Crelate scoreboard poller — pulls open reqs + placements every 3 min,
+  // fires system messages + push notifications on new-placement events.
+  // No-ops when CRELATE_POLLER_ENABLED=0 or the credential isn't wired.
+  try {
+    initializeCrelatePoller();
+  } catch (e: any) {
+    console.warn("[crelate-poller] init failed:", e?.message ?? e);
+  }
 })();
