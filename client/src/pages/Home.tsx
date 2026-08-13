@@ -758,6 +758,7 @@ export default function Home() {
           unreadByProjectId={unreadCountByProjectId}
           hasUnreadByProjectId={hasUnreadByProjectId}
           onMarkAllRead={markProjectRead}
+          recentPicks={recentPicks}
           sseStatus={sseStatus}
         />
         {activeProject && user && (
