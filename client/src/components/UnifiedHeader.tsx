@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Menu, X, LogOut, User, Volume2, VolumeX, Home as HomeIcon, Hash, MessageSquare } from "lucide-react";
+import { Menu, X, LogOut, User, Volume2, VolumeX, Hash, MessageSquare } from "lucide-react";
 import { BulldogLogo } from "./BulldogLogo";
 import { NotificationsButton } from "./NotificationsButton";
 import { PatchNotesTrigger } from "./PatchNotesTrigger";
@@ -34,12 +34,18 @@ interface Props {
   /** Sidebar/nav toggle state — controls the hamburger ↔ close icon. */
   navOpen: boolean;
   onToggleNav: () => void;
-  /** Route to the app home/root when the logo dropdown "Home" item is picked. */
+  /**
+   * Fallback destination when the user has no recents yet. Fires when
+   * the logo is clicked and `recentPicks` is empty. Never rendered as a
+   * menu item — the previous "Home" row was redundant with the dropdown
+   * itself being the destination picker.
+   */
   onLogoClick: () => void;
   /**
-   * Optional pre-resolved recent channels. When empty the logo dropdown
-   * still shows the "Home" row so the click always does something —
-   * previous behavior was a no-op button, which felt broken.
+   * Pre-resolved recent channels for the logo dropdown. When at least
+   * one row is present the logo becomes a DropdownMenu trigger; when
+   * the list is empty the logo falls back to a plain button that fires
+   * `onLogoClick` (nothing to pick from yet).
    */
   recentPicks?: RecentPick[];
 }
@@ -82,6 +88,7 @@ export function UnifiedHeader({ navOpen, onToggleNav, onLogoClick, recentPicks }
   // Cap at 5 recents. Anything beyond is silently dropped — the store
   // keeps 8 so we can still show 5 after any get filtered as deleted.
   const shownRecents = (recentPicks ?? []).slice(0, 5);
+  const hasRecents = shownRecents.length > 0;
 
   return (
     <header
@@ -99,67 +106,73 @@ export function UnifiedHeader({ navOpen, onToggleNav, onLogoClick, recentPicks }
         {navOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
       </button>
 
-      {/* Logo dropdown trigger. Visually identical to the previous
-          static pill (no chevron, no ring) so we don't shift the header
-          layout — the affordance is discovered on hover / click.
-          On mobile the pill still truncates the wordmark to "Chat". */}
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <button
-            type="button"
-            className="flex min-w-0 items-center gap-2 rounded-md py-1 pr-2 hover:opacity-90 transition-opacity focus:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--vs-accent))]"
-            aria-label="Bulldog Chat home and recent channels"
-            data-testid="button-logo-home"
+      {/* Logo trigger. Two shapes:
+           - No recents yet -> plain button that fires onLogoClick. No
+             dropdown, no redundant "Home" row masquerading as content.
+           - Has recents -> DropdownMenu with a "Recent" section. The
+             dropdown IS the destination picker; no wasted first item.
+          Visually identical in both cases (no chevron, no ring change)
+          so the header layout doesn't shift as recents accumulate. */}
+      {hasRecents ? (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              className="flex min-w-0 items-center gap-2 rounded-md py-1 pr-2 hover:opacity-90 transition-opacity focus:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--vs-accent))]"
+              aria-label="Recent Bulldog Chat channels"
+              data-testid="button-logo-home"
+            >
+              <BulldogLogo app="chat" className="h-7 md:h-8 w-auto shrink-0" />
+              <span className="min-w-0 truncate font-display font-semibold text-[16px] md:text-[18px] leading-none text-[hsl(var(--vs-accent))]">
+                <span className="sm:hidden">Chat</span>
+                <span className="hidden sm:inline">Bulldog Chat</span>
+              </span>
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent
+            align="start"
+            className="w-64 bg-popover border-popover-border text-popover-foreground"
           >
-            <BulldogLogo app="chat" className="h-7 md:h-8 w-auto shrink-0" />
-            <span className="min-w-0 truncate font-display font-semibold text-[16px] md:text-[18px] leading-none text-[hsl(var(--vs-accent))]">
-              <span className="sm:hidden">Chat</span>
-              <span className="hidden sm:inline">Bulldog Chat</span>
-            </span>
-          </button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent
-          align="start"
-          className="w-64 bg-popover border-popover-border text-popover-foreground"
+            <DropdownMenuLabel className="text-[10px] uppercase tracking-wider text-[hsl(var(--vs-text-subtle))] font-medium">
+              Recent channels
+            </DropdownMenuLabel>
+            {shownRecents.map((r) => (
+              <DropdownMenuItem
+                key={r.key}
+                onClick={() => r.onSelect()}
+                className="text-sm cursor-pointer focus:bg-accent focus:text-accent-foreground"
+                data-testid={`menu-logo-recent-${r.kind}-${r.key}`}
+              >
+                {r.kind === "dm"
+                  ? <MessageSquare className="w-3.5 h-3.5 mr-2 shrink-0 text-[hsl(var(--vs-text-subtle))]" />
+                  : <Hash className="w-3.5 h-3.5 mr-2 shrink-0 text-[hsl(var(--vs-text-subtle))]" />}
+                <div className="flex-1 min-w-0">
+                  <div className="truncate text-[hsl(var(--vs-text))]">{r.label}</div>
+                  {r.subLabel && (
+                    <div className="truncate text-[11px] text-[hsl(var(--vs-text-subtle))]">
+                      {r.subLabel}
+                    </div>
+                  )}
+                </div>
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      ) : (
+        <button
+          type="button"
+          onClick={onLogoClick}
+          className="flex min-w-0 items-center gap-2 rounded-md py-1 pr-2 hover:opacity-90 transition-opacity focus:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--vs-accent))]"
+          aria-label="Bulldog Chat home"
+          data-testid="button-logo-home"
         >
-          <DropdownMenuItem
-            onClick={() => onLogoClick()}
-            className="text-sm cursor-pointer focus:bg-accent focus:text-accent-foreground"
-            data-testid="menu-logo-home"
-          >
-            <HomeIcon className="w-3.5 h-3.5 mr-2 shrink-0 text-[hsl(var(--vs-text-subtle))]" />
-            <span className="flex-1">Home</span>
-          </DropdownMenuItem>
-          {shownRecents.length > 0 && (
-            <>
-              <DropdownMenuSeparator className="bg-border" />
-              <DropdownMenuLabel className="text-[10px] uppercase tracking-wider text-[hsl(var(--vs-text-subtle))] font-medium">
-                Recent
-              </DropdownMenuLabel>
-              {shownRecents.map((r) => (
-                <DropdownMenuItem
-                  key={r.key}
-                  onClick={() => r.onSelect()}
-                  className="text-sm cursor-pointer focus:bg-accent focus:text-accent-foreground"
-                  data-testid={`menu-logo-recent-${r.kind}-${r.key}`}
-                >
-                  {r.kind === "dm"
-                    ? <MessageSquare className="w-3.5 h-3.5 mr-2 shrink-0 text-[hsl(var(--vs-text-subtle))]" />
-                    : <Hash className="w-3.5 h-3.5 mr-2 shrink-0 text-[hsl(var(--vs-text-subtle))]" />}
-                  <div className="flex-1 min-w-0">
-                    <div className="truncate text-[hsl(var(--vs-text))]">{r.label}</div>
-                    {r.subLabel && (
-                      <div className="truncate text-[11px] text-[hsl(var(--vs-text-subtle))]">
-                        {r.subLabel}
-                      </div>
-                    )}
-                  </div>
-                </DropdownMenuItem>
-              ))}
-            </>
-          )}
-        </DropdownMenuContent>
-      </DropdownMenu>
+          <BulldogLogo app="chat" className="h-7 md:h-8 w-auto shrink-0" />
+          <span className="min-w-0 truncate font-display font-semibold text-[16px] md:text-[18px] leading-none text-[hsl(var(--vs-accent))]">
+            <span className="sm:hidden">Chat</span>
+            <span className="hidden sm:inline">Bulldog Chat</span>
+          </span>
+        </button>
+      )}
 
       {/* Flex spacer */}
       <div className="flex-1" />
