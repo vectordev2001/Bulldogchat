@@ -75,17 +75,21 @@ interface CrelateJob {
   ActualValue?: number | null;
 }
 
-// Build the Crelate deep-link for a job. Crelate's marketing/portal path
-// `/jobs/<id>` 404s — the correct in-app SPA route is
-// `/recruiting/#/jobs/<id>`, which is what the recruiter UI itself uses.
+// Build the Crelate deep-link for a job. Two earlier attempts here were
+// wrong: both `/jobs/<id>` and `/recruiting/#/jobs/<id>` 404 in Crelate's
+// current SPA. The path the recruiter UI itself uses when you open a job
+// from a workflow row is `/go#home/workflows/<jobId>` — the same GUID
+// returned by the `/api3/jobs` list endpoint.
 function jobDeepLink(id: string): string {
-  return `https://app.crelate.com/recruiting/#/jobs/${id}`;
+  return `https://app.crelate.com/go#home/workflows/${id}`;
 }
 
-// Same story for placements — the top-level `/placements/<id>` 404s;
-// the SPA route is `/recruiting/#/placements/<id>`.
+// Placements live under a completely different SPA route than jobs. The
+// working URL when opening a placement in Crelate is
+// `/go#stage/_Placements/DefaultView/<placementId>/summary`, where the
+// GUID matches the `Id` returned by `/api3/placements`.
 function placementDeepLink(id: string): string {
-  return `https://app.crelate.com/recruiting/#/placements/${id}`;
+  return `https://app.crelate.com/go#stage/_Placements/DefaultView/${id}/summary`;
 }
 
 interface CrelatePlacement {
