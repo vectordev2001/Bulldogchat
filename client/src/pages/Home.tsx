@@ -21,6 +21,13 @@ import { VectorLogo } from "@/components/VectorLogo";
 import { Pencil } from "lucide-react";
 import { TitledChatDialog } from "@/components/TitledChatDialog";
 import type { ApiProject, ApiChannel, ApiMessage, ApiUser, ApiDmChannel } from "@/types/api";
+import {
+  pushRecentChannel,
+  getRecentChannels,
+  RECENT_CHANNELS_EVENT,
+  type RecentEntry,
+} from "@/lib/recent-channels";
+import type { RecentPick } from "@/components/UnifiedHeader";
 
 export default function Home() {
   const { user } = useAuth();
@@ -449,6 +456,21 @@ export default function Home() {
     // Persist a read receipt on channel open. Also clears the star badge
     // locally (optimistic) via the useUnread hook.
     markChannelRead(id);
+    // Record for the top-left logo dropdown. Resolve the display name
+    // from the currently-loaded channel list; the store caches this
+    // label so cross-project recents still render even after we hop
+    // into a different project's channel list.
+    const ch = channelsQ.data?.find((c) => c.id === id);
+    const proj = projectsQ.data?.find((p) => p.id === activeProjectId);
+    if (ch && user) {
+      pushRecentChannel((user as ApiUser).id, {
+        channelId: id,
+        projectId: activeProjectId,
+        kind: "channel",
+        label: ch.name,
+        subLabel: proj?.name ?? null,
+      });
+    }
   };
   const selectDm = (id: number) => {
     setActiveDmId(id);
@@ -457,7 +479,140 @@ export default function Home() {
     // clears their unread state. Without this, opening a DM would leave the
     // sidebar star lit forever for the parent company.
     markChannelRead(id);
+    // Record for the top-left logo dropdown. DM display label mirrors
+    // DmSection's row label logic (title takes priority, else comma-
+    // joined participant names) so the dropdown row reads the same as
+    // the sidebar row the user just clicked.
+    if (!user) return;
+    const meId = (user as ApiUser).id;
+    const dmRow = dmsQ.data?.find((d) => d.id === id);
+    let dmLabel = dmRow?.title ?? "";
+    if (!dmLabel && dmRow) {
+      const otherNames = dmRow.memberIds
+        .filter((mid) => mid !== meId)
+        .map((mid) => membersQ.data?.find((m) => m.id === mid)?.name)
+        .filter(Boolean) as string[];
+      dmLabel = otherNames.length > 0 ? otherNames.join(", ") : "Direct message";
+    }
+    pushRecentChannel(meId, {
+      channelId: id,
+      projectId: null,
+      kind: "dm",
+      label: dmLabel || "Direct message",
+      subLabel: null,
+    });
   };
+
+  // Recent-channels feed for the header logo dropdown. We subscribe to
+  // the storage-changed event so pushes from selectChannel/selectDm
+  // above (which run in this same component tree) still land in state
+  // synchronously on the next tick, and any future cross-tab push
+  // (e.g. "Open in new tab") also refreshes the list.
+  const [recentEntries, setRecentEntries] = useState<RecentEntry[]>(() =>
+    user ? getRecentChannels((user as ApiUser).id) : [],
+  );
+  useEffect(() => {
+    if (!user) return;
+    const meId = (user as ApiUser).id;
+    // Seed once when the user resolves (avoids an empty list on cold
+    // load when the initial useState ran before auth hydrated).
+    setRecentEntries(getRecentChannels(meId));
+    const onChange = () => setRecentEntries(getRecentChannels(meId));
+    try { window.addEventListener(RECENT_CHANNELS_EVENT, onChange); } catch { /* ignore */ }
+    // Cross-tab: `storage` fires in other tabs when localStorage changes.
+    const onStorage = (e: StorageEvent) => {
+      if (e.key && e.key.startsWith("bulldog_recent_channels_v1:")) onChange();
+    };
+    try { window.addEventListener("storage", onStorage); } catch { /* ignore */ }
+    return () => {
+      try { window.removeEventListener(RECENT_CHANNELS_EVENT, onChange); } catch { /* ignore */ }
+      try { window.removeEventListener("storage", onStorage); } catch { /* ignore */ }
+    };
+  }, [user]);
+
+  // Resolve the persisted entries into ready-to-render header rows.
+  // Skips the currently-active channel/DM (jumping to where you
+  // already are is a no-op the user shouldn't have to skip past).
+  const recentPicks = useMemo<RecentPick[]>(() => {
+    if (!user) return [];
+    const meId = (user as ApiUser).id;
+    const rows: RecentPick[] = [];
+    for (const e of recentEntries) {
+      // Hide the entry the user is looking at right now.
+      if (e.kind === "channel" && e.channelId === activeChannelId && !activeDmId) continue;
+      if (e.kind === "dm" && e.channelId === activeDmId) continue;
+
+      // Prefer a live label from the loaded caches when we have one;
+      // otherwise fall back to the cached label captured at push time.
+      // This keeps rows fresh when the user is inside the same project,
+      // and still readable for channels in other projects (where the
+      // channel list isn't loaded).
+      let label = e.label ?? "";
+      let subLabel = e.subLabel ?? null;
+      if (e.kind === "channel") {
+        const ch = channelsQ.data?.find((c) => c.id === e.channelId);
+        if (ch) label = ch.name;
+        if (e.projectId != null) {
+          const proj = projectsQ.data?.find((p) => p.id === e.projectId);
+          if (proj) subLabel = proj.name;
+        }
+      } else {
+        const dmRow = dmsQ.data?.find((d) => d.id === e.channelId);
+        if (dmRow) {
+          if (dmRow.title) {
+            label = dmRow.title;
+          } else {
+            const otherNames = dmRow.memberIds
+              .filter((mid) => mid !== meId)
+              .map((mid) => membersQ.data?.find((m) => m.id === mid)?.name)
+              .filter(Boolean) as string[];
+            if (otherNames.length > 0) label = otherNames.join(", ");
+          }
+          subLabel = null;
+        }
+      }
+      if (!label) continue; // no cached label and not resolvable — skip.
+
+      rows.push({
+        key: `${e.kind}-${e.channelId}`,
+        label,
+        subLabel,
+        kind: e.kind,
+        onSelect: () => {
+          if (e.kind === "channel") {
+            // Cross-project hop: make sure the destination project is
+            // active before setting its channel, otherwise selectChannel
+            // silently no-ops on the activeProjectId==null guard.
+            if (e.projectId != null && e.projectId !== activeProjectId) {
+              setActiveProjectId(e.projectId);
+              // Stash the channel choice directly — selectChannel reads
+              // activeProjectId synchronously and won't see our just-set
+              // value on this tick.
+              setChannelByProject((prev) => ({ ...prev, [e.projectId as number]: e.channelId }));
+              setActiveDmId(null);
+              setMobileNavOpen(false);
+              markChannelRead(e.channelId);
+            } else {
+              selectChannel(e.channelId);
+            }
+          } else {
+            selectDm(e.channelId);
+          }
+        },
+      });
+    }
+    return rows;
+  }, [
+    recentEntries,
+    user,
+    activeChannelId,
+    activeDmId,
+    activeProjectId,
+    channelsQ.data,
+    projectsQ.data,
+    dmsQ.data,
+    membersQ.data,
+  ]);
 
   // Phase 1.9: Escape-to-text behavior is no longer needed — every channel
   // is now a text channel that can optionally host a call. The Escape key
@@ -638,6 +793,7 @@ export default function Home() {
               setActiveDmId(null);
             }
           }}
+          recentPicks={recentPicks}
         />
 
         {/* Channel content */}
