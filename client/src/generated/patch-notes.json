@@ -1,7 +1,17 @@
 {
-  "generated_at": "2026-08-12T20:50:47.549Z",
+  "generated_at": "2026-08-13T02:52:08.282Z",
   "repo": "vectordev2001/Bulldogchat",
   "notes": [
+    {
+      "number": 148,
+      "title": "Pipeline $ tile, 404 deep-link fix, email hero color",
+      "raw_title": "feat(scorecard): pipeline $ tile, 404 deep-link fix, email hero color",
+      "summary": "Three fixes to the VTS recruiting scoreboard shipped in #146 / #147:",
+      "merged_at": "2026-08-13T02:51:58Z",
+      "author": "vectordev2001",
+      "url": "https://github.com/vectordev2001/Bulldogchat/pull/148",
+      "category": "feature"
+    },
     {
       "number": 147,
       "title": "Fix Crelate poller auth: read CRELATE_API_KEY env var, drop proxy assumption",
@@ -90,16 +100,6 @@
       "merged_at": "2026-08-07T16:47:42Z",
       "author": "vectordev2001",
       "url": "https://github.com/vectordev2001/Bulldogchat/pull/139",
-      "category": "fix"
-    },
-    {
-      "number": 138,
-      "title": "Cascade meetings + scorecard rows to avoid FK constraint",
-      "raw_title": "fix(delete-channel): cascade meetings + scorecard rows to avoid FK constraint",
-      "summary": "Deleting a channel via the sidebar was failing for #joshjustin-test with:",
-      "merged_at": "2026-08-07T16:36:42Z",
-      "author": "vectordev2001",
-      "url": "https://github.com/vectordev2001/Bulldogchat/pull/138",
       "category": "fix"
     }
   ]
