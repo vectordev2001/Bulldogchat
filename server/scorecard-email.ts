@@ -512,27 +512,43 @@ export function renderScorecardEmail(input: RenderInput): RenderedEmail {
 
   // Sits INSIDE the blue gradient hero header, so it needs white ink to
   // stay readable (previously used slate #475569 which vanished on dark blue).
+  // Outlook Mac drops rgba() text color and drops CSS opacity, so we spell
+  // this as solid #ffffff. Contrast on the dark-blue hero is fine.
   const horizonNote = twoHorizon
-    ? `<div style="color:rgba(255,255,255,0.9);font-size:12px;margin-top:6px">
-        <strong>${t.fundingHorizonMonths}-mo underwritten goal</strong> delivered in a
-        <strong>${t.programHorizonMonths}-mo</strong> program window — monthly cadence scaled to hit the full total.
+    ? `<div style="color:#ffffff;font-size:12px;margin-top:6px">
+        <strong style="color:#ffffff">${t.fundingHorizonMonths}-mo underwritten goal</strong> delivered in a
+        <strong style="color:#ffffff">${t.programHorizonMonths}-mo</strong> program window — monthly cadence scaled to hit the full total.
       </div>`
     : "";
 
+  // Hero rendered as a bulletproof email table:
+  //   • <table bgcolor="#0064B8"> gives a solid fallback that every mail
+  //     client (Apple Mail, Outlook, Gmail web, iOS Mail) will paint even
+  //     if it strips CSS gradients — which Apple Mail on macOS was doing,
+  //     leaving white text on a white background.
+  //   • The inline CSS gradient still layers on top for clients that
+  //     support it (Gmail web, most webmail), matching the in-app scorecard
+  //     hero exactly (#0090F0 → #0064B8 at 135deg).
+  //   • Text is spelled with explicit color:#ffffff (not shorthand) and
+  //     rgba() opacity because some clients drop `opacity` on div text.
   const html = `<!doctype html>
 <html>
 <body style="margin:0;padding:0;background:#f8fafc;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#0f172a">
   <div style="max-width:640px;margin:0 auto;padding:24px">
-    <div style="background:linear-gradient(135deg,#0090F0,#0064B8);color:#fff;border-radius:12px;padding:20px 22px">
-      <div style="font-size:12px;text-transform:uppercase;letter-spacing:1px;opacity:0.85">Scorecard</div>
-      <div style="font-size:22px;font-weight:600;margin-top:2px">${esc(input.channelName)}</div>
-      ${input.channelTopic ? `<div style="font-size:13px;opacity:0.9;margin-top:2px">${esc(input.channelTopic)}</div>` : ""}
-      <div style="font-size:12px;opacity:0.9;margin-top:10px">
-        Program: <strong>${esc(start)}</strong> for <strong>${t.programHorizonMonths} months</strong>
-        · <strong>${Math.round(frac * 100)}%</strong> elapsed
-      </div>
-      ${horizonNote}
-    </div>
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" bgcolor="#0064B8" style="background-color:#0064B8;background-image:linear-gradient(135deg,#0090F0,#0064B8);border-radius:12px;color:#ffffff">
+      <tr>
+        <td bgcolor="#0064B8" style="background-color:#0064B8;background-image:linear-gradient(135deg,#0090F0,#0064B8);border-radius:12px;padding:20px 22px;color:#ffffff">
+          <div style="font-size:12px;text-transform:uppercase;letter-spacing:1px;color:#ffffff">Scorecard</div>
+          <div style="font-size:22px;font-weight:600;margin-top:2px;color:#ffffff">${esc(input.channelName)}</div>
+          ${input.channelTopic ? `<div style="font-size:13px;margin-top:2px;color:#ffffff">${esc(input.channelTopic)}</div>` : ""}
+          <div style="font-size:12px;margin-top:10px;color:#ffffff">
+            Program: <strong style="color:#ffffff">${esc(start)}</strong> for <strong style="color:#ffffff">${t.programHorizonMonths} months</strong>
+            · <strong style="color:#ffffff">${Math.round(frac * 100)}%</strong> elapsed
+          </div>
+          ${horizonNote}
+        </td>
+      </tr>
+    </table>
 
     ${noteBlock}
 

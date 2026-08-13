@@ -114,6 +114,11 @@ interface CrelateBlock {
   hiresInWindowCount: number;
   hiresInWindow: CrelateHire[];
   latestPlacements: CrelateHire[];
+  // v40 pipeline dollars — optional so this client works against pre-v40
+  // servers; falls back to hiding the pipeline tile when absent.
+  pipelineExpectedTotal?: number;
+  pipelinePotentialTotal?: number;
+  pipelinePricedCount?: number;
 }
 interface CrelateOpenReq {
   jobId: string;
@@ -124,6 +129,10 @@ interface CrelateOpenReq {
   status: string;
   crelateUrl: string;
   updatedAt: number;
+  // v40 pipeline dollars — optional; missing on pre-v40 servers.
+  expectedValue?: number | null;
+  potentialValue?: number | null;
+  actualValue?: number | null;
 }
 interface ScorecardResponse {
   channelId: number;
@@ -503,10 +512,21 @@ function CrelateTiles({
   block: CrelateBlock;
 }) {
   const [modalOpen, setModalOpen] = useState(false);
+  // v40 pipeline tile — only shown when the server sent pipeline totals AND
+  // at least one open req has a priced ExpectedValue. Falls back gracefully
+  // to the original two-tile layout for pre-v40 servers and unpriced boards.
+  const hasPipeline =
+    typeof block.pipelineExpectedTotal === "number" &&
+    (block.pipelinePricedCount ?? 0) > 0;
+  const fmtUSDCompact = (n: number) => {
+    if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`;
+    if (n >= 1_000) return `$${Math.round(n / 1_000)}k`;
+    return `$${Math.round(n)}`;
+  };
   return (
     <>
       <div
-        className="grid grid-cols-1 sm:grid-cols-2 gap-3 md:gap-4"
+        className={`grid grid-cols-1 ${hasPipeline ? "sm:grid-cols-3" : "sm:grid-cols-2"} gap-3 md:gap-4`}
         data-testid="crelate-tiles"
       >
         <button
@@ -531,6 +551,31 @@ function CrelateTiles({
             Business the team has to work on
           </div>
         </button>
+
+        {hasPipeline && (
+          <button
+            type="button"
+            onClick={() => setModalOpen(true)}
+            className="text-left rounded-2xl bg-white border border-[hsl(var(--vs-border))] p-5 hover:border-[#0090F0] transition-colors group"
+            data-testid="tile-crelate-pipeline"
+          >
+            <div className="flex items-center gap-2 text-[hsl(var(--vs-text-muted))] text-[11px] uppercase tracking-wider font-medium">
+              <Briefcase className="w-3.5 h-3.5" />
+              Pipeline (weighted)
+            </div>
+            <div className="mt-2 flex items-end justify-between">
+              <div className="font-display text-[36px] leading-none tabular-nums text-[hsl(var(--vs-text))]">
+                {fmtUSDCompact(block.pipelineExpectedTotal ?? 0)}
+              </div>
+              <div className="text-[11px] text-[hsl(var(--vs-text-muted))] group-hover:text-[#0090F0]">
+                {block.pipelinePricedCount ?? 0} priced
+              </div>
+            </div>
+            <div className="mt-1 text-[12px] text-[hsl(var(--vs-text-muted))]">
+              Up to {fmtUSDCompact(block.pipelinePotentialTotal ?? 0)} if fully filled
+            </div>
+          </button>
+        )}
 
         <div
           className="rounded-2xl bg-white border border-[hsl(var(--vs-border))] p-5"
@@ -635,6 +680,19 @@ function OpenReqsModal({
                       )}
                     </div>
                     <div className="shrink-0 flex items-center gap-2 text-[11px] text-[hsl(var(--vs-text-muted))]">
+                      {typeof r.expectedValue === "number" &&
+                        r.expectedValue > 0 && (
+                          <span
+                            className="tabular-nums font-medium text-[hsl(var(--vs-text))]"
+                            title={
+                              typeof r.potentialValue === "number"
+                                ? `Weighted expected value — up to $${Math.round(r.potentialValue).toLocaleString()} if fully filled`
+                                : "Weighted expected value from Crelate"
+                            }
+                          >
+                            ${Math.round(r.expectedValue).toLocaleString()}
+                          </span>
+                        )}
                       <span className="tabular-nums">
                         {r.filled}/{r.openings} filled
                       </span>
