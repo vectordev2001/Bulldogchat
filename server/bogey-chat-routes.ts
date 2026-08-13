@@ -227,6 +227,23 @@ const TOOLS: ClaudeToolSpec[] = [
     },
   },
   {
+    name: "find_baseline_template",
+    description:
+      "Look up a baseline contract template (MSA, Assignment Confirmation, Playbook, etc.) in Bulldog Contracts and return a deep link. Use when the user asks 'where's the VTS MSA?', 'do we have a staffing order template?', 'get me the recruiting playbook', etc.",
+    input_schema: {
+      type: "object",
+      properties: {
+        entity: {
+          type: "string",
+          enum: ["VFD", "VS", "VTS", "TDIS", "BOND"],
+          description: "Vector entity/business line.",
+        },
+        query: { type: "string", description: "Free-text search (title, category)." },
+      },
+      required: ["query"],
+    },
+  },
+  {
     name: "get_user_diagnostics",
     description:
       "Get recent server-side errors recorded against the current user (last 20). Use this when the user says something is broken, an upload failed, or they're seeing errors. Explain the errors in plain language — don't dump raw stack traces.",
@@ -593,6 +610,60 @@ function toolSearchKb(input: Record<string, unknown>): string {
   });
 }
 
+const CONTRACTS_BASE_URL = (process.env.CONTRACTS_BASE_URL || "https://vectorcontracts.bulldogops.com").replace(/\/+$/, "");
+const TEMPLATE_ENTITIES = new Set(["VFD", "VS", "VTS", "TDIS", "BOND"]);
+
+async function toolFindBaselineTemplate(input: Record<string, unknown>): Promise<string> {
+  const query = typeof input.query === "string" ? input.query.trim().slice(0, 200) : "";
+  if (!query) return respond(false, "query is required");
+  const entity = typeof input.entity === "string" ? input.entity.trim().toUpperCase() : "";
+  if (entity && !TEMPLATE_ENTITIES.has(entity)) return respond(false, "entity must be VFD, VS, VTS, TDIS, or BOND");
+
+  const secret = process.env.SUITE_INTERNAL_SECRET;
+  if (!secret) return respond(false, "Contracts template lookup is not configured (SUITE_INTERNAL_SECRET is missing)");
+
+  const params = new URLSearchParams({ q: query });
+  if (entity) params.set("entity", entity);
+  let response: globalThis.Response;
+  try {
+    response = await fetch(`${CONTRACTS_BASE_URL}/api/contract-templates?${params.toString()}`, {
+      headers: { "x-suite-secret": secret },
+    });
+  } catch (error) {
+    return respond(false, `Contracts template lookup failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
+
+  if (!response.ok) {
+    const detail = (await response.text().catch(() => "")).slice(0, 300);
+    return respond(false, `Contracts template lookup returned ${response.status}${detail ? `: ${detail}` : ""}`);
+  }
+
+  const payload = await response.json().catch(() => null) as { templates?: unknown } | null;
+  const templates = Array.isArray(payload?.templates) ? payload.templates : [];
+  const matches = templates.slice(0, 3).flatMap((value) => {
+    if (!value || typeof value !== "object") return [];
+    const row = value as Record<string, unknown>;
+    const id = Number(row.id);
+    const rowEntity = typeof row.entity === "string" ? row.entity : entity || "VTS";
+    const title = typeof row.title === "string" ? row.title : "Untitled template";
+    if (!Number.isInteger(id) || id <= 0) return [];
+    return [{
+      id,
+      title,
+      category: typeof row.category === "string" ? row.category : "Template",
+      description: typeof row.description === "string" ? row.description.slice(0, 300) : "",
+      version: typeof row.version === "number" ? row.version : undefined,
+      url: `${CONTRACTS_BASE_URL}/#/templates?entity=${encodeURIComponent(rowEntity)}&highlight=${id}`,
+    }];
+  });
+
+  return respond(true, {
+    matches,
+    card: matches[0] || null,
+    message: matches.length ? "Return the top match as a clickable link; do not paste the contract body." : "No matching baseline templates were found.",
+  });
+}
+
 function toolGetUserDiagnostics(_input: Record<string, unknown>, ctx: ToolCtx): string {
   const rows = listRecentBogeyDiagnostics({ userId: ctx.userId, limit: 20 });
   return respond(true, {
@@ -608,13 +679,13 @@ function toolGetUserDiagnostics(_input: Record<string, unknown>, ctx: ToolCtx): 
   });
 }
 
-function runTool(
+async function runTool(
   name: string,
   input: Record<string, unknown>,
   ctx: ToolCtx,
   conversationId: number,
   proposalsLog: BogeyProposalFrame[],
-): string {
+): Promise<string> {
   try {
     switch (name) {
       case "search_channels":
@@ -632,6 +703,8 @@ function runTool(
       }
       case "search_kb":
         return toolSearchKb(input);
+      case "find_baseline_template":
+        return await toolFindBaselineTemplate(input);
       case "get_user_diagnostics":
         return toolGetUserDiagnostics(input, ctx);
       default:
@@ -719,6 +792,7 @@ function systemPrompt(ctx: {
     "- `list_upcoming_meetings` / `get_meeting` — for meeting questions.",
     "- `propose_schedule_meeting` — to draft a new meeting. This creates a proposal card. The user MUST approve it before the meeting is created. Do NOT tell the user the meeting is scheduled after calling this tool — say you've drafted it and ask them to review.",
     "- `search_kb` — for how-to questions (channels, DMs, meetings, calling, scheduling, notifications, help-desk).",
+    "- `find_baseline_template` — for baseline contract lookups. Return the top match as a link the user can click; do NOT paste the contract body inline.",
     "- `get_user_diagnostics` — when the user reports something is broken.",
     "",
     "## Scheduling flow",
@@ -904,7 +978,7 @@ export function registerBogeyChatRoutes(app: Express, requireAccess: RequestHand
       // Execute each tool, append tool_result turn.
       const results: ClaudeToolResultBlock[] = [];
       for (const tu of toolUses) {
-        const out = runTool(tu.name, tu.input, ctx, conv.id, proposalsLog);
+        const out = await runTool(tu.name, tu.input, ctx, conv.id, proposalsLog);
         results.push({ type: "tool_result", tool_use_id: tu.id, content: out });
       }
       messagesList.push({ role: "user", content: results });
@@ -1015,7 +1089,7 @@ export function registerBogeyChatRoutes(app: Express, requireAccess: RequestHand
         const results: ClaudeToolResultBlock[] = [];
         for (const tu of toolUses) {
           sseWrite(res, "tool_use", { name: tu.name, input: tu.input });
-          const out = runTool(tu.name, tu.input, ctx, conv.id, proposalsLog);
+          const out = await runTool(tu.name, tu.input, ctx, conv.id, proposalsLog);
           results.push({ type: "tool_result", tool_use_id: tu.id, content: out });
         }
         messagesList.push({ role: "user", content: results });
