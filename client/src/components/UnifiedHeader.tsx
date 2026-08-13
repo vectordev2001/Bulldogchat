@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Menu, X, LogOut, User, Volume2, VolumeX } from "lucide-react";
+import { Menu, X, LogOut, User, Volume2, VolumeX, Home as HomeIcon, Hash, MessageSquare } from "lucide-react";
 import { BulldogLogo } from "./BulldogLogo";
 import { NotificationsButton } from "./NotificationsButton";
 import { PatchNotesTrigger } from "./PatchNotesTrigger";
@@ -16,12 +16,32 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 
+/**
+ * A resolved recent-channel row for the logo dropdown. The header stays
+ * dumb about projects / DMs / cache lookups; the parent page hands over
+ * ready-to-render rows (label, sub-label, onSelect) so this component
+ * doesn't have to import query data.
+ */
+export interface RecentPick {
+  key: string;
+  label: string;
+  subLabel?: string | null;
+  kind: "channel" | "dm";
+  onSelect: () => void;
+}
+
 interface Props {
   /** Sidebar/nav toggle state — controls the hamburger ↔ close icon. */
   navOpen: boolean;
   onToggleNav: () => void;
-  /** Route to the app home/root when the logo is clicked. */
+  /** Route to the app home/root when the logo dropdown "Home" item is picked. */
   onLogoClick: () => void;
+  /**
+   * Optional pre-resolved recent channels. When empty the logo dropdown
+   * still shows the "Home" row so the click always does something —
+   * previous behavior was a no-op button, which felt broken.
+   */
+  recentPicks?: RecentPick[];
 }
 
 /**
@@ -29,9 +49,14 @@ interface Props {
  * Ops; per-app identity comes only from <BulldogLogo>. Light theme only — no
  * theme toggle. Sign-out lives in the avatar dropdown, not as its own button.
  *
- *   [ ☰ ]  [ Logo + Wordmark ]  ……spacer……  [ 🔔 ]  [ ⋮⋮ ]  [ Avatar ]
+ *   [ ☰ ]  [ Logo + Wordmark ▾ ]  ……spacer……  [ 🔔 ]  [ ⋮⋮ ]  [ Avatar ]
+ *
+ * The logo pill is a DropdownMenu trigger: the top item is Home (which
+ * previously fired on any logo click), followed by up to 5 recent
+ * channels / DMs the user was working in. This turns the "logo does
+ * nothing when I click it" surface into a fast jump list.
  */
-export function UnifiedHeader({ navOpen, onToggleNav, onLogoClick }: Props) {
+export function UnifiedHeader({ navOpen, onToggleNav, onLogoClick, recentPicks }: Props) {
   const { user, logout } = useAuth();
   // Local mirror of the persisted `callSoundsEnabled` pref so the dropdown
   // item shows the current state without a route change. Subscribes to the
@@ -54,6 +79,10 @@ export function UnifiedHeader({ navOpen, onToggleNav, onLogoClick }: Props) {
     emitMeetPrefsChanged();
   };
 
+  // Cap at 5 recents. Anything beyond is silently dropped — the store
+  // keeps 8 so we can still show 5 after any get filtered as deleted.
+  const shownRecents = (recentPicks ?? []).slice(0, 5);
+
   return (
     <header
       className="shrink-0 sticky top-0 z-30 flex items-center h-14 md:h-16 px-4 md:px-6 bg-white border-b border-[hsl(215_20%_88%)]"
@@ -70,19 +99,67 @@ export function UnifiedHeader({ navOpen, onToggleNav, onLogoClick }: Props) {
         {navOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
       </button>
 
-      <button
-        type="button"
-        onClick={onLogoClick}
-        className="flex min-w-0 items-center gap-2 rounded-md py-1 pr-2 hover:opacity-90 transition-opacity"
-        aria-label="Bulldog Chat home"
-        data-testid="button-logo-home"
-      >
-        <BulldogLogo app="chat" className="h-7 md:h-8 w-auto shrink-0" />
-        <span className="min-w-0 truncate font-display font-semibold text-[16px] md:text-[18px] leading-none text-[hsl(var(--vs-accent))]">
-          <span className="sm:hidden">Chat</span>
-          <span className="hidden sm:inline">Bulldog Chat</span>
-        </span>
-      </button>
+      {/* Logo dropdown trigger. Visually identical to the previous
+          static pill (no chevron, no ring) so we don't shift the header
+          layout — the affordance is discovered on hover / click.
+          On mobile the pill still truncates the wordmark to "Chat". */}
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <button
+            type="button"
+            className="flex min-w-0 items-center gap-2 rounded-md py-1 pr-2 hover:opacity-90 transition-opacity focus:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--vs-accent))]"
+            aria-label="Bulldog Chat home and recent channels"
+            data-testid="button-logo-home"
+          >
+            <BulldogLogo app="chat" className="h-7 md:h-8 w-auto shrink-0" />
+            <span className="min-w-0 truncate font-display font-semibold text-[16px] md:text-[18px] leading-none text-[hsl(var(--vs-accent))]">
+              <span className="sm:hidden">Chat</span>
+              <span className="hidden sm:inline">Bulldog Chat</span>
+            </span>
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent
+          align="start"
+          className="w-64 bg-popover border-popover-border text-popover-foreground"
+        >
+          <DropdownMenuItem
+            onClick={() => onLogoClick()}
+            className="text-sm cursor-pointer focus:bg-accent focus:text-accent-foreground"
+            data-testid="menu-logo-home"
+          >
+            <HomeIcon className="w-3.5 h-3.5 mr-2 shrink-0 text-[hsl(var(--vs-text-subtle))]" />
+            <span className="flex-1">Home</span>
+          </DropdownMenuItem>
+          {shownRecents.length > 0 && (
+            <>
+              <DropdownMenuSeparator className="bg-border" />
+              <DropdownMenuLabel className="text-[10px] uppercase tracking-wider text-[hsl(var(--vs-text-subtle))] font-medium">
+                Recent
+              </DropdownMenuLabel>
+              {shownRecents.map((r) => (
+                <DropdownMenuItem
+                  key={r.key}
+                  onClick={() => r.onSelect()}
+                  className="text-sm cursor-pointer focus:bg-accent focus:text-accent-foreground"
+                  data-testid={`menu-logo-recent-${r.kind}-${r.key}`}
+                >
+                  {r.kind === "dm"
+                    ? <MessageSquare className="w-3.5 h-3.5 mr-2 shrink-0 text-[hsl(var(--vs-text-subtle))]" />
+                    : <Hash className="w-3.5 h-3.5 mr-2 shrink-0 text-[hsl(var(--vs-text-subtle))]" />}
+                  <div className="flex-1 min-w-0">
+                    <div className="truncate text-[hsl(var(--vs-text))]">{r.label}</div>
+                    {r.subLabel && (
+                      <div className="truncate text-[11px] text-[hsl(var(--vs-text-subtle))]">
+                        {r.subLabel}
+                      </div>
+                    )}
+                  </div>
+                </DropdownMenuItem>
+              ))}
+            </>
+          )}
+        </DropdownMenuContent>
+      </DropdownMenu>
 
       {/* Flex spacer */}
       <div className="flex-1" />
