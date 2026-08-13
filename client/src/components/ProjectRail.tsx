@@ -1,4 +1,4 @@
-import { Settings, LogOut, Check, Circle, Star } from "lucide-react";
+import { Settings, LogOut, Check, Circle, Star, MessageSquare, User as UserIcon } from "lucide-react";
 import { VectorLogo } from "./VectorLogo";
 import type { ApiProject, UserPresence } from "@/types/api";
 import { useAuth } from "@/lib/auth";
@@ -25,6 +25,18 @@ const PRESENCE_LABEL: Record<UserPresence, string> = {
   offline: "Offline",
 };
 
+// Recent picks the home button can jump to. Passed through from Home.tsx —
+// same list the UnifiedHeader dropdown uses, so both entry points show
+// identical suggestions. Type is intentionally structural (not imported
+// from UnifiedHeader) to keep the component graph acyclic.
+export type RailRecentPick = {
+  key: string;
+  label: string;
+  subLabel?: string;
+  kind: "channel" | "dm";
+  onSelect: () => void;
+};
+
 interface Props {
   projects: ApiProject[];
   activeId: number | null;
@@ -38,29 +50,83 @@ interface Props {
   // Right-click a company pill to clear every unread signal for that
   // company at once. Wired to POST /api/projects/:id/read in Home.tsx.
   onMarkAllRead?: (projectId: number) => void;
+  // Recent channels/DMs surfaced when clicking the top-left home button.
+  // When empty the home button falls back to "jump to first project" so
+  // brand-new users still get a working click.
+  recentPicks?: RailRecentPick[];
   sseStatus: "connecting" | "open" | "closed";
 }
 
-export function ProjectRail({ projects, activeId, onSelect, unreadByProjectId, hasUnreadByProjectId, onMarkAllRead, sseStatus }: Props) {
+export function ProjectRail({ projects, activeId, onSelect, unreadByProjectId, hasUnreadByProjectId, onMarkAllRead, recentPicks, sseStatus }: Props) {
   const { user, logout } = useAuth();
   const { presence, manualPresence, setManualPresence } = usePresence();
 
+  const picks = recentPicks ?? [];
+  const hasPicks = picks.length > 0;
+
+  // Fallback for the no-recents case: clicking the home button still needs
+  // to *do* something for a brand-new session, so we jump to the first
+  // project like the old behavior. Once the user visits any channel the
+  // rail lights up as a dropdown instead.
+  const fallbackClick = () => { if (projects[0]) onSelect(projects[0].id); };
 
   return (
     <aside
       className="flex flex-col items-center w-[72px] shrink-0 vs-navy-deep border-r border-black/40 py-3 gap-1.5"
       data-testid="rail-projects"
     >
-      <button
-        type="button"
-        className="w-12 h-12 rounded-2xl flex items-center justify-center hover:rounded-xl transition-all bg-[hsl(220_45%_27%)] hover:bg-vs-red group relative"
-        onClick={() => projects[0] && onSelect(projects[0].id)}
-        title="Bulldog Chat"
-        data-testid="button-home"
-      >
-        <VectorLogo size={32} className="text-white" monochrome />
-        <ConnectionDot status={sseStatus} />
-      </button>
+      {hasPicks ? (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              className="w-12 h-12 rounded-2xl flex items-center justify-center hover:rounded-xl transition-all bg-[hsl(220_45%_27%)] hover:bg-vs-red group relative"
+              title="Bulldog Chat — recent channels"
+              data-testid="button-home"
+              aria-label="Open recent channels"
+            >
+              <VectorLogo size={32} className="text-white" monochrome />
+              <ConnectionDot status={sseStatus} />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent side="right" align="start" className="w-64 bg-popover border-popover-border text-popover-foreground">
+            <DropdownMenuLabel className="text-[10px] font-mono uppercase tracking-wider text-[hsl(var(--vs-text-subtle))] pt-1 pb-1">
+              Recent channels
+            </DropdownMenuLabel>
+            {picks.map((p) => (
+              <DropdownMenuItem
+                key={p.key}
+                onClick={p.onSelect}
+                className="text-sm cursor-pointer focus:bg-accent focus:text-accent-foreground flex items-center gap-2"
+                data-testid={`menu-recent-${p.kind}-${p.key}`}
+              >
+                {p.kind === "dm" ? (
+                  <UserIcon className="w-3.5 h-3.5 shrink-0 text-[hsl(var(--vs-text-subtle))]" />
+                ) : (
+                  <MessageSquare className="w-3.5 h-3.5 shrink-0 text-[hsl(var(--vs-text-subtle))]" />
+                )}
+                <div className="flex-1 min-w-0">
+                  <div className="truncate">{p.label}</div>
+                  {p.subLabel && (
+                    <div className="text-[10px] text-[hsl(var(--vs-text-subtle))] truncate">{p.subLabel}</div>
+                  )}
+                </div>
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      ) : (
+        <button
+          type="button"
+          className="w-12 h-12 rounded-2xl flex items-center justify-center hover:rounded-xl transition-all bg-[hsl(220_45%_27%)] hover:bg-vs-red group relative"
+          onClick={fallbackClick}
+          title="Bulldog Chat"
+          data-testid="button-home"
+        >
+          <VectorLogo size={32} className="text-white" monochrome />
+          <ConnectionDot status={sseStatus} />
+        </button>
+      )}
 
       <div className="h-[2px] w-8 bg-[hsl(220_40%_25%)] rounded-full my-1" />
 
