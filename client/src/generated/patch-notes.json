@@ -1,7 +1,17 @@
 {
-  "generated_at": "2026-08-13T20:17:07.899Z",
+  "generated_at": "2026-08-13T20:37:14.940Z",
   "repo": "vectordev2001/Bulldogchat",
   "notes": [
+    {
+      "number": 152,
+      "title": "Company rail home button opens recent-channels dropdown",
+      "raw_title": "fix(chat): company rail home button opens recent-channels dropdown",
+      "summary": "Josh's screen recording made it obvious: the \"logo\" he's been clicking is the **red triangle at the very top of the far-left company rail** (ProjectRail's button-home), NOT the \"Bulldog Chat\" wordmark in the horizontal header inside the main content pane (UnifiedHeader).",
+      "merged_at": "2026-08-13T20:37:04Z",
+      "author": "vectordev2001",
+      "url": "https://github.com/vectordev2001/Bulldogchat/pull/152",
+      "category": "fix"
+    },
     {
       "number": 151,
       "title": "Logo dropdown is the destination picker (drop Home row)",
@@ -90,16 +100,6 @@
       "merged_at": "2026-08-11T16:31:40Z",
       "author": "vectordev2001",
       "url": "https://github.com/vectordev2001/Bulldogchat/pull/143",
-      "category": "other"
-    },
-    {
-      "number": 142,
-      "title": "Allow deleting legacy scorecard aggregates that have no backing placements",
-      "raw_title": "Allow deleting legacy scorecard aggregates that have no backing placements",
-      "summary": "Some scorecard tiles show a non-zero MTD number but the click-through popover shows \"No detailed placements yet.\" That's pre-PR-135 data — someone (or an older UI) wrote directly to channel_scorecard_actuals without creating individual channel_scorecard_placements rows. There's no way to delete or edit those aggregate-only entries from the UI, so a wrong number stays wrong forever unless someone h",
-      "merged_at": "2026-08-11T15:44:33Z",
-      "author": "vectordev2001",
-      "url": "https://github.com/vectordev2001/Bulldogchat/pull/142",
       "category": "other"
     }
   ]
