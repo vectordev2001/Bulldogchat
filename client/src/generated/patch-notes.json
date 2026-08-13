@@ -1,7 +1,17 @@
 {
-  "generated_at": "2026-08-13T20:06:52.134Z",
+  "generated_at": "2026-08-13T20:17:07.899Z",
   "repo": "vectordev2001/Bulldogchat",
   "notes": [
+    {
+      "number": 151,
+      "title": "Logo dropdown is the destination picker (drop Home row)",
+      "raw_title": "fix(chat): logo dropdown is the destination picker (drop Home row)",
+      "summary": "> When I click the top logo it just keeps taking me back to home which is the VFD tab",
+      "merged_at": "2026-08-13T20:16:55Z",
+      "author": "vectordev2001",
+      "url": "https://github.com/vectordev2001/Bulldogchat/pull/151",
+      "category": "fix"
+    },
     {
       "number": 150,
       "title": "Top-left logo drops down 5 recent channels",
@@ -90,16 +100,6 @@
       "merged_at": "2026-08-11T15:44:33Z",
       "author": "vectordev2001",
       "url": "https://github.com/vectordev2001/Bulldogchat/pull/142",
-      "category": "other"
-    },
-    {
-      "number": 141,
-      "title": "Split scorecard.edit so managers can maintain placements",
-      "raw_title": "Split scorecard.edit so managers can maintain placements",
-      "summary": "Nick needs to delete placements on the recruiter scorecard, but the edit/delete buttons only render for admin and super_admin. Making Nick an admin gives him more power than the task requires (channel management, everyone's messages, etc.).",
-      "merged_at": "2026-08-10T22:16:24Z",
-      "author": "vectordev2001",
-      "url": "https://github.com/vectordev2001/Bulldogchat/pull/141",
       "category": "other"
     }
   ]
