@@ -530,17 +530,75 @@ export default function Home() {
     };
   }, [user]);
 
+  // Auto-record the currently viewed channel/DM. `selectChannel` and
+  // `selectDm` already push when the user clicks a sidebar row, but a
+  // cold load lands on the default channel via the auto-select effect
+  // above without going through those handlers, so the very first open
+  // of the logo dropdown had nothing to show. This effect closes that
+  // gap by pushing whichever view is currently on-screen — the store
+  // dedupes by channelId, so repeat pushes just refresh the timestamp.
+  useEffect(() => {
+    if (!user) return;
+    const meId = (user as ApiUser).id;
+    if (activeDmId) {
+      const dmRow = dmsQ.data?.find((d) => d.id === activeDmId);
+      if (!dmRow) return;
+      let label = dmRow.title ?? "";
+      if (!label) {
+        const otherNames = dmRow.memberIds
+          .filter((mid) => mid !== meId)
+          .map((mid) => membersQ.data?.find((m) => m.id === mid)?.name)
+          .filter(Boolean) as string[];
+        label = otherNames.length > 0 ? otherNames.join(", ") : "Direct message";
+      }
+      pushRecentChannel(meId, {
+        channelId: activeDmId,
+        projectId: null,
+        kind: "dm",
+        label,
+        subLabel: null,
+      });
+      return;
+    }
+    if (activeChannelId && activeChannelId > 0 && activeProjectId != null) {
+      const ch = channelsQ.data?.find((c) => c.id === activeChannelId);
+      const proj = projectsQ.data?.find((p) => p.id === activeProjectId);
+      if (!ch) return;
+      pushRecentChannel(meId, {
+        channelId: activeChannelId,
+        projectId: activeProjectId,
+        kind: "channel",
+        label: ch.name,
+        subLabel: proj?.name ?? null,
+      });
+    }
+  }, [
+    user,
+    activeChannelId,
+    activeDmId,
+    activeProjectId,
+    channelsQ.data,
+    projectsQ.data,
+    dmsQ.data,
+    membersQ.data,
+  ]);
+
   // Resolve the persisted entries into ready-to-render header rows.
-  // Skips the currently-active channel/DM (jumping to where you
-  // already are is a no-op the user shouldn't have to skip past).
+  // We keep the currently-active channel/DM in the list so the dropdown
+  // is never empty on cold load (when the only recent IS the active
+  // channel). When there are 2+ entries, the active one is filtered
+  // out because jumping to where you already are is a wasted click.
   const recentPicks = useMemo<RecentPick[]>(() => {
     if (!user) return [];
     const meId = (user as ApiUser).id;
     const rows: RecentPick[] = [];
+    const hideCurrent = recentEntries.length > 1;
     for (const e of recentEntries) {
-      // Hide the entry the user is looking at right now.
-      if (e.kind === "channel" && e.channelId === activeChannelId && !activeDmId) continue;
-      if (e.kind === "dm" && e.channelId === activeDmId) continue;
+      // Filter the active view only when there are other rows to show.
+      if (hideCurrent) {
+        if (e.kind === "channel" && e.channelId === activeChannelId && !activeDmId) continue;
+        if (e.kind === "dm" && e.channelId === activeDmId) continue;
+      }
 
       // Prefer a live label from the loaded caches when we have one;
       // otherwise fall back to the cached label captured at push time.
