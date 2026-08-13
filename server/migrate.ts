@@ -1702,4 +1702,38 @@ export function runMigrations() {
   } catch (e: any) {
     console.warn("[migrate v39] Crelate caches skipped:", e?.message);
   }
+
+  // v40 (Crelate pipeline dollars) — adds three real-money columns to the
+  // open-reqs cache so the scoreboard can sum a "total pipeline" tile.
+  // Values come straight from Crelate's job schema:
+  //   ExpectedValue   — probability-weighted opportunity value (best signal
+  //                     for "weighted pipeline").
+  //   PotentialValue  — max value if the req fills at full openings.
+  //   ActualValue     — realized value on placements to date.
+  // All three are optional/nullable at the Crelate side, so we store them
+  // as REAL and let NULL flow through when Crelate returns null.
+  try {
+    const cols = rawDb
+      .prepare(`PRAGMA table_info(crelate_open_reqs_cache)`)
+      .all() as { name: string }[];
+    const have = new Set(cols.map((c) => c.name));
+    if (!have.has("expected_value")) {
+      rawDb.exec(
+        `ALTER TABLE crelate_open_reqs_cache ADD COLUMN expected_value REAL`,
+      );
+    }
+    if (!have.has("potential_value")) {
+      rawDb.exec(
+        `ALTER TABLE crelate_open_reqs_cache ADD COLUMN potential_value REAL`,
+      );
+    }
+    if (!have.has("actual_value")) {
+      rawDb.exec(
+        `ALTER TABLE crelate_open_reqs_cache ADD COLUMN actual_value REAL`,
+      );
+    }
+    console.log("[migrate] v40 Crelate pipeline dollar columns ready");
+  } catch (e: any) {
+    console.warn("[migrate v40] pipeline columns skipped:", e?.message);
+  }
 }

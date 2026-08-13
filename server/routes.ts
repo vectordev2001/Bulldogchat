@@ -1029,11 +1029,18 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     let crelateBlock: {
       openReqsCount: number;
       hiresInWindowCount: number;
+      // v40 — pipeline dollars summed across all open reqs.
+      pipelineExpectedTotal: number;
+      pipelinePotentialTotal: number;
+      pipelinePricedCount: number;
       hiresInWindow: unknown[];
       latestPlacements: unknown[];
     } = {
       openReqsCount: 0,
       hiresInWindowCount: 0,
+      pipelineExpectedTotal: 0,
+      pipelinePotentialTotal: 0,
+      pipelinePricedCount: 0,
       hiresInWindow: [],
       latestPlacements: [],
     };
@@ -1041,6 +1048,30 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
       const openCount = (rawDb
         .prepare(`SELECT COUNT(*) AS n FROM crelate_open_reqs_cache WHERE channel_id = ?`)
         .get(channelId) as { n: number } | undefined)?.n ?? 0;
+      // Sum pipeline dollars. Wrapped in its own try because on a
+      // pre-v40 DB the columns may not exist yet — we fall back to zero
+      // rather than 500ing the whole scorecard.
+      let pipelineExpectedTotal = 0;
+      let pipelinePotentialTotal = 0;
+      let pipelinePricedCount = 0;
+      try {
+        const pipe = rawDb
+          .prepare(
+            `SELECT COALESCE(SUM(expected_value), 0) AS expected,
+                    COALESCE(SUM(potential_value), 0) AS potential,
+                    SUM(CASE WHEN expected_value IS NOT NULL OR potential_value IS NOT NULL THEN 1 ELSE 0 END) AS priced
+               FROM crelate_open_reqs_cache
+               WHERE channel_id = ?`,
+          )
+          .get(channelId) as
+          | { expected: number; potential: number; priced: number }
+          | undefined;
+        pipelineExpectedTotal = Number(pipe?.expected ?? 0);
+        pipelinePotentialTotal = Number(pipe?.potential ?? 0);
+        pipelinePricedCount = Number(pipe?.priced ?? 0);
+      } catch {
+        // pre-v40 — keep zeros
+      }
       const hiresCount = (rawDb
         .prepare(`SELECT COUNT(*) AS n FROM crelate_placements_cache WHERE channel_id = ? AND in_program_window = 1`)
         .get(channelId) as { n: number } | undefined)?.n ?? 0;
@@ -1071,6 +1102,9 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
       crelateBlock = {
         openReqsCount: openCount,
         hiresInWindowCount: hiresCount,
+        pipelineExpectedTotal,
+        pipelinePotentialTotal,
+        pipelinePricedCount,
         hiresInWindow: hires,
         latestPlacements: latest,
       };
@@ -1103,16 +1137,37 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     const access = userCanAccessChannel(u.id, u.orgId, channelId, (req as AuthedRequest).access);
     if (!access) return res.status(404).json({ message: "Channel not found" });
     try {
-      const rows = rawDb
-        .prepare(
-          `SELECT job_id AS jobId, portal_title AS title, account_name AS account,
-                  openings, filled, workflow_status AS status,
-                  crelate_url AS crelateUrl, updated_at AS updatedAt
-             FROM crelate_open_reqs_cache
-             WHERE channel_id = ?
-             ORDER BY account_name ASC, portal_title ASC`,
-        )
-        .all(channelId);
+      // Try the v40 shape first; if the columns don't exist yet, fall
+      // back to the v39 select so the endpoint still works on a
+      // partially-migrated instance.
+      let rows: unknown[];
+      try {
+        rows = rawDb
+          .prepare(
+            `SELECT job_id AS jobId, portal_title AS title, account_name AS account,
+                    openings, filled, workflow_status AS status,
+                    crelate_url AS crelateUrl,
+                    expected_value AS expectedValue,
+                    potential_value AS potentialValue,
+                    actual_value AS actualValue,
+                    updated_at AS updatedAt
+               FROM crelate_open_reqs_cache
+               WHERE channel_id = ?
+               ORDER BY COALESCE(expected_value, 0) DESC, account_name ASC, portal_title ASC`,
+          )
+          .all(channelId);
+      } catch {
+        rows = rawDb
+          .prepare(
+            `SELECT job_id AS jobId, portal_title AS title, account_name AS account,
+                    openings, filled, workflow_status AS status,
+                    crelate_url AS crelateUrl, updated_at AS updatedAt
+               FROM crelate_open_reqs_cache
+               WHERE channel_id = ?
+               ORDER BY account_name ASC, portal_title ASC`,
+          )
+          .all(channelId);
+      }
       res.json({ channelId, rows });
     } catch {
       res.json({ channelId, rows: [] });

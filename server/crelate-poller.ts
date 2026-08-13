@@ -68,6 +68,24 @@ interface CrelateJob {
   JobTitleId?: { Id: string; Title: string } | null;
   UserOpenDate?: string | null;
   ModifiedOn?: string | null;
+  // Money — all three are pre-computed by Crelate and any of them can
+  // be null when a req hasn't been priced yet.
+  ExpectedValue?: number | null;
+  PotentialValue?: number | null;
+  ActualValue?: number | null;
+}
+
+// Build the Crelate deep-link for a job. Crelate's marketing/portal path
+// `/jobs/<id>` 404s — the correct in-app SPA route is
+// `/recruiting/#/jobs/<id>`, which is what the recruiter UI itself uses.
+function jobDeepLink(id: string): string {
+  return `https://app.crelate.com/recruiting/#/jobs/${id}`;
+}
+
+// Same story for placements — the top-level `/placements/<id>` 404s;
+// the SPA route is `/recruiting/#/placements/<id>`.
+function placementDeepLink(id: string): string {
+  return `https://app.crelate.com/recruiting/#/placements/${id}`;
 }
 
 interface CrelatePlacement {
@@ -101,6 +119,10 @@ export interface OpenReqRow {
   filled: number;
   status: string;
   crelateUrl: string;
+  // v40 — optional so pre-migration rows still parse.
+  expectedValue: number | null;
+  potentialValue: number | null;
+  actualValue: number | null;
   updatedAt: number;
 }
 
@@ -241,8 +263,9 @@ async function pollOpenReqs(channelId: number): Promise<number> {
   const insert = rawDb.prepare(
     `INSERT INTO crelate_open_reqs_cache
        (channel_id, job_id, portal_title, account_name, openings, filled,
-        workflow_status, crelate_url, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        workflow_status, crelate_url, expected_value, potential_value,
+        actual_value, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
   const tx = rawDb.transaction((rows: CrelateJob[]) => {
     clear.run(channelId);
@@ -255,7 +278,10 @@ async function pollOpenReqs(channelId: number): Promise<number> {
         j.NumberOfOpenings ?? 0,
         j.NumberOfPlacements ?? 0,
         j.SalesWorkflowItemStatusId?.Title ?? "Requisitions Open",
-        `https://app.crelate.com/jobs/${j.Id}`,
+        jobDeepLink(j.Id),
+        typeof j.ExpectedValue === "number" ? j.ExpectedValue : null,
+        typeof j.PotentialValue === "number" ? j.PotentialValue : null,
+        typeof j.ActualValue === "number" ? j.ActualValue : null,
         now,
       );
     }
@@ -334,7 +360,7 @@ async function pollPlacements(opts: {
         p.CreatedOn ?? null,
         p.EntityStatus ?? null,
         p.StatusReason ?? null,
-        `https://app.crelate.com/placements/${p.Id}`,
+        placementDeepLink(p.Id),
         inWindow,
         now,
       );
@@ -391,7 +417,7 @@ async function notifyNewPlacement(opts: {
   const detail = account
     ? `${jobTitle} at ${account}. Start ${startDateStr}.`
     : `${jobTitle}. Start ${startDateStr}.`;
-  const crelateUrl = `https://app.crelate.com/placements/${p.Id}`;
+  const crelateUrl = placementDeepLink(p.Id);
 
   // 1. System chat message so the event is visible in-line + archived.
   const meta = JSON.stringify({
