@@ -2787,13 +2787,17 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
         recipientIds.add(m.id);
         continue;
       }
-      if (userMentions.has(m.id)) { recipientIds.add(m.id); continue; }
-      if (hasEveryone) { recipientIds.add(m.id); continue; }
-      const lastSeen = m.lastSeenAt ? new Date(m.lastSeenAt).getTime() : 0;
-      const isOnline = (now - lastSeen) < 60_000;
-      if (hasHere && isOnline) { recipientIds.add(m.id); continue; }
-      // Default: only push if not active
-      if (!hasHere && !hasEveryone && !isOnline) recipientIds.add(m.id);
+      // Regular channel messages: ping every channel-audience member,
+      // same as DMs. The prior heuristic (skip if global lastSeenAt <
+      // 60s) treated app-open-anywhere as read-receipt for every
+      // channel, so messages in a channel the user wasn't actively
+      // viewing silently dropped their push + SMS. DND (presence=busy)
+      // gating still runs inside sendNotificationToUsers, and the
+      // client suppresses redundant toasts when the source channel is
+      // foregrounded. Mention flags (userMentions/hasEveryone/hasHere)
+      // are still parsed above and forwarded to the SMS mirror below.
+      void now; void userMentions; void hasEveryone; void hasHere;
+      recipientIds.add(m.id);
     }
 
     if (recipientIds.size > 0) {
