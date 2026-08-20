@@ -1,7 +1,17 @@
 {
-  "generated_at": "2026-08-14T23:07:16.985Z",
+  "generated_at": "2026-08-20T03:38:13.917Z",
   "repo": "vectordev2001/Bulldogchat",
   "notes": [
+    {
+      "number": 155,
+      "title": "Send feedback: add shared feedback dialog to the user menu",
+      "raw_title": "Send feedback: add shared feedback dialog to the user menu",
+      "summary": "Adds \"Send feedback\" to the avatar dropdown in UnifiedHeader, opening a dialog for bugs / suggestions / questions that emails the internal recipient. Same shared UX as the parallel Bulldog Contracts and Bulldog Ops PRs.",
+      "merged_at": "2026-08-20T03:37:58Z",
+      "author": "vectordev2001",
+      "url": "https://github.com/vectordev2001/Bulldogchat/pull/155",
+      "category": "other"
+    },
     {
       "number": 154,
       "title": "Ping channel members regardless of global online state",
@@ -90,16 +100,6 @@
       "merged_at": "2026-08-12T04:56:44Z",
       "author": "vectordev2001",
       "url": "https://github.com/vectordev2001/Bulldogchat/pull/145",
-      "category": "other"
-    },
-    {
-      "number": 144,
-      "title": "Split placements 50/50 with account manager + View all placements dialog",
-      "raw_title": "Split placements 50/50 with account manager + View all placements dialog",
-      "summary": "1. **Split-credit placements.** A single placement can be jointly credited to a recruiter and an account manager (both should show up in their scorecards). Before this PR, every placement was solo — the AM got no scorecard credit unless the recruiter manually double-logged. 2. **No way to edit old placements outside the popover's scope.** The recruiter tile popovers show either the current month (",
-      "merged_at": "2026-08-11T17:04:19Z",
-      "author": "vectordev2001",
-      "url": "https://github.com/vectordev2001/Bulldogchat/pull/144",
       "category": "other"
     }
   ]
