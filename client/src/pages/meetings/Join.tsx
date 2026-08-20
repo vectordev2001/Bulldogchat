@@ -542,8 +542,15 @@ export default function Join() {
   };
 
   if (notFound) {
+    // NOTE: index.css locks #root + html to overflow:hidden so body never
+    // scrolls; each page owns its own scroll surface. `min-h-screen` alone
+    // isn't enough — on small iOS phones the pre-join right column
+    // (video preview + device selects + control row + join card) grows
+    // TALLER than 100dvh and the Join button ends up below the fold with
+    // no way to reach it. Making the outer wrapper `h-full overflow-y-auto`
+    // gives us a real scroll container inside the clipped root.
     return (
-      <div className="flex min-h-screen flex-col bg-background text-foreground">
+      <div className="flex h-full flex-col overflow-y-auto bg-background text-foreground">
         <header className="flex items-center justify-between px-5 py-4 sm:px-8">
           <BulldogWordmark />
           <ThemeToggle />
@@ -598,7 +605,11 @@ export default function Join() {
   }
 
   return (
-    <div className="flex min-h-screen flex-col bg-background text-foreground">
+    // See notFound branch above for why the outer wrapper is
+    // h-full + overflow-y-auto rather than min-h-screen: index.css locks
+    // #root/html to overflow:hidden, so each page must own its own scroll
+    // surface. Without it, iOS phones can't reach the "Join meeting" button.
+    <div className="flex h-full flex-col overflow-y-auto bg-background text-foreground">
       <header className="flex items-center justify-between px-5 py-4 sm:px-8">
         <BulldogWordmark />
         <ThemeToggle />
@@ -836,7 +847,9 @@ function WaitingRoom({
   onBack: () => void;
 }) {
   return (
-    <div className="flex min-h-screen flex-col bg-background text-foreground">
+    // Same reason as the prejoin/notFound branches: our root is
+    // overflow:hidden so this container must scroll internally.
+    <div className="flex h-full flex-col overflow-y-auto bg-background text-foreground">
       <header className="flex items-center justify-between px-5 py-4 sm:px-8">
         <BulldogWordmark />
         <ThemeToggle />
