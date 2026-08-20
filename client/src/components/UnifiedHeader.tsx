@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
-import { Menu, X, LogOut, User, Volume2, VolumeX, Hash, MessageSquare } from "lucide-react";
+import { Menu, X, LogOut, User, Volume2, VolumeX, Hash, MessageSquare, MessageSquarePlus } from "lucide-react";
 import { BulldogLogo } from "./BulldogLogo";
 import { NotificationsButton } from "./NotificationsButton";
 import { PatchNotesTrigger } from "./PatchNotesTrigger";
 import { AppSwitcher } from "@/lib/AppSwitcher";
+import { FeedbackDialog } from "@/lib/FeedbackDialog";
 import { Avatar } from "./Avatar";
 import { useAuth } from "@/lib/auth";
 import { loadMeetPrefs, saveMeetPrefs, emitMeetPrefsChanged, MEET_PREFS_EVENT } from "@/lib/meet-prefs";
@@ -69,6 +70,7 @@ export function UnifiedHeader({ navOpen, onToggleNav, onLogoClick, recentPicks }
   // meet-prefs "changed" event so a toggle from anywhere (e.g. an in-call
   // settings modal, future) keeps this menu in sync.
   const [callSoundsOn, setCallSoundsOn] = useState<boolean>(() => loadMeetPrefs().callSoundsEnabled);
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
   useEffect(() => {
     const onChange = () => setCallSoundsOn(loadMeetPrefs().callSoundsEnabled);
     try { window.addEventListener(MEET_PREFS_EVENT, onChange); } catch { /* ignore */ }
@@ -222,6 +224,13 @@ export function UnifiedHeader({ navOpen, onToggleNav, onLogoClick, recentPicks }
             >
               <User className="w-3.5 h-3.5 mr-2" /> Profile
             </DropdownMenuItem>
+            <DropdownMenuItem
+              onSelect={(e) => { e.preventDefault(); setFeedbackOpen(true); }}
+              className="text-sm cursor-pointer focus:bg-accent focus:text-accent-foreground"
+              data-testid="menu-feedback"
+            >
+              <MessageSquarePlus className="w-3.5 h-3.5 mr-2" /> Send feedback
+            </DropdownMenuItem>
             {/* Call sounds toggle — flips the local `callSoundsEnabled`
                 pref that gates the outgoing ringback + incoming chime in
                 CallContext. Not a settings page, just a one-tap mute so
@@ -253,6 +262,11 @@ export function UnifiedHeader({ navOpen, onToggleNav, onLogoClick, recentPicks }
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
+      <FeedbackDialog
+        open={feedbackOpen}
+        onOpenChange={setFeedbackOpen}
+        appName="chat"
+      />
     </header>
   );
 }
