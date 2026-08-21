@@ -26,6 +26,28 @@ async function fanOutApnsViaAuth(
     .map((u) => (u as { email?: string }).email)
     .filter((e): e is string => typeof e === "string" && e.length > 0);
   if (emails.length === 0) return;
+  const isCall = payload.kind === "call";
+  // Call-specific shape: bulldog-auth expands `kind` into APNs
+  // interruption-level=time-sensitive + custom sound + category so the iOS
+  // shell rings instead of showing a silent banner. Messages keep the
+  // default (silent-friendly) push shape.
+  const notifyBody = {
+    email: "",
+    title: payload.title,
+    body: payload.body,
+    app: "chat" as const,
+    path: payload.url ?? "/",
+    collapse_id: payload.tag,
+    ...(isCall
+      ? {
+          kind: "call" as const,
+          sound: "ring.caf",
+          interruption_level: "time-sensitive" as const,
+          category:
+            payload.callKind === "video" ? "INCOMING_VIDEO_CALL" : "INCOMING_CALL",
+        }
+      : {}),
+  };
   await Promise.all(
     emails.map(async (email) => {
       try {
@@ -35,14 +57,7 @@ async function fanOutApnsViaAuth(
             "Content-Type": "application/json",
             "X-Suite-Secret": SUITE_INTERNAL_SECRET,
           },
-          body: JSON.stringify({
-            email,
-            title: payload.title,
-            body: payload.body,
-            app: "chat",
-            path: payload.url ?? "/",
-            collapse_id: payload.tag,
-          }),
+          body: JSON.stringify({ ...notifyBody, email }),
         });
       } catch (err) {
         // Never block sending on APNs — log and continue.
@@ -83,6 +98,20 @@ export interface PushPayload {
   tag?: string;
   icon?: string;
   badge?: string;
+  /**
+   * Push category. When "call" the push takes the "time-sensitive" APNs path
+   * (interruption-level=time-sensitive, custom ring sound, distinct category,
+   * kind=call in the payload data so the iOS shell can hand off to CallKit) and
+   * bypasses the busy-presence DND gate — a ringing call has to reach the
+   * callee even if they set themselves busy for messages. Undefined / "message"
+   * keeps the pre-existing message push shape.
+   */
+  kind?: "call" | "message";
+  /**
+   * Optional sub-category for the "call" kind so we can tell voice vs video
+   * apart in the APNs category. Ignored when kind !== "call".
+   */
+  callKind?: "voice" | "video";
 }
 
 export async function sendNotificationToUsers(
@@ -123,15 +152,25 @@ export async function sendNotificationToUsers(
   // dot) explicitly asked not to be pinged — skip both web push and Expo.
   // "offline" still receives so the message is waiting when they come
   // back; "away" also still receives because that's just an idle hint.
-  try {
-    const targets = storage.listUsersByIds(userIds);
-    const allowed = new Set(
-      targets.filter(u => (u.presence ?? "online") !== "busy").map(u => u.id),
-    );
-    userIds = userIds.filter(id => allowed.has(id));
-    if (userIds.length === 0) return;
-  } catch (e) {
-    console.warn("[push] presence gate failed, sending anyway:", e);
+  //
+  // EXCEPTION: incoming CALLS bypass the busy gate. A ringing call is a
+  // "time-sensitive" event (mirrors iOS's own semantics) — silencing calls
+  // because the user set a red dot on chat means the phone quietly rolls
+  // to voicemail after 60s and the caller has no idea. If the callee wants
+  // to reject the call they can tap Decline; that's a per-call decision,
+  // not a global preference.
+  const isCall = payload.kind === "call";
+  if (!isCall) {
+    try {
+      const targets = storage.listUsersByIds(userIds);
+      const allowed = new Set(
+        targets.filter(u => (u.presence ?? "online") !== "busy").map(u => u.id),
+      );
+      userIds = userIds.filter(id => allowed.has(id));
+      if (userIds.length === 0) return;
+    } catch (e) {
+      console.warn("[push] presence gate failed, sending anyway:", e);
+    }
   }
 
   // Always try Expo in parallel (it's a no-op if no tokens / not configured)
