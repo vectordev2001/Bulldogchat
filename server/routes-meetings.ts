@@ -895,12 +895,19 @@ export function registerMeetingRoutes(app: Express) {
       }
     }
     // Batched web push so callees get the ring even if their tab is closed.
+    // kind="call" fires the APNs ring path (interruption-level=time-sensitive,
+    // ring sound, INCOMING_CALL category) and bypasses the busy-presence DND
+    // gate — mid-meeting invites are effectively an incoming ring; if we let
+    // the busy filter drop them the callee's phone stays silent and rolls to
+    // voicemail after 60s.
     if (inAppRecipients.length > 0) {
       void sendNotificationToUsers(inAppRecipients, {
         title: `${hostName || u.name} is inviting you`,
         body: meeting.title ? `Join meeting — ${meeting.title}` : `Join meeting`,
         url: `/#/m/${meeting.code}`,
         tag: `meeting-invite-${meeting.code}`,
+        kind: "call",
+        callKind: "video",
       });
     }
 

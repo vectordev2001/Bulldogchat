@@ -79,9 +79,13 @@ function AppRouter() {
       <Route path="/call-join/:token">{() => <ProtectedRoute><CallJoin /></ProtectedRoute>}</Route>
       {/* Deep-link catch-alls: /#/dms/<id>/m/<msgId> and /#/channels/<id>[/m/<msgId>]
           are emitted by SMS chat-mirror and push notifications. Home.tsx reads
-          window.location.href directly via parseDeepLink so it handles all forms. */}
-      <Route path="/dms/:rest*">{() => <ProtectedRoute><Home /></ProtectedRoute>}</Route>
-      <Route path="/channels/:rest*">{() => <ProtectedRoute><Home /></ProtectedRoute>}</Route>
+          window.location.href directly via parseDeepLink so it handles all forms.
+          Wouter v3 uses regexparam whose zero-or-more-segment wildcard is `*`,
+          NOT `:name*`. The prior `/dms/:rest*` pattern was silently invalid and
+          fell through to <NotFound>, which is why tapping an SMS link that had
+          a trailing /m/<msgId> segment showed 404. */}
+      <Route path="/dms/*">{() => <ProtectedRoute><Home /></ProtectedRoute>}</Route>
+      <Route path="/channels/*">{() => <ProtectedRoute><Home /></ProtectedRoute>}</Route>
       <Route path="/">{() => <ProtectedRoute><Home /></ProtectedRoute>}</Route>
       <Route component={NotFound} />
     </Switch>

@@ -3774,6 +3774,10 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
       const deepUrl = channelId
         ? `/#/channels/${channelId}?call=${encodeURIComponent(groupRoomName)}`
         : `/#/call/group/${encodeURIComponent(groupRoomName)}`;
+      // kind="call" (see server/push.ts) fires the APNs ring path and
+      // ignores busy-presence DND. Group calls otherwise silently rolled
+      // to voicemail whenever a callee had set their chat presence to
+      // busy or the push arrived as a plain banner on a locked phone.
       void sendNotificationToUsers(validInvitees, {
         title: `\ud83d\udcde ${u.name} is calling` + (chanName ? ` · #${chanName}` : ""),
         body:
@@ -3782,6 +3786,8 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
             : `Group voice call — ${chanName ? "#" + chanName : "channel"}`,
         url: deepUrl,
         tag: `group-call-${groupRoomName}`,
+        kind: "call",
+        callKind: kind,
       });
     }
 
@@ -4200,11 +4206,15 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
       const addUrl = activeChanId
         ? `/#/channels/${activeChanId}?call=${encodeURIComponent(roomName)}`
         : `/#/call/group/${encodeURIComponent(roomName)}`;
+      // kind="call" fires the APNs ring path and bypasses the busy DND
+      // gate (see server/push.ts).
       void sendNotificationToUsers(validInvitees, {
         title: `\ud83d\udcde ${u.name} is calling` + (activeChanName ? ` · #${activeChanName}` : ""),
         body: kind === "video" ? `Adding you to a video call — ${channelLabel}` : `Adding you to a voice call — ${channelLabel}`,
         url: addUrl,
         tag: `call-add-${roomName}`,
+        kind: "call",
+        callKind: kind,
       });
     }
 
