@@ -105,6 +105,22 @@ export interface LiveKitHookResult {
    */
   setHandRaised: (raised: boolean) => void;
   /**
+   * Switch the active input or output device on the live LiveKit
+   * Room without rejoining. Wraps room.switchActiveDevice() so the
+   * imperative iOS gesture path we use elsewhere isn't required for
+   * a mid-call device change (browsers don't gate device switching
+   * on user activation the way they gate getUserMedia). Returns true
+   * on success. No-ops (returns false) if the room isn't connected.
+   *
+   * `kind` uses the DOM MediaDeviceKind vocabulary
+   * ("audioinput" | "videoinput" | "audiooutput") so callers can pass
+   * exactly what enumerateDevices() gave them.
+   */
+  switchActiveDevice: (
+    kind: "audioinput" | "videoinput" | "audiooutput",
+    deviceId: string,
+  ) => Promise<boolean>;
+  /**
    * True when this browser supports screen-share (i.e. has
    * navigator.mediaDevices.getDisplayMedia and is not iOS Safari).
    * iOS Safari/PWA WebView does not implement getDisplayMedia at all,
@@ -860,6 +876,25 @@ export function useLiveKitRoom(args: Args): LiveKitHookResult {
     }
   }, [refreshParticipants, onTrackError, isIOS]);
 
+  const switchActiveDevice = useCallback(
+    async (
+      kind: "audioinput" | "videoinput" | "audiooutput",
+      deviceId: string,
+    ): Promise<boolean> => {
+      const room = roomRef.current;
+      if (!room || room.state !== ConnectionState.Connected) return false;
+      try {
+        // LiveKit's typing accepts the same MediaDeviceKind strings we
+        // take, so we can forward the argument directly.
+        await room.switchActiveDevice(kind, deviceId);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    [],
+  );
+
   // Quick capability check the UI uses to disable screen-share on
   // platforms that don't support getDisplayMedia (iOS Safari/PWA).
   const screenShareSupported = !isIOS &&
@@ -876,6 +911,7 @@ export function useLiveKitRoom(args: Args): LiveKitHookResult {
     toggleCamera,
     toggleMic,
     setHandRaised,
+    switchActiveDevice,
     screenShareSupported,
     getRawCameraTrack,
     replaceCameraTrack,
