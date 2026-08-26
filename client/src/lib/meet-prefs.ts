@@ -18,8 +18,13 @@ const PREFS_KEY = "bulldog.meet.prefs";
  *  - "grid":    equal-sized tiles arranged in a responsive grid so every
  *    participant is the same size. Preferred for small meetings where every
  *    face matters equally (Zoom's default, Meet's "Tiles").
+ *  - "sidebar": one large focused tile with a vertical filmstrip on the
+ *    side. CallOverlays-only (its "Contract"-panel-open state also
+ *    auto-forces this layout). Room.tsx currently doesn't render this
+ *    variant — selecting "sidebar" from any surface will render as
+ *    "speaker" in Room until the meet-page adopts it.
  */
-export type MeetLayout = "speaker" | "grid";
+export type MeetLayout = "speaker" | "grid" | "sidebar";
 
 export interface MeetPrefs {
   /**
@@ -66,7 +71,14 @@ export function loadMeetPrefs(): MeetPrefs {
       const parsed = JSON.parse(raw) as Partial<MeetPrefs>;
       if (parsed && typeof parsed === "object") {
         // Sanitize layout (older prefs blobs may lack it or hold a stale value).
-        const layout: MeetLayout = parsed.layout === "grid" ? "grid" : "speaker";
+        // "sidebar" is a CallOverlays-only variant; Room.tsx will treat it
+        // as "speaker" at read time (see Room.tsx layout consumer).
+        const layout: MeetLayout =
+          parsed.layout === "grid"
+            ? "grid"
+            : parsed.layout === "sidebar"
+              ? "sidebar"
+              : "speaker";
         // Sanitize callSoundsEnabled — fall back to default when the field is
         // missing from an older prefs blob so existing users get sounds on.
         const callSoundsEnabled =
