@@ -82,7 +82,13 @@ export function CallVideoStage({
     return (
       <div className="w-full h-full flex flex-col gap-3 p-1">
         <div className="flex-1 min-h-0">
-          <CallTile {...focused} />
+          {/* Featured tile uses `contain` so the primary speaker isn't
+              cropped by a wide-aspect camera or a portrait phone shot.
+              This is the parity carry-over of the Room.tsx StageTile
+              behavior fixed in PR #87 ("large tiles default to
+              object-contain"). Filmstrip thumbnails keep the default
+              `cover` since they're small and cropping is fine. */}
+          <CallTile {...focused} fit="contain" />
         </div>
         {rest.length > 0 && (
           <div className="h-24 shrink-0 flex gap-2 overflow-x-auto">
@@ -101,7 +107,9 @@ export function CallVideoStage({
   return (
     <div className="w-full h-full flex gap-3 p-1">
       <div className="flex-1 min-h-0">
-        <CallTile {...focused} />
+        {/* Same reasoning as the speaker layout above — featured tile
+            uses `contain` to avoid cropping the primary speaker. */}
+        <CallTile {...focused} fit="contain" />
       </div>
       {rest.length > 0 && (
         <div className="w-40 shrink-0 flex flex-col gap-2 overflow-y-auto">
