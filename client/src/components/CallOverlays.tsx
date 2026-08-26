@@ -4,7 +4,7 @@
  * which page the user is on when the phone rings.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Phone, PhoneOff, Mic, MicOff, Video, VideoOff, MonitorUp, Loader2, Volume2, UserPlus, X, Check, Search, PhoneCall, FileText, Sparkles, LayoutGrid, MessageSquare, Users, MoreHorizontal, Minimize2, Maximize2 } from "lucide-react";
+import { Phone, PhoneOff, Mic, MicOff, Video, VideoOff, MonitorUp, Loader2, Volume2, UserPlus, X, Check, Search, PhoneCall, FileText, Sparkles, LayoutGrid, MessageSquare, Users, MoreHorizontal, Minimize2, Maximize2, Hand } from "lucide-react";
 import { useCalls } from "@/lib/CallContext";
 import { useLiveKitRoom, attachTrack } from "@/lib/useLiveKitRoom";
 import { useQuery } from "@tanstack/react-query";
@@ -540,6 +540,22 @@ function ActiveCallOverlay() {
             }}
             disabled={lk.status !== "connected"}
             testid="call-mic"
+          />
+
+          {/* Raise hand — parity with Room.tsx L1184 (Phase 1.9.32).
+              The LiveKit participant attribute `handRaised` is already
+              driven by useLiveKitRoom.setHandRaised (contract locked to
+              "1" in PR #159); this button just gives DM/group callers
+              the same UI Room users have. Reading `meParticipant?.
+              handRaised` echoes the attribute back so a self-cleared
+              hand (e.g. host lowering everyone's) updates the toggle. */}
+          <TopBarBtn
+            icon={<Hand className="w-5 h-5" />}
+            label={meParticipant?.handRaised ? "Lower hand" : "Raise hand"}
+            active={!!meParticipant?.handRaised}
+            onClick={() => lk.setHandRaised(!meParticipant?.handRaised)}
+            disabled={lk.status !== "connected"}
+            testid="call-hand"
           />
 
           {/* Share screen */}
