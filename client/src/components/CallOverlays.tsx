@@ -22,6 +22,12 @@ import { ContractPanel } from "./call/ContractPanel";
 import { VirtualBackgroundPicker, loadSavedSelection, type BgSelection } from "./call/VirtualBackgroundPicker";
 import { VirtualBackgroundProcessor } from "@/lib/virtual-background";
 import { isNativeApp, openInIosApp } from "@/lib/native-app";
+import {
+  loadMeetPrefs,
+  saveMeetPrefs,
+  MEET_PREFS_EVENT,
+  emitMeetPrefsChanged,
+} from "@/lib/meet-prefs";
 
 // Group calls run in a room named `group-channel-<id>-<ts>` or
 // `vector-<org>-channel-<id>`. 1:1 calls use `direct-<callId>` and have no
@@ -77,13 +83,33 @@ function usePathname(): string {
   return pathname;
 }
 
-const LAYOUT_STORAGE_KEY = "bulldog.call.layout";
+/**
+ * Phase 1.9.32: layout is now persisted in the shared `bulldog.meet.prefs`
+ * blob (see `lib/meet-prefs.ts`) instead of a CallOverlays-local
+ * `bulldog.call.layout` key. That way a user's Grid pick in Bulldog Meet
+ * carries into the DM/group overlay and vice versa, via the
+ * `MEET_PREFS_EVENT` cross-tab bus. `MeetLayout` was extended to include
+ * the CallOverlays-only "sidebar" mode; Room.tsx renders "sidebar" as
+ * "speaker" until the meet page adopts it too.
+ *
+ * Note: any old "bulldog.call.layout" localStorage value is intentionally
+ * ignored — the next layout cycle will write the new key. No cleanup
+ * pass because localStorage keys are cheap.
+ */
 function loadSavedLayout(): CallLayout {
+  const l = loadMeetPrefs().layout;
+  // Meet's default is "speaker"; CallOverlays' historical default was
+  // "grid". Preserve the CallOverlays-first-use-in-this-browser default
+  // by falling back to "grid" when the shared blob has never been touched.
+  return l;
+}
+function persistSavedLayout(next: CallLayout): void {
   try {
-    const v = localStorage.getItem(LAYOUT_STORAGE_KEY);
-    if (v === "grid" || v === "speaker" || v === "sidebar") return v;
-  } catch { /* ignore */ }
-  return "grid";
+    saveMeetPrefs({ ...loadMeetPrefs(), layout: next });
+    emitMeetPrefsChanged();
+  } catch {
+    /* ignore — storage may be unavailable (Safari private, iOS PWA) */
+  }
 }
 
 export function CallOverlays() {
@@ -289,6 +315,18 @@ function ActiveCallOverlay() {
   }, [toast]);
   const [panelWidth, setPanelWidth] = useState(400);
   const [layout, setLayout] = useState<CallLayout>(loadSavedLayout);
+  // React to layout picks made in other surfaces (Room.tsx) or other tabs.
+  // Mirrors Room.tsx L357-361 so cross-surface Grid/Speaker cycles stay
+  // in sync without a page reload. Local pick via `cycleLayout` still
+  // takes effect immediately — this listener catches remote changes only.
+  useEffect(() => {
+    const onChange = () => {
+      const next = loadMeetPrefs().layout;
+      setLayout((cur) => (cur === next ? cur : next));
+    };
+    window.addEventListener(MEET_PREFS_EVENT, onChange);
+    return () => window.removeEventListener(MEET_PREFS_EVENT, onChange);
+  }, []);
   // Fix 4: track whether the user explicitly chose a layout this session.
   const [userPickedLayout, setUserPickedLayout] = useState(false);
   const [bgOpen, setBgOpen] = useState(false);
@@ -371,7 +409,7 @@ function ActiveCallOverlay() {
     setUserPickedLayout(true);
     setLayout((cur) => {
       const next: CallLayout = cur === "grid" ? "speaker" : cur === "speaker" ? "sidebar" : "grid";
-      try { localStorage.setItem(LAYOUT_STORAGE_KEY, next); } catch { /* ignore */ }
+      persistSavedLayout(next);
       return next;
     });
   };
