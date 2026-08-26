@@ -130,8 +130,13 @@ function buildEmailBody(newNotes: PatchNoteEntry[]): {
   text: string;
   html: string;
 } {
+  // NOTE: Bulldog Chat is a hash-routed SPA (client/src/App.tsx wraps <Router
+  // hook={useHashLocation}>). A path-form URL like /whats-new lands on the
+  // server SPA fallback with an empty hash, so wouter's default route matches
+  // and Home restores the last-active channel. External links MUST use the
+  // hash form so wouter sees `/whats-new` in window.location.hash.
   const base = (process.env.CHAT_BASE_URL || "https://chat.bulldogops.com").replace(/\/+$/, "");
-  const link = `${base}/whats-new`;
+  const link = `${base}/#/whats-new`;
   const app = "Bulldog Chat";
   const subject =
     newNotes.length === 1
@@ -226,7 +231,9 @@ export async function announcePatchNotesIfChanged(): Promise<void> {
       .map((n) => `• ${n.title}`)
       .join("\n")
       .slice(0, 500);
-    const pushUrl = `${(process.env.CHAT_BASE_URL || "https://chat.bulldogops.com").replace(/\/+$/, "")}/whats-new`;
+    // Hash form — see buildEmailBody comment. Path form drops the user on
+    // chat home because the internal Router uses useHashLocation.
+    const pushUrl = `${(process.env.CHAT_BASE_URL || "https://chat.bulldogops.com").replace(/\/+$/, "")}/#/whats-new`;
     try {
       await sendNotificationToUsers(
         audience.map((u) => u.id),
