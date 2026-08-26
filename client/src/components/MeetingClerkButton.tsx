@@ -29,6 +29,15 @@ interface Props {
    */
   compact?: boolean;
   /**
+   * Round icon-only rendering to match Room.tsx's bottom-bar BarBtn shape
+   * (h-10 w-10, primary/destructive states via ring). The label shows as a
+   * tooltip only. Countdown state renders a small numeric badge on the icon
+   * so we don't have to widen the button.
+   *
+   * Precedence: `round` > `compact` > default pill.
+   */
+  round?: boolean;
+  /**
    * When true, show a 5-second cancelable consent banner over the button on
    * mount. If the countdown reaches zero without the user hitting Cancel,
    * we call startMutation.mutate() so the clerk begins recording on its own.
@@ -69,7 +78,7 @@ interface NoteRow {
   } | null;
 }
 
-export function MeetingClerkButton({ channelId, canControl, roomName, compact, autoStart }: Props) {
+export function MeetingClerkButton({ channelId, canControl, roomName, compact, round, autoStart }: Props) {
   const { user } = useAuth();
   const [error, setError] = useState<string | null>(null);
   const [activeNoteId, setActiveNoteId] = useState<number | null>(null);
@@ -354,6 +363,113 @@ export function MeetingClerkButton({ channelId, canControl, roomName, compact, a
 
   const cfg = configQ.data;
   const cfgWarning = cfg && (!cfg.deepgramConfigured || !cfg.anthropicConfigured || !cfg.synologyEnabled);
+
+  // Round toolbar mode: matches Room.tsx's BarBtn (h-10 w-10 pill) so the
+  // clerk can sit inline with Mic / Camera / Share / Devices on the
+  // scheduled-meeting bottom bar. Countdown state uses a numeric badge
+  // rather than resizing the button.
+  if (round) {
+    const roundBase =
+      "relative flex h-10 w-10 items-center justify-center rounded-full transition-colors duration-200";
+    if (isRecording) {
+      return (
+        <>
+          <button
+            type="button"
+            onClick={() => stopMutation.mutate()}
+            disabled={stopMutation.isPending}
+            className={`${roundBase} bg-destructive text-destructive-foreground hover:bg-destructive/90`}
+            title="Stop AI clerk"
+            aria-label="Stop AI clerk"
+            data-testid="button-stop-clerk"
+          >
+            <Square className="h-4 w-4 fill-current" />
+          </button>
+          {dialogElement}
+        </>
+      );
+    }
+    if (isProcessing) {
+      return (
+        <>
+          <div
+            className={`${roundBase} bg-white/10 text-white/85`}
+            title={`Clerk ${activeFromServer?.status ?? "processing"}…`}
+            aria-label={`Clerk ${activeFromServer?.status ?? "processing"}…`}
+            data-testid="status-clerk-processing"
+          >
+            <Loader2 className="h-4 w-4 animate-spin" />
+          </div>
+          {dialogElement}
+        </>
+      );
+    }
+    if (canControl) {
+      if (autoCountdown != null) {
+        return (
+          <>
+            <button
+              type="button"
+              onClick={cancelAutoStart}
+              className={`${roundBase} bg-destructive/70 text-destructive-foreground hover:bg-destructive/80`}
+              title={`Recording starts in ${autoCountdown}s — tap to cancel`}
+              aria-label={`Recording starts in ${autoCountdown}s — tap to cancel`}
+              data-testid="button-cancel-clerk-autostart"
+            >
+              <Bot className="h-4 w-4" />
+              <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[10px] font-bold text-destructive-foreground ring-2 ring-[hsl(220_16%_12%)]">
+                {autoCountdown}
+              </span>
+            </button>
+            {dialogElement}
+          </>
+        );
+      }
+      return (
+        <>
+          <button
+            type="button"
+            onClick={() => startMutation.mutate()}
+            disabled={startMutation.isPending}
+            className={`${roundBase} text-white/85 hover:bg-white/10`}
+            title={
+              cfgWarning
+                ? "AI clerk (some integrations not configured — pipeline will still run)"
+                : "Start AI clerk — records, transcribes, summarizes, files notes to Synology"
+            }
+            aria-label="Start AI clerk"
+            data-testid="button-start-clerk"
+          >
+            {startMutation.isPending ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Bot className="h-4 w-4" />
+            )}
+            {pickerReopenNote && (
+              <span
+                className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-primary ring-2 ring-[hsl(220_16%_12%)]"
+                aria-hidden
+              />
+            )}
+          </button>
+          {pickerReopenNote && (
+            <button
+              type="button"
+              onClick={() => setRecipientPickerNoteId(pickerReopenNote.id)}
+              className={`${roundBase} text-primary hover:bg-primary/15`}
+              title="Pick who gets the AI transcript by email"
+              aria-label="Send transcript"
+              data-testid="button-pick-transcript-recipients"
+            >
+              <Mail className="h-4 w-4" />
+            </button>
+          )}
+          {dialogElement}
+        </>
+      );
+    }
+    return dialogElement;
+  }
 
   // Compact toolbar mode: render an icon+label button matching TopBarBtn
   // styling so the AI clerk lives front-and-center alongside Camera/Mic.
