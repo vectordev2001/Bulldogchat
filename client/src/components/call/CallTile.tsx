@@ -36,6 +36,11 @@ export function CallTile({
   const speaking = participant?.isSpeaking && !participant?.micMuted;
   const isMuted = participant?.micMuted ?? (isMe ? !!muted : false);
   const hasVideo = !!track && !videoOff;
+  // Read the hand-raise attribute exposed by useLiveKitRoom (contract
+  // locked to "1" in PR #159 so it matches Room.tsx's @livekit/components-
+  // react adapter). Attribute-driven so remote hands stay in sync without
+  // an extra data-channel message.
+  const handRaised = !!participant?.handRaised;
   const objectFitClass = (fit ?? (screen ? "contain" : "cover")) === "contain" ? "object-contain" : "object-cover";
   // Never mirror the screen share — only mirror the local camera tile.
   const mirror = isMe && !screen;
@@ -64,6 +69,23 @@ export function CallTile({
           <div className={speaking ? "speaking-ring rounded-full" : ""}>
             <Avatar member={{ name, hue }} size={avatarSize} ring={speaking ? "blue" : "none"} />
           </div>
+        </div>
+      )}
+      {/* Hand-raise badge — top-left, visible on both full-size and
+          compact tiles so a raised hand in the filmstrip is still noticed.
+          Parity with Room.tsx's TileChrome L1382 which renders the same
+          amber ✋ affordance. Rendered above the video via z-10 so it
+          isn't hidden by object-fit letterboxing. */}
+      {handRaised && (
+        <div
+          className={[
+            "absolute z-10 flex items-center gap-1 rounded-full bg-amber-400/95 font-semibold text-amber-950 shadow",
+            compact ? "left-1.5 top-1.5 px-1.5 py-0 text-[11px]" : "left-3 top-3 px-2 py-0.5 text-xs",
+          ].join(" ")}
+          data-testid="call-tile-hand-raised"
+          aria-label={`${name} raised their hand`}
+        >
+          <span aria-hidden>✋</span>
         </div>
       )}
       <div className={[
