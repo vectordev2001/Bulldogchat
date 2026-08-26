@@ -853,7 +853,12 @@ function BulldogMeetingUI({ code }: { code: string }) {
     const next = !handRaised;
     setHandRaised(next);
     try {
-      await localParticipant?.setAttributes({ handRaised: next ? "true" : "" });
+      // Attribute value MUST match useLiveKitRoom ("1"). Room used to write
+      // "true" which was invisible to CallOverlays / iOS participants that
+      // read through the useLiveKitRoom snapshot — hands raised in a
+      // scheduled meeting silently dropped for anyone on the DM/group
+      // overlay adapter, and vice versa.
+      await localParticipant?.setAttributes({ handRaised: next ? "1" : "" });
     } catch {
       /* attributes optional */
     }
@@ -1327,7 +1332,8 @@ function TileChrome({
   const name = p?.name || p?.identity || "Guest";
   const micEnabled = p?.isMicrophoneEnabled ?? false;
   const isShare = trackRef.source === Track.Source.ScreenShare;
-  const handRaised = p?.attributes?.handRaised === "true";
+  // "1" contract shared with useLiveKitRoom (see toggleHand comment).
+  const handRaised = p?.attributes?.handRaised === "1";
   const speaking = p?.isSpeaking ?? false;
   const hasVideo =
     isTrackReference(trackRef) && !!trackRef.publication && !trackRef.publication.isMuted;
@@ -1616,7 +1622,8 @@ function ParticipantsTab({ participants, localIdentity, code, meetingTitle }: { 
       <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2 pt-2">
       {participants.map((p) => {
         const name = (p.identity === localIdentity ? `${p.name || p.identity} (You)` : p.name || p.identity) || "Guest";
-        const handRaised = p.attributes?.handRaised === "true";
+        // "1" contract shared with useLiveKitRoom (see toggleHand comment).
+        const handRaised = p.attributes?.handRaised === "1";
         return (
           <div key={p.identity} className="group flex items-center gap-3 rounded-lg px-2 py-2 hover-elevate" data-testid={`participant-${p.identity}`}>
             <Avatar name={name} />
