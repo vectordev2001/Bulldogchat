@@ -28,6 +28,20 @@ export function serveStatic(app: Express) {
     },
   }));
 
+  // Bulldog Chat is a hash-routed SPA (client/src/App.tsx: <Router
+  // hook={useHashLocation}>). Path-form URLs the client can't route need to
+  // be rewritten to hash-form before wouter mounts, otherwise Home.tsx runs
+  // and restores the last-active channel. Redirects here also catch stale
+  // /whats-new links that already went out in emails and push before the
+  // patch-notes-announcer fix that emits the hash form.
+  const HASH_ROUTE_REDIRECTS = new Set(["/whats-new", "/admin"]);
+  app.get("/{*path}", (req, res, next) => {
+    if (HASH_ROUTE_REDIRECTS.has(req.path)) {
+      return res.redirect(302, `/#${req.path}`);
+    }
+    next();
+  });
+
   // SPA fallback — always send a fresh index.html, never cached.
   app.use("/{*path}", (_req, res) => {
     res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
