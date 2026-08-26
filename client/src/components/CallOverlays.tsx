@@ -4,7 +4,7 @@
  * which page the user is on when the phone rings.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Phone, PhoneOff, Mic, MicOff, Video, VideoOff, MonitorUp, Loader2, Volume2, UserPlus, X, Check, Search, PhoneCall, FileText, Sparkles, LayoutGrid, MessageSquare, Users, MoreHorizontal, Minimize2, Maximize2 } from "lucide-react";
+import { Phone, PhoneOff, Mic, MicOff, Video, VideoOff, MonitorUp, Loader2, Volume2, UserPlus, X, Check, Search, PhoneCall, FileText, Sparkles, LayoutGrid, MessageSquare, Users, MoreHorizontal, Minimize2, Maximize2, Settings } from "lucide-react";
 import { useCalls } from "@/lib/CallContext";
 import { useLiveKitRoom, attachTrack } from "@/lib/useLiveKitRoom";
 import { useQuery } from "@tanstack/react-query";
@@ -21,6 +21,9 @@ import { useToast } from "@/hooks/use-toast";
 import { ContractPanel } from "./call/ContractPanel";
 import { VirtualBackgroundPicker, loadSavedSelection, type BgSelection } from "./call/VirtualBackgroundPicker";
 import { VirtualBackgroundProcessor } from "@/lib/virtual-background";
+import { DeviceSelector } from "./call/DeviceSelector";
+import { MeetSettingsModal } from "./call/MeetSettingsModal";
+import { loadDevicePrefs, saveDevicePrefs, type DevicePrefs } from "@/lib/meet-devices";
 import { isNativeApp, openInIosApp } from "@/lib/native-app";
 
 // Group calls run in a room named `group-channel-<id>-<ts>` or
@@ -295,6 +298,15 @@ function ActiveCallOverlay() {
   const [bgSel, setBgSel] = useState<BgSelection>(() => loadSavedSelection());
   const processorRef = useRef<VirtualBackgroundProcessor | null>(null);
 
+  // Mid-call device pickers (PR D). Persist to the same shared
+  // `bulldog.meet.devicePrefs` localStorage bucket that Join.tsx and Room.tsx
+  // use, so a device chosen from the CallOverlays toolbar carries into the
+  // next Bulldog Meet room and vice versa. We keep the state local instead of
+  // re-reading storage on every render because the modal writes back through
+  // us. See client/src/lib/meet-devices.ts for the shape.
+  const [devicePrefs, setDevicePrefs] = useState<DevicePrefs>(() => loadDevicePrefs());
+  const [settingsOpen, setSettingsOpen] = useState(false);
+
   // iOS in-app browser warning (Phase 1.9.26). Calculated once at mount.
   const isInAppBrowser = useMemo(() => detectIOSInAppBrowser(), []);
   const [inAppDismissed, setInAppDismissed] = useState(false);
@@ -310,6 +322,15 @@ function ActiveCallOverlay() {
     setMoreOpen(false);
     setIsPiP(false);
   }, [active?.callId, active?.kind, active?.roomName]);
+
+  // LiveKit MediaDeviceKind mapping used by the imperative switch calls.
+  // Keys mirror DevicePrefs, values are what room.switchActiveDevice()
+  // expects (lower-case, no dash) — same mapping Room.tsx uses at L546-550.
+  const deviceKindMap = useMemo<Record<keyof DevicePrefs, "audioinput" | "videoinput" | "audiooutput">>(() => ({
+    audioInput: "audioinput",
+    videoInput: "videoinput",
+    audioOutput: "audiooutput",
+  }), []);
 
   const lk = useLiveKitRoom({
     token: active?.token ?? null,
@@ -351,6 +372,64 @@ function ActiveCallOverlay() {
       window.dispatchEvent(new CustomEvent("bulldog:toast", { detail: toast }));
     },
   });
+
+  // Mid-call device pick handler (PR D). Shared by the toolbar pills
+  // (audio input + video input) and the Devices modal (adds audio output).
+  // Persist first so the pick survives a reconnect, then hit the live Room.
+  // If we're not connected yet, the persisted pref will be applied by the
+  // apply-on-connect effect below.
+  const onDevicePick = useCallback((kind: keyof DevicePrefs, deviceId: string) => {
+    setDevicePrefs((prev) => {
+      const next = { ...prev, [kind]: deviceId };
+      saveDevicePrefs(next);
+      return next;
+    });
+    lk.switchActiveDevice(deviceKindMap[kind], deviceId).then((ok) => {
+      if (!ok && lk.status === "connected") {
+        window.dispatchEvent(new CustomEvent("bulldog:toast", {
+          detail: "Couldn't switch device. Try again once the call is fully connected.",
+        }));
+      }
+    });
+  }, [lk, deviceKindMap]);
+
+  // Apply persisted device prefs when the room reaches "connected". Mirrors
+  // Room.tsx L326-332 so mid-call CallOverlays behaves like the full Meet
+  // room: your last-picked mic, camera, and speaker come along without the
+  // user having to open Settings each time. Speaker application waits for
+  // remote audio tracks to attach before switchActiveDevice can bind the
+  // sinkId, so we retry a short window — same guard Room.tsx uses.
+  useEffect(() => {
+    if (lk.status !== "connected") return;
+    let cancelled = false;
+    if (devicePrefs.audioInput) {
+      lk.switchActiveDevice("audioinput", devicePrefs.audioInput).catch(() => {});
+    }
+    if (devicePrefs.videoInput) {
+      lk.switchActiveDevice("videoinput", devicePrefs.videoInput).catch(() => {});
+    }
+    if (devicePrefs.audioOutput) {
+      // Speaker apply retries: sinkId can't bind until a remote audio
+      // element is present. 5 tries at 400ms is generous enough for a
+      // group call to arrive without hammering LiveKit.
+      let tries = 0;
+      const applyOutput = () => {
+        if (cancelled) return;
+        lk.switchActiveDevice("audiooutput", devicePrefs.audioOutput!).then((ok) => {
+          if (!ok && tries < 5 && !cancelled) {
+            tries += 1;
+            setTimeout(applyOutput, 400);
+          }
+        });
+      };
+      applyOutput();
+    }
+    return () => { cancelled = true; };
+  // We intentionally rerun this effect on every status change to
+  // "connected" so a reconnect (e.g. brief network loss) re-applies
+  // the persisted picks. devicePrefs is a dep so a mid-call change
+  // that failed the live switch still gets retried on next connect.
+  }, [lk.status, lk, devicePrefs]);
 
   // Fetch channel details (for the linked contract). Only when we have a
   // channel-scoped call and the room is up.
@@ -540,6 +619,39 @@ function ActiveCallOverlay() {
             }}
             disabled={lk.status !== "connected"}
             testid="call-mic"
+          />
+
+          {/* Mid-call device pickers (PR D). Two pills next to mic/camera
+              expose quick input switching without opening a modal — same
+              affordance Room.tsx renders on the meet stage. Speaker
+              selection lives in the Devices modal (behind the gear) because
+              a lot of browsers (Safari, iOS PWA) don't support setSinkId,
+              so surfacing it as a pill would be a dead control most of the
+              time. `variant="pill"` gives us the compact toolbar look. */}
+          <div className="hidden md:flex items-center gap-1" data-testid="call-toolbar-devices">
+            <DeviceSelector
+              kind="audioInput"
+              prefs={devicePrefs}
+              onPick={(deviceId) => onDevicePick("audioInput", deviceId)}
+              variant="pill"
+            />
+            <DeviceSelector
+              kind="videoInput"
+              prefs={devicePrefs}
+              onPick={(deviceId) => onDevicePick("videoInput", deviceId)}
+              variant="pill"
+            />
+          </div>
+
+          {/* Devices — opens the shared MeetSettingsModal (audio in/out +
+              camera + StageGlowToggle). Always visible so mobile users who
+              don't see the pills can still reach the full picker. */}
+          <TopBarBtn
+            icon={<Settings className="w-5 h-5" />}
+            label="Devices"
+            active={settingsOpen}
+            onClick={() => setSettingsOpen(o => !o)}
+            testid="call-toolbar-devices-modal"
           />
 
           {/* Share screen */}
@@ -781,6 +893,19 @@ function ActiveCallOverlay() {
       <RemoteAudio participant={firstRemote} />
 
       {addOpen && <InCallAddDialog onClose={() => setAddOpen(false)} />}
+
+      {/* Devices modal (PR D). Reuses the shared MeetSettingsModal from the
+          full Bulldog Meet room so the picker UX is identical across
+          direct/group calls (CallOverlays) and scheduled meetings
+          (Room.tsx). Mounts inside a fixed z-[200] overlay so it stacks
+          above the toolbar. */}
+      {settingsOpen && (
+        <MeetSettingsModal
+          prefs={devicePrefs}
+          onChange={(kind, deviceId) => onDevicePick(kind, deviceId)}
+          onClose={() => setSettingsOpen(false)}
+        />
+      )}
     </div>
   );
 }
