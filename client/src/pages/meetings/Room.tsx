@@ -1107,6 +1107,24 @@ function BulldogMeetingUI({ code }: { code: string }) {
             <Settings size={18} />
           </BarBtn>
 
+          {/* AI Meeting Clerk — mirror of CallOverlays' toolbar clerk (Phase
+              1.9.25) so scheduled meetings get the same first-class Start/Stop
+              control instead of hiding it behind the Transcript sidebar. Only
+              shown when the meeting is tied to a Bulldog channel; ad-hoc
+              /r/:code rooms have no channel to file notes back to. autoStart
+              arms the 5-second cancelable countdown when the local user is
+              the effective host — matching Room's own `isHost = !!authedUser`
+              semantic used for lobby control. */}
+          {meetingData?.meeting?.channelId != null && (
+            <MeetingClerkButton
+              channelId={meetingData.meeting.channelId}
+              canControl={isHost}
+              roomName={room?.name}
+              round
+              autoStart={isHost}
+            />
+          )}
+
           {lobbyEnabled && (
             <div className="relative">
               <BarBtn testid="bar-lobby" active={lobbyOpen} onClick={() => setLobbyOpen((o) => !o)} label="Lobby">
