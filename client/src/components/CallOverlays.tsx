@@ -17,6 +17,7 @@ import { MeetingClerkButton, MeetingClerkBanner } from "./MeetingClerkButton";
 import { CallVideoStage, type CallLayout, type StageParticipant } from "./call/CallVideoStage";
 import { CallTile } from "./call/CallTile";
 import { InCallChatPanel } from "./InCallChatPanel";
+import { RtcChatPanel } from "./call/RtcChatPanel";
 import { useToast } from "@/hooks/use-toast";
 import { ContractPanel } from "./call/ContractPanel";
 import { VirtualBackgroundPicker, loadSavedSelection, type BgSelection } from "./call/VirtualBackgroundPicker";
@@ -900,6 +901,17 @@ function ActiveCallOverlay() {
         {chatOpen && hasChannel && (
           <InCallChatPanel
             channelId={channelId!}
+            onClose={() => setChatOpen(false)}
+          />
+        )}
+        {/* PR E — direct/1:1 calls have no channel, so fall back to the
+            LiveKit data-channel-backed RtcChatPanel. Ephemeral by design:
+            messages only live for the duration of the call, matching how
+            Google Meet / Zoom handle 1:1 chat. */}
+        {chatOpen && !hasChannel && (
+          <RtcChatPanel
+            lk={lk}
+            myIdentity={lk.participants.find((p) => p.isLocal)?.identity ?? null}
             onClose={() => setChatOpen(false)}
           />
         )}
