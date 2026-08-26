@@ -4,7 +4,7 @@
  * which page the user is on when the phone rings.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Phone, PhoneOff, Mic, MicOff, Video, VideoOff, MonitorUp, Loader2, Volume2, UserPlus, X, Check, Search, PhoneCall, FileText, Sparkles, LayoutGrid, MessageSquare, Users, MoreHorizontal, Minimize2, Maximize2 } from "lucide-react";
+import { Phone, PhoneOff, Mic, MicOff, Video, VideoOff, MonitorUp, Loader2, Volume2, UserPlus, X, Check, Search, PhoneCall, FileText, Sparkles, LayoutGrid, MessageSquare, Users, MoreHorizontal, Minimize2, Maximize2, Smile } from "lucide-react";
 import { useCalls } from "@/lib/CallContext";
 import { useLiveKitRoom, attachTrack } from "@/lib/useLiveKitRoom";
 import { useQuery } from "@tanstack/react-query";
@@ -17,11 +17,26 @@ import { MeetingClerkButton, MeetingClerkBanner } from "./MeetingClerkButton";
 import { CallVideoStage, type CallLayout, type StageParticipant } from "./call/CallVideoStage";
 import { CallTile } from "./call/CallTile";
 import { InCallChatPanel } from "./InCallChatPanel";
+import { RtcChatPanel } from "./call/RtcChatPanel";
 import { useToast } from "@/hooks/use-toast";
 import { ContractPanel } from "./call/ContractPanel";
 import { VirtualBackgroundPicker, loadSavedSelection, type BgSelection } from "./call/VirtualBackgroundPicker";
 import { VirtualBackgroundProcessor } from "@/lib/virtual-background";
 import { isNativeApp, openInIosApp } from "@/lib/native-app";
+
+// Reactions the popover exposes. Kept in-sync with Room.tsx L54
+// so the wire format — topic + { emoji, fromIdentity, timestamp } —
+// matches cross-surface. Do NOT diverge without also updating
+// Room.REACTIONS.
+const REACTION_EMOJIS = ["👍", "❤️", "😂", "🎉", "👏"];
+// Topic must match Room.tsx L655 exactly.
+const REACTIONS_TOPIC = "bulldog-reactions";
+
+interface FloatingReaction {
+  id: number;
+  emoji: string;
+  left: number;
+}
 
 // Group calls run in a room named `group-channel-<id>-<ts>` or
 // `vector-<org>-channel-<id>`. 1:1 calls use `direct-<callId>` and have no
@@ -295,6 +310,14 @@ function ActiveCallOverlay() {
   const [bgSel, setBgSel] = useState<BgSelection>(() => loadSavedSelection());
   const processorRef = useRef<VirtualBackgroundProcessor | null>(null);
 
+  // Reactions state — mirrors Room.tsx L347-348. Floating emojis are
+  // ephemeral (2.6s TTL) so we keep them in local state; sent emojis
+  // fan out via the shared "bulldog-reactions" data-channel topic so
+  // Room + CallOverlays participants see each other's reactions.
+  const [reactionsOpen, setReactionsOpen] = useState(false);
+  const [floatingReactions, setFloatingReactions] = useState<FloatingReaction[]>([]);
+  const reactionIdRef = useRef(0);
+
   // iOS in-app browser warning (Phase 1.9.26). Calculated once at mount.
   const isInAppBrowser = useMemo(() => detectIOSInAppBrowser(), []);
   const [inAppDismissed, setInAppDismissed] = useState(false);
@@ -309,6 +332,8 @@ function ActiveCallOverlay() {
     setBgOpen(false);
     setMoreOpen(false);
     setIsPiP(false);
+    setReactionsOpen(false);
+    setFloatingReactions([]);
   }, [active?.callId, active?.kind, active?.roomName]);
 
   const lk = useLiveKitRoom({
@@ -395,6 +420,55 @@ function ActiveCallOverlay() {
     }
     void endActive();
   }, [hasChannel, channelId, endActive]);
+
+  // ---------------------------------------------------------------
+  // Reactions (Phase 1.9.33 — CallOverlays parity with Room.tsx).
+  //
+  // Wire format mirrors Room.tsx L655-683 exactly so the two surfaces
+  // stay compatible: topic "bulldog-reactions", payload
+  // JSON.stringify({ emoji, fromIdentity, timestamp }). We spawn the
+  // emoji locally the moment the user taps (optimistic) so the sender
+  // never waits on the server, and rebroadcast to every other
+  // participant.
+  // ---------------------------------------------------------------
+  const spawnFloatingReaction = useCallback((emoji: string) => {
+    const id = reactionIdRef.current++;
+    // Random horizontal offset so batches of reactions don't stack.
+    setFloatingReactions((f) => [...f, { id, emoji, left: 20 + Math.random() * 60 }]);
+    setTimeout(() => {
+      setFloatingReactions((f) => f.filter((r) => r.id !== id));
+    }, 2600);
+  }, []);
+
+  const fireReaction = useCallback((emoji: string) => {
+    spawnFloatingReaction(emoji);
+    setReactionsOpen(false);
+    try {
+      // Look up the local participant fresh so we don't depend on
+      // meParticipant (declared below this early-return block).
+      const localIdentity = lk.participants.find((p) => p.isLocal)?.identity ?? "";
+      const payload = new TextEncoder().encode(
+        JSON.stringify({
+          emoji,
+          fromIdentity: localIdentity,
+          timestamp: Date.now(),
+        }),
+      );
+      lk.sendData(REACTIONS_TOPIC, payload);
+    } catch { /* ignore */ }
+  }, [lk, spawnFloatingReaction]);
+
+  // Subscribe to inbound reactions. Unsubscribe on call change so we
+  // don't leak handlers across rooms.
+  useEffect(() => {
+    const off = lk.onData(REACTIONS_TOPIC, (payload) => {
+      try {
+        const msg = JSON.parse(new TextDecoder().decode(payload)) as { emoji?: string };
+        if (msg?.emoji) spawnFloatingReaction(msg.emoji);
+      } catch { /* ignore malformed payloads */ }
+    });
+    return off;
+  }, [lk, spawnFloatingReaction]);
 
   if (!active) return null;
 
@@ -551,6 +625,40 @@ function ActiveCallOverlay() {
             disabled={lk.status !== "connected"}
             testid="call-screen"
           />
+
+          {/* Reactions — popover with the same emoji set + wire format as
+              Room.tsx (Phase 1.9.33). Click the button to open the picker,
+              click an emoji to spawn a floating reaction and broadcast it
+              on the shared "bulldog-reactions" data-channel topic. */}
+          <div className="relative" data-testid="call-toolbar-reactions-wrap">
+            <TopBarBtn
+              icon={<Smile className="w-5 h-5" />}
+              label="React"
+              active={reactionsOpen}
+              onClick={() => setReactionsOpen((o) => !o)}
+              disabled={lk.status !== "connected"}
+              testid="call-toolbar-reactions"
+            />
+            {reactionsOpen && (
+              <div
+                className="absolute top-full left-1/2 mt-2 -translate-x-1/2 z-50 flex items-center gap-1 rounded-full border border-[hsl(220_40%_22%)] bg-[hsl(220_55%_11%)] px-2 py-1.5 shadow-lg"
+                data-testid="popover-reactions"
+              >
+                {REACTION_EMOJIS.map((e) => (
+                  <button
+                    key={e}
+                    type="button"
+                    data-testid={`reaction-${e}`}
+                    onClick={() => fireReaction(e)}
+                    className="flex h-9 w-9 items-center justify-center rounded-full text-xl hover:bg-[hsl(220_40%_18%)] transition-colors"
+                    aria-label={`Send ${e} reaction`}
+                  >
+                    {e}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
 
           {/* Background effects — first-class toolbar button (Phase 1.9.25) */}
           <TopBarBtn
@@ -756,8 +864,29 @@ function ActiveCallOverlay() {
 
       {/* Body: video stage + optional contract side-panel. */}
       <div className="flex-1 min-h-0 flex">
-        <div className="flex-1 min-w-0 p-4">
+        <div className="flex-1 min-w-0 p-4 relative">
           <CallVideoStage layout={effectiveLayout} me={me} others={stageOthers} />
+          {/* Floating reactions layer (Phase 1.9.33). Each emoji rises
+              ~260px over 2.4s then fades — same visual timings as
+              Room.tsx L1007-1020 but done with CSS instead of pulling
+              in framer-motion (CallOverlays already ships a lot). The
+              layer is pointer-events-none so it never blocks clicks on
+              the underlying tiles. */}
+          <div
+            className="pointer-events-none absolute inset-0 overflow-hidden z-30"
+            data-testid="call-floating-reactions"
+            aria-hidden="true"
+          >
+            {floatingReactions.map((r) => (
+              <div
+                key={r.id}
+                className="absolute bottom-6 text-4xl call-reaction-float"
+                style={{ left: `${r.left}%` }}
+              >
+                {r.emoji}
+              </div>
+            ))}
+          </div>
         </div>
         {contractOpen && contractPdfUrl && hasChannel && (
           <ContractPanel
@@ -772,6 +901,17 @@ function ActiveCallOverlay() {
         {chatOpen && hasChannel && (
           <InCallChatPanel
             channelId={channelId!}
+            onClose={() => setChatOpen(false)}
+          />
+        )}
+        {/* PR E — direct/1:1 calls have no channel, so fall back to the
+            LiveKit data-channel-backed RtcChatPanel. Ephemeral by design:
+            messages only live for the duration of the call, matching how
+            Google Meet / Zoom handle 1:1 chat. */}
+        {chatOpen && !hasChannel && (
+          <RtcChatPanel
+            lk={lk}
+            myIdentity={lk.participants.find((p) => p.isLocal)?.identity ?? null}
             onClose={() => setChatOpen(false)}
           />
         )}

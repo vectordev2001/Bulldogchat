@@ -105,6 +105,24 @@ export interface LiveKitHookResult {
    */
   setHandRaised: (raised: boolean) => void;
   /**
+   * Publish a payload on the LiveKit data channel with a topic string.
+   * Used for out-of-band UI messages (reactions, typing, etc.) that
+   * every participant should receive. Reliable delivery; drops silently
+   * if the room isn't connected.
+   */
+  sendData: (topic: string, payload: Uint8Array) => void;
+  /**
+   * Subscribe to inbound data packets on a given topic. The handler
+   * receives the raw payload and the sender's identity (may be empty
+   * for server-published packets). Returns an unsubscribe function —
+   * call it in a useEffect cleanup. Safe to call before connect: the
+   * subscription is retained across reconnects.
+   */
+  onData: (
+    topic: string,
+    handler: (payload: Uint8Array, fromIdentity: string) => void,
+  ) => () => void;
+  /**
    * True when this browser supports screen-share (i.e. has
    * navigator.mediaDevices.getDisplayMedia and is not iOS Safari).
    * iOS Safari/PWA WebView does not implement getDisplayMedia at all,
@@ -217,6 +235,13 @@ export function useLiveKitRoom(args: Args): LiveKitHookResult {
   const [status, setStatus] = useState<ConnectionStatus>("idle");
   const [error, setError] = useState<string | null>(null);
   const [participants, setParticipants] = useState<RoomParticipantState[]>([]);
+  // Per-topic data-channel subscribers. Kept on a ref so re-renders
+  // don't churn subscriptions, and so the DataReceived listener we
+  // attach on connect can dispatch to whichever handler is registered
+  // at the time the packet arrives.
+  const dataHandlersRef = useRef<
+    Map<string, Set<(payload: Uint8Array, fromIdentity: string) => void>>
+  >(new Map());
   const [micPublished, setMicPublished] = useState(false);
   const [cameraPublished, setCameraPublished] = useState(false);
   const [screenPublished, setScreenPublished] = useState(false);
@@ -309,6 +334,17 @@ export function useLiveKitRoom(args: Args): LiveKitHookResult {
       .on(RoomEvent.TrackUnmuted, onUpdate)
       .on(RoomEvent.ActiveSpeakersChanged, onSpeaking)
       .on(RoomEvent.ParticipantAttributesChanged, onUpdate)
+      .on(RoomEvent.DataReceived, (payload, participant, _kind, topic) => {
+        // Dispatch to every handler registered under this topic. Bad
+        // handlers must not take down the room event loop — wrap each in
+        // its own try/catch.
+        const handlers = dataHandlersRef.current.get(topic ?? "");
+        if (!handlers) return;
+        const fromIdentity = participant?.identity ?? "";
+        Array.from(handlers).forEach((h) => {
+          try { h(payload, fromIdentity); } catch { /* ignore */ }
+        });
+      })
       .on(RoomEvent.ConnectionStateChanged, onState)
       .on(RoomEvent.Disconnected, () => {
         if (cancelled) return;
@@ -866,6 +902,36 @@ export function useLiveKitRoom(args: Args): LiveKitHookResult {
     typeof navigator !== "undefined" &&
     !!(navigator.mediaDevices as MediaDevices | undefined)?.getDisplayMedia;
 
+  const sendData = useCallback((topic: string, payload: Uint8Array) => {
+    const room = roomRef.current;
+    if (!room || room.state !== ConnectionState.Connected) return;
+    try {
+      // reliable=true so a reaction never gets dropped just because of
+      // packet loss. Reactions and typing indicators are low-volume
+      // so the throughput cost is negligible.
+      void room.localParticipant.publishData(payload, { reliable: true, topic });
+    } catch { /* ignore */ }
+  }, []);
+
+  const onData = useCallback(
+    (topic: string, handler: (payload: Uint8Array, fromIdentity: string) => void) => {
+      const map = dataHandlersRef.current;
+      let set = map.get(topic);
+      if (!set) {
+        set = new Set();
+        map.set(topic, set);
+      }
+      set.add(handler);
+      return () => {
+        const s = dataHandlersRef.current.get(topic);
+        if (!s) return;
+        s.delete(handler);
+        if (s.size === 0) dataHandlersRef.current.delete(topic);
+      };
+    },
+    [],
+  );
+
   return {
     status,
     error,
@@ -876,6 +942,8 @@ export function useLiveKitRoom(args: Args): LiveKitHookResult {
     toggleCamera,
     toggleMic,
     setHandRaised,
+    sendData,
+    onData,
     screenShareSupported,
     getRawCameraTrack,
     replaceCameraTrack,
