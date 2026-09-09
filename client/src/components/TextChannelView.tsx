@@ -25,6 +25,9 @@ import { MessageAttachments } from "./MessageAttachments";
 import { ContractBanner } from "./ContractBanner";
 import { MeetingNotesHistory } from "./MeetingNotesHistory";
 import { PromoteToChangeOrderDialog } from "./PromoteToChangeOrderDialog";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import Picker from "@emoji-mart/react";
+import emojiData from "@emoji-mart/data";
 
 interface Props {
   channel: ApiChannel;
@@ -1388,6 +1391,33 @@ function MessageRow({ msg, grouped, isMe, meId, myRole, canPromoteToChangeOrder,
     deleteMut.mutate();
   };
 
+  // ---- Reactions (Phase 1.9.37) ----
+  // Picker popover state is shared between the desktop hover-bar Smile
+  // button and the kebab menu "Add reaction" entry so touch users get a
+  // discoverable entry point. Adding an emoji already used by this user is
+  // a no-op server-side (unique index on (message_id, user_id, emoji));
+  // removing is idempotent too.
+  const [reactPickerOpen, setReactPickerOpen] = useState(false);
+  const addReactionMut = useMutation({
+    mutationFn: async (emoji: string) => {
+      return await apiRequest("POST", `/api/messages/${msg.id}/reactions`, { emoji });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/channels", msg.channelId, "messages"] });
+    },
+  });
+  const toggleReactionMut = useMutation({
+    mutationFn: async ({ emoji, mine }: { emoji: string; mine: boolean }) => {
+      if (mine) {
+        return await apiRequest("DELETE", `/api/messages/${msg.id}/reactions/${encodeURIComponent(emoji)}`);
+      }
+      return await apiRequest("POST", `/api/messages/${msg.id}/reactions`, { emoji });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/channels", msg.channelId, "messages"] });
+    },
+  });
+
   // Phase 1.9.36 — replaced the old 450ms long-press with an always-visible
   // "⋯" kebab on every message row. Long-press was undiscoverable on touch.
   // The kebab is rendered inline (top-right of the row) and toggles a small
@@ -1448,15 +1478,27 @@ function MessageRow({ msg, grouped, isMe, meId, myRole, canPromoteToChangeOrder,
         {msg.attachmentsList && msg.attachmentsList.length > 0 && <MessageAttachments atts={msg.attachmentsList} />}
         {msg.reactions && msg.reactions.length > 0 && (
           <div className="flex flex-wrap gap-1 mt-1.5">
-            {msg.reactions.map((r) => (
-              <span
-                key={r.emoji}
-                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md border text-[11px] font-mono bg-accent border-border text-[hsl(var(--vs-text))]"
-              >
-                <span>{r.emoji}</span>
-                <span>{r.count}</span>
-              </span>
-            ))}
+            {msg.reactions.map((r) => {
+              const mine = r.userIds.includes(meId);
+              return (
+                <button
+                  key={r.emoji}
+                  type="button"
+                  onClick={() => toggleReactionMut.mutate({ emoji: r.emoji, mine })}
+                  disabled={toggleReactionMut.isPending || addReactionMut.isPending}
+                  className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md border text-[11px] font-mono transition-colors disabled:opacity-60 disabled:cursor-not-allowed ${
+                    mine
+                      ? "bg-[hsl(var(--vs-accent-soft))] border-vs-red text-[hsl(var(--vs-accent))]"
+                      : "bg-accent border-border text-[hsl(var(--vs-text))] hover:border-vs-red"
+                  }`}
+                  title={mine ? "Remove your reaction" : "Add reaction"}
+                  data-testid={`button-reaction-${msg.id}-${r.emoji}`}
+                >
+                  <span>{r.emoji}</span>
+                  <span>{r.count}</span>
+                </button>
+              );
+            })}
           </div>
         )}
         {(msg.replyCount ?? 0) > 0 && (
@@ -1476,9 +1518,43 @@ function MessageRow({ msg, grouped, isMe, meId, myRole, canPromoteToChangeOrder,
       {/* Desktop hover action bar — quick access for mouse users. Hidden
           on touch (no hover state); touch users use the kebab below. */}
       <div
-        className="transition-opacity absolute top-0 right-10 hidden md:flex items-center gap-1 -translate-y-2 bg-secondary border border-border rounded-md px-1 py-0.5 shadow-md opacity-0 group-hover:opacity-100"
+        className={`transition-opacity absolute top-0 right-10 hidden md:flex items-center gap-1 -translate-y-2 bg-secondary border border-border rounded-md px-1 py-0.5 shadow-md ${
+          reactPickerOpen ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+        }`}
         onClick={(e) => e.stopPropagation()}
       >
+        <Popover open={reactPickerOpen} onOpenChange={setReactPickerOpen}>
+          <PopoverTrigger asChild>
+            <button
+              type="button"
+              className="p-1 rounded hover:bg-accent text-[hsl(var(--vs-text-muted))] hover:text-vs-red"
+              title="Add reaction"
+              aria-label="Add reaction"
+              data-testid={`button-react-${msg.id}`}
+            >
+              <Smile className="w-3.5 h-3.5" />
+            </button>
+          </PopoverTrigger>
+          <PopoverContent
+            side="top"
+            align="end"
+            className="p-0 border-0 bg-transparent shadow-none w-auto"
+            data-testid={`popover-react-${msg.id}`}
+          >
+            <Picker
+              data={emojiData}
+              theme="dark"
+              previewPosition="none"
+              skinTonePosition="search"
+              onEmojiSelect={(e: { native?: string; shortcodes?: string }) => {
+                const native = e.native ?? e.shortcodes ?? "";
+                if (!native) return;
+                addReactionMut.mutate(native);
+                setReactPickerOpen(false);
+              }}
+            />
+          </PopoverContent>
+        </Popover>
         <button
           type="button"
           onClick={onOpenThread}
@@ -1526,6 +1602,15 @@ function MessageRow({ msg, grouped, isMe, meId, myRole, canPromoteToChangeOrder,
             role="menu"
             data-testid={`menu-message-${msg.id}`}
           >
+            <button
+              type="button"
+              onClick={() => { setMenuOpen(false); setReactPickerOpen(true); }}
+              className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[hsl(var(--vs-text))] hover:bg-[hsl(var(--vs-accent-soft))] hover:text-[hsl(var(--vs-accent))] text-left"
+              data-testid={`menu-item-react-${msg.id}`}
+            >
+              <Smile className="w-3.5 h-3.5" />
+              Add reaction
+            </button>
             <button
               type="button"
               onClick={() => { setMenuOpen(false); onOpenThread(); }}
