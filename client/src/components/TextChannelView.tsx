@@ -25,6 +25,9 @@ import { MessageAttachments } from "./MessageAttachments";
 import { ContractBanner } from "./ContractBanner";
 import { MeetingNotesHistory } from "./MeetingNotesHistory";
 import { PromoteToChangeOrderDialog } from "./PromoteToChangeOrderDialog";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import Picker from "@emoji-mart/react";
+import emojiData from "@emoji-mart/data";
 
 interface Props {
   channel: ApiChannel;
@@ -102,6 +105,7 @@ interface MentionMatch {
 
 export function TextChannelView({ channel, messages, loading, me, orgMembers, membersOpen, onToggleMembers, workObjectsOpen, onToggleWorkObjects, onSlashSchedule, pendingCallRoom, onDismissPendingCall, scrollToMessageId, onDidScrollToMessage, hideHeaderTitle }: Props) {
   const [draft, setDraft] = useState("");
+  const [emojiOpen, setEmojiOpen] = useState(false);
   const { pending: pendingAtts, addFiles, remove: removePending, clear: clearPending, uploading, readyIds, atCapacity } = useAttachmentUploader({ max: 8 });
   const [threadParent, setThreadParent] = useState<ApiMessage | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -1055,7 +1059,49 @@ export function TextChannelView({ channel, messages, loading, me, orgMembers, me
               >
                 <Paperclip className="w-4 h-4" />
               </button>
-              <button type="button" className="hover:text-vs-red transition-colors p-1" title="Emoji"><Smile className="w-4 h-4" /></button>
+              <Popover open={emojiOpen} onOpenChange={setEmojiOpen}>
+                <PopoverTrigger asChild>
+                  <button
+                    type="button"
+                    className="hover:text-vs-red transition-colors p-1"
+                    title="Emoji"
+                    data-testid="button-emoji-picker"
+                    aria-label="Insert emoji"
+                  >
+                    <Smile className="w-4 h-4" />
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent
+                  side="top"
+                  align="end"
+                  className="p-0 border-0 bg-transparent shadow-none w-auto"
+                  data-testid="popover-emoji-picker"
+                >
+                  <Picker
+                    data={emojiData}
+                    theme="dark"
+                    previewPosition="none"
+                    skinTonePosition="search"
+                    onEmojiSelect={(e: { native?: string; shortcodes?: string }) => {
+                      const native = e.native ?? e.shortcodes ?? "";
+                      if (!native) return;
+                      const ta = taRef.current;
+                      const start = ta?.selectionStart ?? draft.length;
+                      const end = ta?.selectionEnd ?? draft.length;
+                      const next = draft.slice(0, start) + native + draft.slice(end);
+                      handleDraftChange(next);
+                      setEmojiOpen(false);
+                      requestAnimationFrame(() => {
+                        const t = taRef.current;
+                        if (!t) return;
+                        t.focus();
+                        const cursor = start + native.length;
+                        t.setSelectionRange(cursor, cursor);
+                      });
+                    }}
+                  />
+                </PopoverContent>
+              </Popover>
               <button
                 type="button"
                 onClick={submit}
